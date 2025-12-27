@@ -6,6 +6,13 @@ const client_session = @import("client_session");
 
 const log = std.log.scoped(.semadrawd);
 
+/// Poll file descriptor (Zig-native version of pollfd)
+const PollFd = extern struct {
+    fd: posix.fd_t,
+    events: i16,
+    revents: i16,
+};
+
 /// Daemon configuration
 pub const Config = struct {
     socket_path: []const u8 = protocol.DEFAULT_SOCKET_PATH,
@@ -45,7 +52,7 @@ pub const Daemon = struct {
         log.info("semadrawd starting on {s}", .{self.config.socket_path});
 
         // Poll fd array: [0] = server, [1..N] = clients
-        var poll_fds = std.ArrayList(posix.pollfd).init(self.allocator);
+        var poll_fds = std.ArrayList(PollFd).init(self.allocator);
         defer poll_fds.deinit();
 
         while (self.running) {
@@ -55,7 +62,7 @@ pub const Daemon = struct {
             // Add server socket
             try poll_fds.append(.{
                 .fd = self.server.getFd(),
-                .events = posix.POLL.IN,
+                .events = std.posix.POLL.IN,
                 .revents = 0,
             });
 
@@ -64,13 +71,15 @@ pub const Daemon = struct {
             while (client_iter.next()) |session| {
                 try poll_fds.append(.{
                     .fd = session.*.getFd(),
-                    .events = posix.POLL.IN,
+                    .events = std.posix.POLL.IN,
                     .revents = 0,
                 });
             }
 
             // Wait for events (100ms timeout for periodic tasks)
-            const n = posix.poll(poll_fds.items, 100) catch |err| {
+            // Cast our PollFd slice to the system pollfd type
+            const poll_slice: []posix.pollfd = @ptrCast(poll_fds.items);
+            const n = posix.poll(poll_slice, 100) catch |err| {
                 log.err("poll error: {}", .{err});
                 continue;
             };
@@ -89,13 +98,13 @@ pub const Daemon = struct {
                 } else {
                     // Client event
                     if (self.clients.findByFd(pfd.fd)) |session| {
-                        if (pfd.revents & posix.POLL.IN != 0) {
+                        if (pfd.revents & std.posix.POLL.IN != 0) {
                             self.handleClientMessage(session) catch |err| {
                                 log.debug("client {} error: {}, disconnecting", .{ session.id, err });
                                 self.disconnectClient(session.id);
                             };
                         }
-                        if (pfd.revents & (posix.POLL.HUP | posix.POLL.ERR) != 0) {
+                        if (pfd.revents & (std.posix.POLL.HUP | std.posix.POLL.ERR) != 0) {
                             log.debug("client {} disconnected", .{session.id});
                             self.disconnectClient(session.id);
                         }
