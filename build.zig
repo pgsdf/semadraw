@@ -264,7 +264,6 @@ pub fn build(b: *std.Build) void {
 	    }),
 	});
 	sdcs_make_aa.root_module.addImport("semadraw", semadraw_mod);
-	sdcs_make_aa.root_module.addImport("sdcs", sdcs_mod);
 	b.installArtifact(sdcs_make_aa);
 
     const sdcs_replay = b.addExecutable(.{
