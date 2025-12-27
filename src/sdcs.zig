@@ -132,6 +132,62 @@ pub const ValidateError = (error{
     InvalidGeometry,
 } || std.fs.File.ReadError || std.fs.File.SeekError || std.fs.File.StatError);
 
+/// Returns a human-readable name for an opcode, or null if unknown.
+pub fn opcodeName(opcode: u16) ?[]const u8 {
+    return switch (opcode) {
+        Op.RESET => "RESET",
+        Op.SET_CLIP_RECTS => "SET_CLIP_RECTS",
+        Op.CLEAR_CLIP => "CLEAR_CLIP",
+        Op.SET_BLEND => "SET_BLEND",
+        Op.SET_TRANSFORM_2D => "SET_TRANSFORM_2D",
+        Op.RESET_TRANSFORM => "RESET_TRANSFORM",
+        Op.FILL_RECT => "FILL_RECT",
+        Op.STROKE_RECT => "STROKE_RECT",
+        Op.STROKE_LINE => "STROKE_LINE",
+        Op.SET_STROKE_JOIN => "SET_STROKE_JOIN",
+        Op.SET_STROKE_CAP => "SET_STROKE_CAP",
+        Op.BLIT_IMAGE => "BLIT_IMAGE",
+        Op.DRAW_GLYPH_RUN => "DRAW_GLYPH_RUN",
+        Op.END => "END",
+        else => null,
+    };
+}
+
+/// Diagnostic context for validation errors.
+/// Pass an instance to validateFileWithDiagnostics to receive detailed error information.
+pub const ValidationDiagnostics = struct {
+    /// File offset where the error occurred.
+    file_offset: u64 = 0,
+    /// Opcode that caused the error (if applicable).
+    opcode: u16 = 0,
+    /// Human-readable opcode name (null if unknown or not applicable).
+    opcode_name: ?[]const u8 = null,
+    /// Expected payload size (for Protocol errors).
+    expected_payload: u32 = 0,
+    /// Actual payload size (for Protocol errors).
+    actual_payload: u32 = 0,
+    /// Field index within payload where error occurred (for InvalidScalar/InvalidGeometry).
+    field_index: u32 = 0,
+    /// Invalid field value as raw bits (for InvalidScalar).
+    invalid_value: u32 = 0,
+    /// Human-readable error message.
+    message: []const u8 = "",
+
+    pub fn format(self: ValidationDiagnostics, writer: anytype) !void {
+        try writer.print("SDCS validation error at offset 0x{x}: {s}", .{ self.file_offset, self.message });
+        if (self.opcode != 0) {
+            if (self.opcode_name) |name| {
+                try writer.print(" (opcode: {s}/0x{x:0>4})", .{ name, self.opcode });
+            } else {
+                try writer.print(" (opcode: 0x{x:0>4})", .{self.opcode});
+            }
+        }
+        if (self.expected_payload != 0 or self.actual_payload != 0) {
+            try writer.print(" [expected {d} bytes, got {d}]", .{ self.expected_payload, self.actual_payload });
+        }
+    }
+};
+
 fn readU32LE(r: anytype) !u32 {
     var b: [4]u8 = undefined;
     try readExact(r, b[0..]);
@@ -211,27 +267,27 @@ fn validateOpcodePayload(op: u16, payload_bytes: u32) ValidateError!void {
 }
 
 fn validateClipRectsPayload(r: anytype, payload_bytes: u32) ValidateError!void {
-        // payload_bytes already checked for shape: >=4 and (pb-4)%16==0
-        const count_u32 = readU32LE(r) catch return ValidateError.Protocol;
-        const expected: u32 = 4 + count_u32 * 16;
-        if (expected != payload_bytes) return ValidateError.Protocol;
+    // payload_bytes already checked for shape: >=4 and (pb-4)%16==0
+    const count_u32 = readU32LE(r) catch return ValidateError.Protocol;
+    const expected: u32 = 4 + count_u32 * 16;
+    if (expected != payload_bytes) return ValidateError.Protocol;
 
-        // validate each rect (x,y,w,h), all finite, w and h non negative
-        var i: u32 = 0;
-        while (i < count_u32) : (i += 1) {
-            var vals: [4]u32 = undefined;
-            var j: usize = 0;
-            while (j < 4) : (j += 1) {
-                vals[j] = readU32LE(r) catch return ValidateError.Protocol;
-                if (!isFiniteF32Bits(vals[j])) return ValidateError.InvalidScalar;
-            }
-            const w: f32 = @bitCast(vals[2]);
-            const h: f32 = @bitCast(vals[3]);
-            if (w < 0.0 or h < 0.0) return ValidateError.InvalidGeometry;
+    // validate each rect (x,y,w,h), all finite, w and h non negative
+    var i: u32 = 0;
+    while (i < count_u32) : (i += 1) {
+        var vals: [4]u32 = undefined;
+        var j: usize = 0;
+        while (j < 4) : (j += 1) {
+            vals[j] = readU32LE(r) catch return ValidateError.Protocol;
+            if (!isFiniteF32Bits(vals[j])) return ValidateError.InvalidScalar;
         }
+        const w: f32 = @bitCast(vals[2]);
+        const h: f32 = @bitCast(vals[3]);
+        if (w < 0.0 or h < 0.0) return ValidateError.InvalidGeometry;
     }
+}
 
-    fn validateTransform2DPayload(r: anytype) ValidateError!void {
+fn validateTransform2DPayload(r: anytype) ValidateError!void {
     // 6 f32 values encoded as little endian u32.
     var i: usize = 0;
     while (i < 6) : (i += 1) {
@@ -241,7 +297,6 @@ fn validateClipRectsPayload(r: anytype, payload_bytes: u32) ValidateError!void {
 }
 
 fn validateFillRectPayload(r: anytype) ValidateError!void {
-
     // 8 f32 values encoded as little endian u32.
     var vals: [8]u32 = undefined;
     var i: usize = 0;
@@ -406,6 +461,275 @@ pub fn validateFile(file: std.fs.File) ValidateError!void {
         if (payload_capacity > ch.payload_bytes) {
             const chunk_pad = payload_capacity - ch.payload_bytes;
             try file.seekBy(@as(i64, @intCast(chunk_pad)));
+        }
+    }
+}
+
+/// Validates an SDCS file with detailed diagnostic information on error.
+/// On success, diagnostics is not modified.
+/// On error, diagnostics is populated with context about the failure.
+pub fn validateFileWithDiagnostics(file: std.fs.File, diag: *ValidationDiagnostics) ValidateError!void {
+    // Track current position for diagnostics
+    var current_offset: u64 = 0;
+
+    var header: Header = undefined;
+    const hdr_bytes = std.mem.asBytes(&header);
+    const got = file.read(hdr_bytes) catch {
+        diag.* = .{
+            .file_offset = 0,
+            .message = "failed to read file header",
+        };
+        return ValidateError.Protocol;
+    };
+    if (got == 0) {
+        diag.* = .{
+            .file_offset = 0,
+            .message = "empty file",
+        };
+        return ValidateError.Protocol;
+    }
+    if (got != hdr_bytes.len) {
+        readExact(file, hdr_bytes[got..]) catch {
+            diag.* = .{
+                .file_offset = got,
+                .message = "incomplete header",
+            };
+            return ValidateError.Protocol;
+        };
+    }
+
+    current_offset = @sizeOf(Header);
+
+    // Protocol version check
+    if (header.version_major != version_major) {
+        diag.* = .{
+            .file_offset = 8, // offset of version_major in header
+            .message = "unsupported major version",
+            .expected_payload = version_major,
+            .actual_payload = header.version_major,
+        };
+        return ValidateError.VersionUnsupported;
+    }
+    if (header.version_minor > version_minor) {
+        diag.* = .{
+            .file_offset = 10, // offset of version_minor in header
+            .message = "unsupported minor version (newer than reader)",
+            .expected_payload = version_minor,
+            .actual_payload = header.version_minor,
+        };
+        return ValidateError.VersionUnsupported;
+    }
+
+    const file_end: u64 = (file.stat() catch {
+        diag.* = .{
+            .file_offset = current_offset,
+            .message = "failed to stat file",
+        };
+        return ValidateError.Protocol;
+    }).size;
+
+    while (true) {
+        var ch: ChunkHeader = undefined;
+        const ch_bytes = std.mem.asBytes(&ch);
+
+        const chunk_start = file.getPos() catch {
+            diag.* = .{
+                .file_offset = current_offset,
+                .message = "failed to get file position",
+            };
+            return ValidateError.Protocol;
+        };
+        current_offset = chunk_start;
+
+        const n0 = file.read(ch_bytes) catch {
+            diag.* = .{
+                .file_offset = current_offset,
+                .message = "failed to read chunk header",
+            };
+            return ValidateError.Protocol;
+        };
+        if (n0 == 0) break; // EOF at chunk boundary is ok
+        if (n0 != ch_bytes.len) {
+            readExact(file, ch_bytes[n0..]) catch {
+                diag.* = .{
+                    .file_offset = current_offset,
+                    .message = "incomplete chunk header",
+                };
+                return ValidateError.Protocol;
+            };
+        }
+
+        const payload_start = file.getPos() catch {
+            diag.* = .{
+                .file_offset = current_offset,
+                .message = "failed to get payload position",
+            };
+            return ValidateError.Protocol;
+        };
+
+        const hdr_sz: u64 = @sizeOf(ChunkHeader);
+        var stored_payload_span: u64 = std.mem.alignForward(u64, ch.payload_bytes, 8);
+
+        if (ch.bytes != 0) {
+            if (ch.bytes >= hdr_sz) {
+                const cap_total = ch.bytes - hdr_sz;
+                if (cap_total > stored_payload_span) stored_payload_span = cap_total;
+            } else {
+                const cap_payload = std.mem.alignForward(u64, ch.bytes, 8);
+                if (cap_payload > stored_payload_span) stored_payload_span = cap_payload;
+            }
+        }
+
+        if (payload_start + stored_payload_span > file_end) {
+            diag.* = .{
+                .file_offset = current_offset,
+                .message = "chunk extends beyond end of file",
+            };
+            return ValidateError.Protocol;
+        }
+
+        const payload_capacity: u64 = stored_payload_span;
+        if (ch.payload_bytes > @as(u64, std.math.maxInt(usize))) {
+            diag.* = .{
+                .file_offset = current_offset,
+                .message = "payload size exceeds addressable range",
+            };
+            return ValidateError.Protocol;
+        }
+
+        var remaining: usize = @intCast(ch.payload_bytes);
+        var end_seen = false;
+
+        while (remaining > 0 and !end_seen) {
+            const cmd_offset = file.getPos() catch {
+                diag.* = .{
+                    .file_offset = current_offset,
+                    .message = "failed to get command position",
+                };
+                return ValidateError.Protocol;
+            };
+            current_offset = cmd_offset;
+
+            if (remaining < @sizeOf(CmdHdr)) {
+                diag.* = .{
+                    .file_offset = current_offset,
+                    .message = "incomplete command header in chunk",
+                };
+                return ValidateError.Protocol;
+            }
+
+            var cmd: CmdHdr = undefined;
+            readExact(file, std.mem.asBytes(&cmd)) catch {
+                diag.* = .{
+                    .file_offset = current_offset,
+                    .message = "failed to read command header",
+                };
+                return ValidateError.Protocol;
+            };
+            remaining -= @sizeOf(CmdHdr);
+
+            if (cmd.payload_bytes > remaining) {
+                diag.* = .{
+                    .file_offset = current_offset,
+                    .opcode = cmd.opcode,
+                    .opcode_name = opcodeName(cmd.opcode),
+                    .message = "command payload exceeds remaining chunk bytes",
+                    .expected_payload = @intCast(remaining),
+                    .actual_payload = cmd.payload_bytes,
+                };
+                return ValidateError.Protocol;
+            }
+
+            switch (cmd.opcode) {
+                Op.RESET, Op.CLEAR_CLIP, Op.RESET_TRANSFORM, Op.END => {
+                    if (cmd.payload_bytes != 0) {
+                        diag.* = .{
+                            .file_offset = current_offset,
+                            .opcode = cmd.opcode,
+                            .opcode_name = opcodeName(cmd.opcode),
+                            .message = "opcode requires empty payload",
+                            .expected_payload = 0,
+                            .actual_payload = cmd.payload_bytes,
+                        };
+                        return ValidateError.Protocol;
+                    }
+                    if (cmd.opcode == Op.END) end_seen = true;
+                },
+
+                Op.SET_CLIP_RECTS, Op.SET_BLEND, Op.SET_TRANSFORM_2D, Op.FILL_RECT, Op.STROKE_RECT, Op.STROKE_LINE, Op.SET_STROKE_JOIN, Op.SET_STROKE_CAP, Op.BLIT_IMAGE, Op.DRAW_GLYPH_RUN => {
+                    if (cmd.payload_bytes != 0) {
+                        file.seekBy(@as(i64, @intCast(cmd.payload_bytes))) catch {
+                            diag.* = .{
+                                .file_offset = current_offset,
+                                .opcode = cmd.opcode,
+                                .opcode_name = opcodeName(cmd.opcode),
+                                .message = "failed to skip command payload",
+                            };
+                            return ValidateError.Protocol;
+                        };
+                    }
+                },
+
+                else => {
+                    diag.* = .{
+                        .file_offset = current_offset,
+                        .opcode = cmd.opcode,
+                        .opcode_name = null,
+                        .message = "unsupported opcode",
+                    };
+                    return ValidateError.UnsupportedOpcode;
+                },
+            }
+
+            remaining -= @as(usize, @intCast(cmd.payload_bytes));
+
+            const record_bytes: usize = @sizeOf(CmdHdr) + @as(usize, @intCast(cmd.payload_bytes));
+            const pad: usize = pad8Len(record_bytes);
+            if (pad != 0) {
+                if (pad > remaining) {
+                    diag.* = .{
+                        .file_offset = current_offset,
+                        .opcode = cmd.opcode,
+                        .opcode_name = opcodeName(cmd.opcode),
+                        .message = "padding exceeds remaining chunk bytes",
+                    };
+                    return ValidateError.Protocol;
+                }
+                file.seekBy(@as(i64, @intCast(pad))) catch {
+                    diag.* = .{
+                        .file_offset = current_offset,
+                        .message = "failed to skip padding",
+                    };
+                    return ValidateError.Protocol;
+                };
+                remaining -= pad;
+            }
+        }
+
+        if (!end_seen) {
+            diag.* = .{
+                .file_offset = current_offset,
+                .message = "chunk missing END command",
+            };
+            return ValidateError.Protocol;
+        }
+        if (remaining != 0) {
+            diag.* = .{
+                .file_offset = current_offset,
+                .message = "unexpected bytes after END command",
+            };
+            return ValidateError.Protocol;
+        }
+
+        if (payload_capacity > ch.payload_bytes) {
+            const chunk_pad = payload_capacity - ch.payload_bytes;
+            file.seekBy(@as(i64, @intCast(chunk_pad))) catch {
+                diag.* = .{
+                    .file_offset = current_offset,
+                    .message = "failed to skip chunk padding",
+                };
+                return ValidateError.Protocol;
+            };
         }
     }
 }
