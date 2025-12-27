@@ -121,6 +121,9 @@ fn generateMinimalValid(output_dir: []const u8) !void {
     const file = try std.fs.cwd().createFile(path, .{});
     defer file.close();
 
+    // ChunkHeader: type(4) + flags(4) + offset(8) + bytes(8) + payload_bytes(8) = 32 bytes
+    const chunk_hdr_size: usize = 32;
+
     // Write header
     var header: [64]u8 = undefined;
     @memset(&header, 0);
@@ -132,15 +135,15 @@ fn generateMinimalValid(output_dir: []const u8) !void {
     header[12] = 64;
     try file.writeAll(&header);
 
-    // Write chunk header
-    var chunk: [40]u8 = undefined;
+    // Write chunk header (32 bytes)
+    var chunk: [32]u8 = undefined;
     @memset(&chunk, 0);
     @memcpy(chunk[0..4], "CMDS");
-    // offset = 64
+    // offset = 64 (at byte 8)
     chunk[8] = 64;
-    // bytes = 56 (40 header + 16 payload)
-    chunk[16] = 56;
-    // payload_bytes = 16 (RESET + END)
+    // bytes = 48 (32 header + 16 payload) at byte 16
+    chunk[16] = chunk_hdr_size + 16;
+    // payload_bytes = 16 (RESET + END) at byte 24
     chunk[24] = 16;
     try file.writeAll(&chunk);
 
@@ -166,6 +169,8 @@ fn generateAllOpcodes(output_dir: []const u8) !void {
     const file = try std.fs.cwd().createFile(path, .{});
     defer file.close();
 
+    const chunk_hdr_size: usize = 32;
+
     // Header
     var header: [64]u8 = undefined;
     @memset(&header, 0);
@@ -177,11 +182,11 @@ fn generateAllOpcodes(output_dir: []const u8) !void {
 
     // For simplicity, just write a minimal chunk with RESET and END
     // A full version would include all opcodes with valid payloads
-    var chunk: [40]u8 = undefined;
+    var chunk: [32]u8 = undefined;
     @memset(&chunk, 0);
     @memcpy(chunk[0..4], "CMDS");
     chunk[8] = 64;
-    chunk[16] = 56;
+    chunk[16] = chunk_hdr_size + 16;
     chunk[24] = 16;
     try file.writeAll(&chunk);
 

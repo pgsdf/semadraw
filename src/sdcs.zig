@@ -866,8 +866,9 @@ test "Header struct size is 64 bytes" {
     try std.testing.expectEqual(@as(usize, 64), @sizeOf(Header));
 }
 
-test "ChunkHeader struct size is 40 bytes" {
-    try std.testing.expectEqual(@as(usize, 40), @sizeOf(ChunkHeader));
+test "ChunkHeader struct size is 32 bytes" {
+    // type(4) + flags(4) + offset(8) + bytes(8) + payload_bytes(8) = 32
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(ChunkHeader));
 }
 
 test "CmdHdr struct size is 8 bytes" {

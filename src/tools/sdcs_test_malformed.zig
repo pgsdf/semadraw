@@ -9,6 +9,9 @@ pub fn main() !void {
     var passed: u32 = 0;
     var failed: u32 = 0;
 
+    // ChunkHeader size: type(4) + flags(4) + offset(8) + bytes(8) + payload_bytes(8) = 32
+    const chunk_hdr_size: usize = 32;
+
     // Test 1: Empty file
     {
         const result = testMalformed(allocator, &[_]u8{}, "empty file");
@@ -57,91 +60,98 @@ pub fn main() !void {
 
     // Test 6: Chunk with no END command
     {
-        var buf: [64 + 40 + 8]u8 = undefined;
+        // Header(64) + ChunkHeader(32) + RESET cmd(8) = 104 bytes
+        var buf: [64 + chunk_hdr_size + 8]u8 = undefined;
+        @memset(&buf, 0);
         const header = makeValidHeader();
         @memcpy(buf[0..64], &header);
-        // Chunk header
+        // Chunk header at offset 64
         @memcpy(buf[64..68], "CMDS"); // type
         @memset(buf[68..72], 0); // flags
         writeU64LE(buf[72..80], 64); // offset
-        writeU64LE(buf[80..88], 48); // bytes (header + payload)
-        writeU64LE(buf[88..96], 8); // payload_bytes
-        // Command: RESET (no END)
-        writeU16LE(buf[104..106], sdcs.Op.RESET);
-        writeU16LE(buf[106..108], 0); // flags
-        writeU32LE(buf[108..112], 0); // payload_bytes
+        writeU64LE(buf[80..88], chunk_hdr_size + 8); // bytes (chunk header + payload)
+        writeU64LE(buf[88..96], 8); // payload_bytes (just RESET, no END)
+        // Command: RESET (no END) at offset 96
+        writeU16LE(buf[96..98], sdcs.Op.RESET);
+        writeU16LE(buf[98..100], 0); // flags
+        writeU32LE(buf[100..104], 0); // payload_bytes
         const result = testMalformedExpectError(allocator, &buf, sdcs.ValidateError.Protocol, "missing END command");
         if (result) passed += 1 else failed += 1;
     }
 
     // Test 7: Command with wrong payload size
     {
-        var buf: [64 + 40 + 16]u8 = undefined;
+        // Header(64) + ChunkHeader(32) + 2 commands(16) = 112 bytes
+        var buf: [64 + chunk_hdr_size + 16]u8 = undefined;
+        @memset(&buf, 0);
         const header = makeValidHeader();
         @memcpy(buf[0..64], &header);
         // Chunk header
         @memcpy(buf[64..68], "CMDS");
         @memset(buf[68..72], 0);
         writeU64LE(buf[72..80], 64);
-        writeU64LE(buf[80..88], 56); // bytes
+        writeU64LE(buf[80..88], chunk_hdr_size + 16); // bytes
         writeU64LE(buf[88..96], 16); // payload_bytes
-        // FILL_RECT with wrong size (should be 32, we give 0)
-        writeU16LE(buf[104..106], sdcs.Op.FILL_RECT);
+        // FILL_RECT with wrong size (should be 32, we give 0) at offset 96
+        writeU16LE(buf[96..98], sdcs.Op.FILL_RECT);
+        writeU16LE(buf[98..100], 0);
+        writeU32LE(buf[100..104], 0); // wrong!
+        // END at offset 104
+        writeU16LE(buf[104..106], sdcs.Op.END);
         writeU16LE(buf[106..108], 0);
-        writeU32LE(buf[108..112], 0); // wrong!
-        // END
-        writeU16LE(buf[112..114], sdcs.Op.END);
-        writeU16LE(buf[114..116], 0);
-        writeU32LE(buf[116..120], 0);
+        writeU32LE(buf[108..112], 0);
         const result = testMalformed(allocator, &buf, "FILL_RECT with wrong payload size");
         if (result) passed += 1 else failed += 1;
     }
 
     // Test 8: Unknown opcode
     {
-        var buf: [64 + 40 + 16]u8 = undefined;
+        var buf: [64 + chunk_hdr_size + 16]u8 = undefined;
+        @memset(&buf, 0);
         const header = makeValidHeader();
         @memcpy(buf[0..64], &header);
         // Chunk header
         @memcpy(buf[64..68], "CMDS");
         @memset(buf[68..72], 0);
         writeU64LE(buf[72..80], 64);
-        writeU64LE(buf[80..88], 56);
+        writeU64LE(buf[80..88], chunk_hdr_size + 16);
         writeU64LE(buf[88..96], 16);
-        // Unknown opcode 0xFFFF
-        writeU16LE(buf[104..106], 0xFFFF);
+        // Unknown opcode 0xFFFF at offset 96
+        writeU16LE(buf[96..98], 0xFFFF);
+        writeU16LE(buf[98..100], 0);
+        writeU32LE(buf[100..104], 0);
+        // END at offset 104
+        writeU16LE(buf[104..106], sdcs.Op.END);
         writeU16LE(buf[106..108], 0);
         writeU32LE(buf[108..112], 0);
-        // END
-        writeU16LE(buf[112..114], sdcs.Op.END);
-        writeU16LE(buf[114..116], 0);
-        writeU32LE(buf[116..120], 0);
         const result = testMalformedExpectError(allocator, &buf, sdcs.ValidateError.UnsupportedOpcode, "unknown opcode");
         if (result) passed += 1 else failed += 1;
     }
 
     // Test 9: Payload extends beyond chunk
     {
-        var buf: [64 + 40 + 8]u8 = undefined;
+        var buf: [64 + chunk_hdr_size + 8]u8 = undefined;
+        @memset(&buf, 0);
         const header = makeValidHeader();
         @memcpy(buf[0..64], &header);
         // Chunk header
         @memcpy(buf[64..68], "CMDS");
         @memset(buf[68..72], 0);
         writeU64LE(buf[72..80], 64);
-        writeU64LE(buf[80..88], 48);
+        writeU64LE(buf[80..88], chunk_hdr_size + 8);
         writeU64LE(buf[88..96], 8); // only 8 bytes of payload
-        // Command claims 100 bytes of payload
-        writeU16LE(buf[104..106], sdcs.Op.RESET);
-        writeU16LE(buf[106..108], 0);
-        writeU32LE(buf[108..112], 100); // way too big!
+        // Command claims 100 bytes of payload at offset 96
+        writeU16LE(buf[96..98], sdcs.Op.RESET);
+        writeU16LE(buf[98..100], 0);
+        writeU32LE(buf[100..104], 100); // way too big!
         const result = testMalformedExpectError(allocator, &buf, sdcs.ValidateError.Protocol, "payload exceeds chunk");
         if (result) passed += 1 else failed += 1;
     }
 
     // Test 10: Chunk extends beyond file
     {
-        var buf: [64 + 40]u8 = undefined;
+        var buf: [64 + chunk_hdr_size]u8 = undefined;
+        @memset(&buf, 0);
         const header = makeValidHeader();
         @memcpy(buf[0..64], &header);
         // Chunk header claiming more data than file contains
