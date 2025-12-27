@@ -199,6 +199,32 @@ pub fn build(b: *std.Build) void {
     sdcs_replay.root_module.addImport("sdcs", sdcs_mod);
     b.installArtifact(sdcs_replay);
 
+    // Test tool for malformed inputs
+    const sdcs_test_malformed = b.addExecutable(.{
+        .name = "sdcs_test_malformed",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tools/sdcs_test_malformed.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    sdcs_test_malformed.root_module.addImport("semadraw", semadraw_mod);
+    sdcs_test_malformed.root_module.addImport("sdcs", sdcs_mod);
+    b.installArtifact(sdcs_test_malformed);
+
+    // Fuzzing harness
+    const sdcs_fuzz = b.addExecutable(.{
+        .name = "sdcs_fuzz",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tools/sdcs_fuzz.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    sdcs_fuzz.root_module.addImport("semadraw", semadraw_mod);
+    sdcs_fuzz.root_module.addImport("sdcs", sdcs_mod);
+    b.installArtifact(sdcs_fuzz);
+
     // Unit tests
     const tests = b.addTest(.{
         .root_module = b.createModule(.{

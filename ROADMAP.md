@@ -16,29 +16,18 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 * Caps v1 (butt, square)
 * Caps v2 (round)
 * Joins v2 (round join)
+* Code style cleanup (encoder.zig indentation, struct organization)
+* Enhanced validation diagnostics (opcodeName, ValidationDiagnostics, validateFileWithDiagnostics)
+* Unit tests for core validation logic (sdcs.zig)
+* Malformed input test suite (sdcs_test_malformed)
+* Fuzzing harness (sdcs_fuzz with AFL/libFuzzer support)
+* Determinism verification in test suite
 
 ## In Progress
 
 * Miter limit (miter clamp fallback to bevel)
 
 ## Next
-
-### Code Quality
-
-* Code style cleanup (fix indentation inconsistencies in encoder.zig)
-* Consistent method visibility and struct organization in encoder module
-
-### Error Reporting
-
-* Enhanced validation error context (file offsets, opcode names, field values)
-* Structured error types with diagnostic details for debugging
-
-### Testing Infrastructure
-
-* Fuzzing harness for SDCS parser and validator
-* Unit tests for core validation logic
-* Error condition test cases (malformed inputs, boundary conditions)
-* Cross-platform determinism verification
 
 ### Features
 

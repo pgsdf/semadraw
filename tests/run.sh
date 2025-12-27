@@ -1,6 +1,18 @@
 set -eu
 
+echo "=== Building ==="
 zig build
+
+echo ""
+echo "=== Running Unit Tests ==="
+zig build test
+
+echo ""
+echo "=== Running Malformed Input Tests ==="
+./zig-out/bin/sdcs_test_malformed
+
+echo ""
+echo "=== Running Golden Image Tests ==="
 
 mkdir -p tests/out
 ./zig-out/bin/sdcs_make_test tests/out/test.sdcs
@@ -168,4 +180,41 @@ if [ "$hash_six" != "$expected_six" ]; then
   exit 1
 fi
 
-echo "tests ok"
+echo "Golden image tests passed"
+
+echo ""
+echo "=== Determinism Verification ==="
+# Run the same SDCS file multiple times and verify identical output
+mkdir -p tests/out/determinism
+
+./zig-out/bin/sdcs_make_test tests/out/determinism/test.sdcs
+./zig-out/bin/sdcs_replay tests/out/determinism/test.sdcs tests/out/determinism/run1.ppm 256 256
+./zig-out/bin/sdcs_replay tests/out/determinism/test.sdcs tests/out/determinism/run2.ppm 256 256
+./zig-out/bin/sdcs_replay tests/out/determinism/test.sdcs tests/out/determinism/run3.ppm 256 256
+
+det_hash_1=""
+det_hash_2=""
+det_hash_3=""
+
+if command -v sha256 >/dev/null 2>&1; then
+  det_hash_1=$(sha256 -q tests/out/determinism/run1.ppm)
+  det_hash_2=$(sha256 -q tests/out/determinism/run2.ppm)
+  det_hash_3=$(sha256 -q tests/out/determinism/run3.ppm)
+elif command -v sha256sum >/dev/null 2>&1; then
+  det_hash_1=$(sha256sum tests/out/determinism/run1.ppm | awk '{print $1}')
+  det_hash_2=$(sha256sum tests/out/determinism/run2.ppm | awk '{print $1}')
+  det_hash_3=$(sha256sum tests/out/determinism/run3.ppm | awk '{print $1}')
+fi
+
+if [ "$det_hash_1" != "$det_hash_2" ] || [ "$det_hash_1" != "$det_hash_3" ]; then
+  echo "FAIL: Determinism check failed - multiple runs produced different output"
+  echo "Run 1: $det_hash_1"
+  echo "Run 2: $det_hash_2"
+  echo "Run 3: $det_hash_3"
+  exit 1
+fi
+
+echo "Determinism verification passed (3 runs identical)"
+
+echo ""
+echo "=== All Tests Passed ==="
