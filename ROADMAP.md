@@ -33,13 +33,21 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 
 ## Next
 
-### Features
-* (no pending items)
+### Architecture
+* semadrawd service (surface ownership, composition, presentation daemon)
+* Host bridge (IPC between clients and semadrawd)
+
+### Backends
+* DRM KMS presentation backend (direct framebuffer output)
+* Vulkan backend (GPU-accelerated rendering)
+
+### Performance
+* SIMD vectorization for rasterization (SSE/AVX, NEON)
+
+### Integration
+* Toolkit bridges (X11, Wayland host integration)
+* Remote transport (SDCS streaming over network)
 
 ## Later
 
-* Performance optimization (SIMD vectorization for rasterization)
-* semadrawd service and host bridge
-* Vulkan backend
-* DRM KMS presentation backend
-* Toolkit bridges and remote transport
+* (items move here as new features are identified)
