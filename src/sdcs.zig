@@ -83,6 +83,8 @@ pub const Op = struct {
     pub const SET_STROKE_JOIN: u16 = 0x0013;
     pub const SET_STROKE_CAP: u16 = 0x0014;
     pub const SET_MITER_LIMIT: u16 = 0x0015;
+    pub const STROKE_QUAD_BEZIER: u16 = 0x0016;
+    pub const STROKE_CUBIC_BEZIER: u16 = 0x0017;
     pub const BLIT_IMAGE: u16 = 0x0020;
     pub const DRAW_GLYPH_RUN: u16 = 0x0030;
     pub const END: u16 = 0x00F0;
@@ -148,6 +150,8 @@ pub fn opcodeName(opcode: u16) ?[]const u8 {
         Op.SET_STROKE_JOIN => "SET_STROKE_JOIN",
         Op.SET_STROKE_CAP => "SET_STROKE_CAP",
         Op.SET_MITER_LIMIT => "SET_MITER_LIMIT",
+        Op.STROKE_QUAD_BEZIER => "STROKE_QUAD_BEZIER",
+        Op.STROKE_CUBIC_BEZIER => "STROKE_CUBIC_BEZIER",
         Op.BLIT_IMAGE => "BLIT_IMAGE",
         Op.DRAW_GLYPH_RUN => "DRAW_GLYPH_RUN",
         Op.END => "END",
@@ -438,6 +442,8 @@ pub fn validateFile(file: std.fs.File) ValidateError!void {
                 Op.SET_STROKE_JOIN,
                 Op.SET_STROKE_CAP,
                 Op.SET_MITER_LIMIT,
+                Op.STROKE_QUAD_BEZIER,
+                Op.STROKE_CUBIC_BEZIER,
                 Op.BLIT_IMAGE,
                 Op.DRAW_GLYPH_RUN,
                 => {
@@ -665,7 +671,7 @@ pub fn validateFileWithDiagnostics(file: std.fs.File, diag: *ValidationDiagnosti
                     if (cmd.opcode == Op.END) end_seen = true;
                 },
 
-                Op.SET_CLIP_RECTS, Op.SET_BLEND, Op.SET_TRANSFORM_2D, Op.FILL_RECT, Op.STROKE_RECT, Op.STROKE_LINE, Op.SET_STROKE_JOIN, Op.SET_STROKE_CAP, Op.SET_MITER_LIMIT, Op.BLIT_IMAGE, Op.DRAW_GLYPH_RUN => {
+                Op.SET_CLIP_RECTS, Op.SET_BLEND, Op.SET_TRANSFORM_2D, Op.FILL_RECT, Op.STROKE_RECT, Op.STROKE_LINE, Op.SET_STROKE_JOIN, Op.SET_STROKE_CAP, Op.SET_MITER_LIMIT, Op.STROKE_QUAD_BEZIER, Op.STROKE_CUBIC_BEZIER, Op.BLIT_IMAGE, Op.DRAW_GLYPH_RUN => {
                     if (cmd.payload_bytes != 0) {
                         file.seekBy(@as(i64, @intCast(cmd.payload_bytes))) catch {
                             diag.* = .{
@@ -760,6 +766,8 @@ test "opcodeName returns correct names for known opcodes" {
     try std.testing.expectEqualStrings("SET_STROKE_JOIN", opcodeName(Op.SET_STROKE_JOIN).?);
     try std.testing.expectEqualStrings("SET_STROKE_CAP", opcodeName(Op.SET_STROKE_CAP).?);
     try std.testing.expectEqualStrings("SET_MITER_LIMIT", opcodeName(Op.SET_MITER_LIMIT).?);
+    try std.testing.expectEqualStrings("STROKE_QUAD_BEZIER", opcodeName(Op.STROKE_QUAD_BEZIER).?);
+    try std.testing.expectEqualStrings("STROKE_CUBIC_BEZIER", opcodeName(Op.STROKE_CUBIC_BEZIER).?);
     try std.testing.expectEqualStrings("BLIT_IMAGE", opcodeName(Op.BLIT_IMAGE).?);
     try std.testing.expectEqualStrings("DRAW_GLYPH_RUN", opcodeName(Op.DRAW_GLYPH_RUN).?);
     try std.testing.expectEqualStrings("END", opcodeName(Op.END).?);

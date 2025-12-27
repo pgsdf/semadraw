@@ -51,6 +51,24 @@ Values:
 
 Cap state affects subsequent stroke operations.
 
+## STROKE_QUAD_BEZIER
+
+Payload: 44 bytes
+
+Fields: x0, y0, cx, cy, x1, y1, stroke_width, r, g, b, a (all f32)
+
+Strokes a quadratic Bezier curve from (x0,y0) through control point (cx,cy) to (x1,y1).
+The curve is affected by the current transform, clip, and blend state.
+
+## STROKE_CUBIC_BEZIER
+
+Payload: 52 bytes
+
+Fields: x0, y0, cx1, cy1, cx2, cy2, x1, y1, stroke_width, r, g, b, a (all f32)
+
+Strokes a cubic Bezier curve from (x0,y0) through control points (cx1,cy1) and (cx2,cy2) to (x1,y1).
+The curve is affected by the current transform, clip, and blend state.
+
 ## BLIT_IMAGE
 
 Payload: 16 + (img_w × img_h × 4) bytes
