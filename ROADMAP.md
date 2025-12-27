@@ -18,19 +18,16 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 * Joins v2 (round join)
 * Code style cleanup (encoder.zig indentation, struct organization)
 * Enhanced validation diagnostics (opcodeName, ValidationDiagnostics, validateFileWithDiagnostics)
+* Unit tests for core validation logic (sdcs.zig)
+* Malformed input test suite (sdcs_test_malformed)
+* Fuzzing harness (sdcs_fuzz with AFL/libFuzzer support)
+* Determinism verification in test suite
 
 ## In Progress
 
 * Miter limit (miter clamp fallback to bevel)
 
 ## Next
-
-### Testing Infrastructure
-
-* Fuzzing harness for SDCS parser and validator
-* Unit tests for core validation logic
-* Error condition test cases (malformed inputs, boundary conditions)
-* Cross-platform determinism verification
 
 ### Features
 

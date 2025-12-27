@@ -1,0 +1,250 @@
+const std = @import("std");
+const sdcs = @import("sdcs");
+
+/// Test harness for malformed SDCS input validation.
+/// Generates various malformed SDCS files and verifies the validator rejects them correctly.
+pub fn main() !void {
+    const allocator = std.heap.page_allocator;
+
+    var passed: u32 = 0;
+    var failed: u32 = 0;
+
+    // Test 1: Empty file
+    {
+        const result = testMalformed(allocator, &[_]u8{}, "empty file");
+        if (result) passed += 1 else failed += 1;
+    }
+
+    // Test 2: Truncated header (only magic)
+    {
+        const result = testMalformed(allocator, "SDCS0001", "truncated header");
+        if (result) passed += 1 else failed += 1;
+    }
+
+    // Test 3: Wrong magic
+    {
+        var buf: [64]u8 = undefined;
+        @memset(&buf, 0);
+        @memcpy(buf[0..8], "BADMAGIC");
+        // Set valid version
+        buf[8] = 0;
+        buf[9] = 0; // major = 0
+        buf[10] = 1;
+        buf[11] = 0; // minor = 1
+        buf[12] = 64;
+        buf[13] = 0;
+        buf[14] = 0;
+        buf[15] = 0; // header_bytes = 64
+        const result = testMalformed(allocator, &buf, "wrong magic prefix");
+        if (result) passed += 1 else failed += 1;
+    }
+
+    // Test 4: Wrong major version
+    {
+        var buf = makeValidHeader();
+        buf[8] = 1; // major = 1 (unsupported)
+        const result = testMalformedExpectError(allocator, &buf, sdcs.ValidateError.VersionUnsupported, "wrong major version");
+        if (result) passed += 1 else failed += 1;
+    }
+
+    // Test 5: Future minor version
+    {
+        var buf = makeValidHeader();
+        buf[10] = 99; // minor = 99 (future)
+        const result = testMalformedExpectError(allocator, &buf, sdcs.ValidateError.VersionUnsupported, "future minor version");
+        if (result) passed += 1 else failed += 1;
+    }
+
+    // Test 6: Chunk with no END command
+    {
+        var buf: [64 + 40 + 8]u8 = undefined;
+        const header = makeValidHeader();
+        @memcpy(buf[0..64], &header);
+        // Chunk header
+        @memcpy(buf[64..68], "CMDS"); // type
+        @memset(buf[68..72], 0); // flags
+        writeU64LE(buf[72..80], 64); // offset
+        writeU64LE(buf[80..88], 48); // bytes (header + payload)
+        writeU64LE(buf[88..96], 8); // payload_bytes
+        // Command: RESET (no END)
+        writeU16LE(buf[104..106], sdcs.Op.RESET);
+        writeU16LE(buf[106..108], 0); // flags
+        writeU32LE(buf[108..112], 0); // payload_bytes
+        const result = testMalformedExpectError(allocator, &buf, sdcs.ValidateError.Protocol, "missing END command");
+        if (result) passed += 1 else failed += 1;
+    }
+
+    // Test 7: Command with wrong payload size
+    {
+        var buf: [64 + 40 + 16]u8 = undefined;
+        const header = makeValidHeader();
+        @memcpy(buf[0..64], &header);
+        // Chunk header
+        @memcpy(buf[64..68], "CMDS");
+        @memset(buf[68..72], 0);
+        writeU64LE(buf[72..80], 64);
+        writeU64LE(buf[80..88], 56); // bytes
+        writeU64LE(buf[88..96], 16); // payload_bytes
+        // FILL_RECT with wrong size (should be 32, we give 0)
+        writeU16LE(buf[104..106], sdcs.Op.FILL_RECT);
+        writeU16LE(buf[106..108], 0);
+        writeU32LE(buf[108..112], 0); // wrong!
+        // END
+        writeU16LE(buf[112..114], sdcs.Op.END);
+        writeU16LE(buf[114..116], 0);
+        writeU32LE(buf[116..120], 0);
+        const result = testMalformed(allocator, &buf, "FILL_RECT with wrong payload size");
+        if (result) passed += 1 else failed += 1;
+    }
+
+    // Test 8: Unknown opcode
+    {
+        var buf: [64 + 40 + 16]u8 = undefined;
+        const header = makeValidHeader();
+        @memcpy(buf[0..64], &header);
+        // Chunk header
+        @memcpy(buf[64..68], "CMDS");
+        @memset(buf[68..72], 0);
+        writeU64LE(buf[72..80], 64);
+        writeU64LE(buf[80..88], 56);
+        writeU64LE(buf[88..96], 16);
+        // Unknown opcode 0xFFFF
+        writeU16LE(buf[104..106], 0xFFFF);
+        writeU16LE(buf[106..108], 0);
+        writeU32LE(buf[108..112], 0);
+        // END
+        writeU16LE(buf[112..114], sdcs.Op.END);
+        writeU16LE(buf[114..116], 0);
+        writeU32LE(buf[116..120], 0);
+        const result = testMalformedExpectError(allocator, &buf, sdcs.ValidateError.UnsupportedOpcode, "unknown opcode");
+        if (result) passed += 1 else failed += 1;
+    }
+
+    // Test 9: Payload extends beyond chunk
+    {
+        var buf: [64 + 40 + 8]u8 = undefined;
+        const header = makeValidHeader();
+        @memcpy(buf[0..64], &header);
+        // Chunk header
+        @memcpy(buf[64..68], "CMDS");
+        @memset(buf[68..72], 0);
+        writeU64LE(buf[72..80], 64);
+        writeU64LE(buf[80..88], 48);
+        writeU64LE(buf[88..96], 8); // only 8 bytes of payload
+        // Command claims 100 bytes of payload
+        writeU16LE(buf[104..106], sdcs.Op.RESET);
+        writeU16LE(buf[106..108], 0);
+        writeU32LE(buf[108..112], 100); // way too big!
+        const result = testMalformedExpectError(allocator, &buf, sdcs.ValidateError.Protocol, "payload exceeds chunk");
+        if (result) passed += 1 else failed += 1;
+    }
+
+    // Test 10: Chunk extends beyond file
+    {
+        var buf: [64 + 40]u8 = undefined;
+        const header = makeValidHeader();
+        @memcpy(buf[0..64], &header);
+        // Chunk header claiming more data than file contains
+        @memcpy(buf[64..68], "CMDS");
+        @memset(buf[68..72], 0);
+        writeU64LE(buf[72..80], 64);
+        writeU64LE(buf[80..88], 1000); // way bigger than file
+        writeU64LE(buf[88..96], 960);
+        const result = testMalformedExpectError(allocator, &buf, sdcs.ValidateError.Protocol, "chunk beyond EOF");
+        if (result) passed += 1 else failed += 1;
+    }
+
+    // Summary
+    const stdout = std.io.getStdOut().writer();
+    try stdout.print("\n=== Malformed Input Tests ===\n", .{});
+    try stdout.print("Passed: {d}\n", .{passed});
+    try stdout.print("Failed: {d}\n", .{failed});
+    try stdout.print("Total:  {d}\n", .{passed + failed});
+
+    if (failed > 0) {
+        std.process.exit(1);
+    }
+}
+
+fn makeValidHeader() [64]u8 {
+    var buf: [64]u8 = undefined;
+    @memset(&buf, 0);
+    @memcpy(buf[0..8], sdcs.Magic);
+    buf[8] = sdcs.version_major & 0xff;
+    buf[9] = (sdcs.version_major >> 8) & 0xff;
+    buf[10] = sdcs.version_minor & 0xff;
+    buf[11] = (sdcs.version_minor >> 8) & 0xff;
+    buf[12] = 64; // header_bytes
+    return buf;
+}
+
+fn writeU16LE(buf: *[2]u8, val: u16) void {
+    buf[0] = @intCast(val & 0xff);
+    buf[1] = @intCast((val >> 8) & 0xff);
+}
+
+fn writeU32LE(buf: *[4]u8, val: u32) void {
+    buf[0] = @intCast(val & 0xff);
+    buf[1] = @intCast((val >> 8) & 0xff);
+    buf[2] = @intCast((val >> 16) & 0xff);
+    buf[3] = @intCast((val >> 24) & 0xff);
+}
+
+fn writeU64LE(buf: *[8]u8, val: u64) void {
+    buf[0] = @intCast(val & 0xff);
+    buf[1] = @intCast((val >> 8) & 0xff);
+    buf[2] = @intCast((val >> 16) & 0xff);
+    buf[3] = @intCast((val >> 24) & 0xff);
+    buf[4] = @intCast((val >> 32) & 0xff);
+    buf[5] = @intCast((val >> 40) & 0xff);
+    buf[6] = @intCast((val >> 48) & 0xff);
+    buf[7] = @intCast((val >> 56) & 0xff);
+}
+
+fn testMalformed(allocator: std.mem.Allocator, data: []const u8, name: []const u8) bool {
+    return testMalformedExpectError(allocator, data, null, name);
+}
+
+fn testMalformedExpectError(allocator: std.mem.Allocator, data: []const u8, expected_error: ?sdcs.ValidateError, name: []const u8) bool {
+    _ = allocator;
+    const stdout = std.io.getStdOut().writer();
+
+    // Write data to a temporary file
+    const tmp_path = "/tmp/sdcs_malformed_test.sdcs";
+    const file = std.fs.cwd().createFile(tmp_path, .{}) catch |err| {
+        stdout.print("FAIL [{s}]: could not create temp file: {any}\n", .{ name, err }) catch {};
+        return false;
+    };
+    defer file.close();
+    file.writeAll(data) catch |err| {
+        stdout.print("FAIL [{s}]: could not write temp file: {any}\n", .{ name, err }) catch {};
+        return false;
+    };
+
+    // Re-open for reading
+    const read_file = std.fs.cwd().openFile(tmp_path, .{}) catch |err| {
+        stdout.print("FAIL [{s}]: could not open temp file: {any}\n", .{ name, err }) catch {};
+        return false;
+    };
+    defer read_file.close();
+
+    // Validate with diagnostics
+    var diag = sdcs.ValidationDiagnostics{};
+    const result = sdcs.validateFileWithDiagnostics(read_file, &diag);
+
+    if (result) |_| {
+        // Validation succeeded - this is a failure for malformed input tests
+        stdout.print("FAIL [{s}]: validation should have failed but succeeded\n", .{name}) catch {};
+        return false;
+    } else |err| {
+        // Validation failed as expected
+        if (expected_error) |exp| {
+            if (err != exp) {
+                stdout.print("FAIL [{s}]: expected {any}, got {any}\n", .{ name, exp, err }) catch {};
+                return false;
+            }
+        }
+        stdout.print("PASS [{s}]: rejected with \"{s}\" at offset 0x{x}\n", .{ name, diag.message, diag.file_offset }) catch {};
+        return true;
+    }
+}

@@ -733,3 +733,153 @@ pub fn validateFileWithDiagnostics(file: std.fs.File, diag: *ValidationDiagnosti
         }
     }
 }
+
+// =============================================================================
+// Unit Tests
+// =============================================================================
+
+test "opcodeName returns correct names for known opcodes" {
+    try std.testing.expectEqualStrings("RESET", opcodeName(Op.RESET).?);
+    try std.testing.expectEqualStrings("SET_CLIP_RECTS", opcodeName(Op.SET_CLIP_RECTS).?);
+    try std.testing.expectEqualStrings("CLEAR_CLIP", opcodeName(Op.CLEAR_CLIP).?);
+    try std.testing.expectEqualStrings("SET_BLEND", opcodeName(Op.SET_BLEND).?);
+    try std.testing.expectEqualStrings("SET_TRANSFORM_2D", opcodeName(Op.SET_TRANSFORM_2D).?);
+    try std.testing.expectEqualStrings("RESET_TRANSFORM", opcodeName(Op.RESET_TRANSFORM).?);
+    try std.testing.expectEqualStrings("FILL_RECT", opcodeName(Op.FILL_RECT).?);
+    try std.testing.expectEqualStrings("STROKE_RECT", opcodeName(Op.STROKE_RECT).?);
+    try std.testing.expectEqualStrings("STROKE_LINE", opcodeName(Op.STROKE_LINE).?);
+    try std.testing.expectEqualStrings("SET_STROKE_JOIN", opcodeName(Op.SET_STROKE_JOIN).?);
+    try std.testing.expectEqualStrings("SET_STROKE_CAP", opcodeName(Op.SET_STROKE_CAP).?);
+    try std.testing.expectEqualStrings("BLIT_IMAGE", opcodeName(Op.BLIT_IMAGE).?);
+    try std.testing.expectEqualStrings("DRAW_GLYPH_RUN", opcodeName(Op.DRAW_GLYPH_RUN).?);
+    try std.testing.expectEqualStrings("END", opcodeName(Op.END).?);
+}
+
+test "opcodeName returns null for unknown opcodes" {
+    try std.testing.expectEqual(@as(?[]const u8, null), opcodeName(0x0000));
+    try std.testing.expectEqual(@as(?[]const u8, null), opcodeName(0xFFFF));
+    try std.testing.expectEqual(@as(?[]const u8, null), opcodeName(0x00FF));
+}
+
+test "isFiniteF32Bits detects finite values" {
+    // Zero
+    try std.testing.expect(isFiniteF32Bits(0x00000000));
+    // Negative zero
+    try std.testing.expect(isFiniteF32Bits(0x80000000));
+    // One (1.0f)
+    try std.testing.expect(isFiniteF32Bits(0x3F800000));
+    // Negative one (-1.0f)
+    try std.testing.expect(isFiniteF32Bits(0xBF800000));
+    // Small denormal
+    try std.testing.expect(isFiniteF32Bits(0x00000001));
+    // Max finite
+    try std.testing.expect(isFiniteF32Bits(0x7F7FFFFF));
+}
+
+test "isFiniteF32Bits detects infinity and NaN" {
+    // Positive infinity
+    try std.testing.expect(!isFiniteF32Bits(0x7F800000));
+    // Negative infinity
+    try std.testing.expect(!isFiniteF32Bits(0xFF800000));
+    // Quiet NaN
+    try std.testing.expect(!isFiniteF32Bits(0x7FC00000));
+    // Signaling NaN
+    try std.testing.expect(!isFiniteF32Bits(0x7F800001));
+}
+
+test "pad8Len computes correct padding" {
+    try std.testing.expectEqual(@as(usize, 0), pad8Len(0));
+    try std.testing.expectEqual(@as(usize, 7), pad8Len(1));
+    try std.testing.expectEqual(@as(usize, 6), pad8Len(2));
+    try std.testing.expectEqual(@as(usize, 1), pad8Len(7));
+    try std.testing.expectEqual(@as(usize, 0), pad8Len(8));
+    try std.testing.expectEqual(@as(usize, 7), pad8Len(9));
+    try std.testing.expectEqual(@as(usize, 0), pad8Len(16));
+    try std.testing.expectEqual(@as(usize, 0), pad8Len(24));
+}
+
+test "fourcc produces correct values" {
+    try std.testing.expectEqual(ChunkType.CMDS, fourcc('C', 'M', 'D', 'S'));
+    try std.testing.expectEqual(ChunkType.RSRC, fourcc('R', 'S', 'R', 'C'));
+    try std.testing.expectEqual(ChunkType.DATA, fourcc('D', 'A', 'T', 'A'));
+    try std.testing.expectEqual(ChunkType.META, fourcc('M', 'E', 'T', 'A'));
+}
+
+test "validateOpcodePayload rejects wrong payload sizes" {
+    // RESET requires 0 bytes
+    try std.testing.expectError(ValidateError.Protocol, validateOpcodePayload(Op.RESET, 4));
+    // FILL_RECT requires 32 bytes
+    try std.testing.expectError(ValidateError.Protocol, validateOpcodePayload(Op.FILL_RECT, 0));
+    try std.testing.expectError(ValidateError.Protocol, validateOpcodePayload(Op.FILL_RECT, 16));
+    // SET_BLEND requires 4 bytes
+    try std.testing.expectError(ValidateError.Protocol, validateOpcodePayload(Op.SET_BLEND, 0));
+    try std.testing.expectError(ValidateError.Protocol, validateOpcodePayload(Op.SET_BLEND, 8));
+    // SET_TRANSFORM_2D requires 24 bytes
+    try std.testing.expectError(ValidateError.Protocol, validateOpcodePayload(Op.SET_TRANSFORM_2D, 0));
+    try std.testing.expectError(ValidateError.Protocol, validateOpcodePayload(Op.SET_TRANSFORM_2D, 12));
+    // STROKE_RECT requires 36 bytes
+    try std.testing.expectError(ValidateError.Protocol, validateOpcodePayload(Op.STROKE_RECT, 32));
+    // Unknown opcode
+    try std.testing.expectError(ValidateError.UnsupportedOpcode, validateOpcodePayload(0xFFFF, 0));
+}
+
+test "validateOpcodePayload accepts correct payload sizes" {
+    try validateOpcodePayload(Op.RESET, 0);
+    try validateOpcodePayload(Op.CLEAR_CLIP, 0);
+    try validateOpcodePayload(Op.RESET_TRANSFORM, 0);
+    try validateOpcodePayload(Op.END, 0);
+    try validateOpcodePayload(Op.FILL_RECT, 32);
+    try validateOpcodePayload(Op.SET_BLEND, 4);
+    try validateOpcodePayload(Op.SET_TRANSFORM_2D, 24);
+    try validateOpcodePayload(Op.STROKE_RECT, 36);
+    try validateOpcodePayload(Op.STROKE_LINE, 36);
+    try validateOpcodePayload(Op.SET_STROKE_JOIN, 4);
+    try validateOpcodePayload(Op.SET_STROKE_CAP, 4);
+}
+
+test "SET_CLIP_RECTS payload validation" {
+    // Minimum valid: 4 bytes for count (0 rects)
+    try validateOpcodePayload(Op.SET_CLIP_RECTS, 4);
+    // 1 rect: 4 + 16 = 20 bytes
+    try validateOpcodePayload(Op.SET_CLIP_RECTS, 20);
+    // 2 rects: 4 + 32 = 36 bytes
+    try validateOpcodePayload(Op.SET_CLIP_RECTS, 36);
+    // Invalid: less than 4 bytes
+    try std.testing.expectError(ValidateError.Protocol, validateOpcodePayload(Op.SET_CLIP_RECTS, 0));
+    try std.testing.expectError(ValidateError.Protocol, validateOpcodePayload(Op.SET_CLIP_RECTS, 3));
+    // Invalid: not aligned to rect size
+    try std.testing.expectError(ValidateError.Protocol, validateOpcodePayload(Op.SET_CLIP_RECTS, 5));
+    try std.testing.expectError(ValidateError.Protocol, validateOpcodePayload(Op.SET_CLIP_RECTS, 10));
+}
+
+test "ValidationDiagnostics default values" {
+    const diag = ValidationDiagnostics{};
+    try std.testing.expectEqual(@as(u64, 0), diag.file_offset);
+    try std.testing.expectEqual(@as(u16, 0), diag.opcode);
+    try std.testing.expectEqual(@as(?[]const u8, null), diag.opcode_name);
+    try std.testing.expectEqual(@as(u32, 0), diag.expected_payload);
+    try std.testing.expectEqual(@as(u32, 0), diag.actual_payload);
+    try std.testing.expectEqualStrings("", diag.message);
+}
+
+test "Header struct size is 64 bytes" {
+    try std.testing.expectEqual(@as(usize, 64), @sizeOf(Header));
+}
+
+test "ChunkHeader struct size is 40 bytes" {
+    try std.testing.expectEqual(@as(usize, 40), @sizeOf(ChunkHeader));
+}
+
+test "CmdHdr struct size is 8 bytes" {
+    try std.testing.expectEqual(@as(usize, 8), @sizeOf(CmdHdr));
+}
+
+test "Magic string is correct" {
+    try std.testing.expectEqualStrings("SDCS0001", Magic);
+    try std.testing.expectEqualStrings("SDCS", MagicPrefix);
+}
+
+test "version constants" {
+    try std.testing.expectEqual(@as(u16, 0), version_major);
+    try std.testing.expectEqual(@as(u16, 1), version_minor);
+}
