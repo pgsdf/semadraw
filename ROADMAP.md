@@ -16,22 +16,14 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 * Caps v1 (butt, square)
 * Caps v2 (round)
 * Joins v2 (round join)
+* Code style cleanup (encoder.zig indentation, struct organization)
+* Enhanced validation diagnostics (opcodeName, ValidationDiagnostics, validateFileWithDiagnostics)
 
 ## In Progress
 
 * Miter limit (miter clamp fallback to bevel)
 
 ## Next
-
-### Code Quality
-
-* Code style cleanup (fix indentation inconsistencies in encoder.zig)
-* Consistent method visibility and struct organization in encoder module
-
-### Error Reporting
-
-* Enhanced validation error context (file offsets, opcode names, field values)
-* Structured error types with diagnostic details for debugging
 
 ### Testing Infrastructure
 
