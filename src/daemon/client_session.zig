@@ -58,7 +58,7 @@ pub const ClientSession = struct {
     state: SessionState,
     limits: ResourceLimits,
     usage: ResourceUsage,
-    surfaces: std.ArrayList(protocol.SurfaceId),
+    surfaces: std.ArrayListUnmanaged(protocol.SurfaceId),
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator, id: protocol.ClientId, fd: posix.socket_t) ClientSession {
@@ -68,14 +68,14 @@ pub const ClientSession = struct {
             .state = .awaiting_hello,
             .limits = .{},
             .usage = .{},
-            .surfaces = std.ArrayList(protocol.SurfaceId).init(allocator),
+            .surfaces = .{},
             .allocator = allocator,
         };
     }
 
     pub fn deinit(self: *ClientSession) void {
         self.socket.close();
-        self.surfaces.deinit();
+        self.surfaces.deinit(self.allocator);
     }
 
     pub fn getFd(self: *ClientSession) posix.socket_t {
@@ -97,7 +97,7 @@ pub const ClientSession = struct {
 
     /// Track a new surface owned by this client
     pub fn addSurface(self: *ClientSession, surface_id: protocol.SurfaceId, width: f32, height: f32) !void {
-        try self.surfaces.append(surface_id);
+        try self.surfaces.append(self.allocator, surface_id);
         self.usage.addSurface(width, height);
     }
 
