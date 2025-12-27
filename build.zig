@@ -315,6 +315,17 @@ pub fn build(b: *std.Build) void {
     sdcs_fuzz.root_module.addImport("sdcs", sdcs_mod);
     b.installArtifact(sdcs_fuzz);
 
+    // semadrawd daemon
+    const semadrawd = b.addExecutable(.{
+        .name = "semadrawd",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/daemon/semadrawd.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    b.installArtifact(semadrawd);
+
     // Unit tests
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
