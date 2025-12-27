@@ -242,6 +242,38 @@ pub const Encoder = struct {
         try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.SET_MITER_LIMIT, payload[0..]);
     }
 
+    /// Blit an RGBA image at the specified destination position.
+    /// The image is drawn at 1:1 scale, affected by the current transform.
+    /// Payload format: dst_x(f32), dst_y(f32), img_w(u32), img_h(u32), pixels(RGBA bytes)
+    pub fn blitImage(
+        self: *Encoder,
+        dst_x: f32,
+        dst_y: f32,
+        img_w: u32,
+        img_h: u32,
+        pixels: []const u8,
+    ) !void {
+        const expected_len: usize = @as(usize, img_w) * @as(usize, img_h) * 4;
+        if (pixels.len != expected_len) return error.InvalidArgument;
+        if (img_w == 0 or img_h == 0) return error.InvalidArgument;
+
+        // Header: dst_x, dst_y (f32), img_w, img_h (u32) = 16 bytes
+        const header_len: usize = 16;
+        const payload_len: usize = header_len + pixels.len;
+        const payload = try self.allocator.alloc(u8, payload_len);
+        defer self.allocator.free(payload);
+
+        var off: usize = 0;
+        putF32LE(payload, &off, dst_x);
+        putF32LE(payload, &off, dst_y);
+        putU32LE(payload, &off, img_w);
+        putU32LE(payload, &off, img_h);
+
+        @memcpy(payload[header_len..], pixels);
+
+        try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.BLIT_IMAGE, payload);
+    }
+
     pub fn end(self: *Encoder) !void {
         try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.END, &[_]u8{});
     }

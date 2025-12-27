@@ -24,11 +24,11 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 * Determinism verification in test suite
 * Miter limit (SET_MITER_LIMIT opcode, miter-to-bevel fallback for 90° joins)
 * Stroke line v2 (non-axis-aligned lines with proper rasterization)
+* BLIT_IMAGE implementation (encoder, replay, tests)
 
 ## Next
 
 ### Features
-* BLIT_IMAGE implementation (encoder, replay, tests)
 * Curves v1 (quadratic and cubic Bezier)
 * Stroke path v1 (polyline with arbitrary segments)
 * DRAW_GLYPH_RUN / Text v1 (simple glyph atlas)
