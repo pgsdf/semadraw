@@ -29,13 +29,9 @@ pub const SocketServer = struct {
 
         try posix.bind(fd, @ptrCast(&addr), @sizeOf(posix.sockaddr.un));
 
-        // Set socket permissions (owner read/write only by default)
-        // Clients need to be in the same group or adjust permissions
-        std.fs.cwd().chmod(path, .{
-            .owner = .{ .read = true, .write = true, .execute = false },
-            .group = .{ .read = true, .write = true, .execute = false },
-            .other = .{ .read = false, .write = false, .execute = false },
-        }) catch {};
+        // Set socket permissions (owner+group read/write)
+        // Mode 0660 = rw-rw----
+        posix.fchmodat(posix.AT.FDCWD, path, 0o660, 0) catch {};
 
         // Listen with reasonable backlog
         try posix.listen(fd, 16);
