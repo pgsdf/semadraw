@@ -1,0 +1,23 @@
+# Zig
+.zig-cache/
+zig-out/
+
+# Build products
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Tests
+tests/out/
+*.ppm
+
+# Editor and OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
