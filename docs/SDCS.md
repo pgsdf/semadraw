@@ -81,3 +81,17 @@ Fields:
 Blits an RGBA image at the specified destination position.
 The image is drawn at 1:1 scale, affected by the current transform, clip, and blend state.
 Transparent pixels (alpha = 0) are skipped.
+
+## STROKE_PATH
+
+Payload: 24 + (N × 8) bytes
+
+Fields:
+- stroke_width (f32): line thickness in pixels
+- r, g, b, a (f32): stroke color
+- point_count (u32): number of points in the path (N)
+- points: N × (x, y) pairs as f32
+
+Strokes a polyline path connecting all points in sequence.
+The path is affected by the current transform, clip, blend state, join mode, and cap mode.
+Joins are applied between consecutive segments; caps are applied at the endpoints.

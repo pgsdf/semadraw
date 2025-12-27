@@ -278,6 +278,51 @@ pub const Encoder = struct {
         try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.STROKE_QUAD_BEZIER, payload[0..]);
     }
 
+    /// Point structure for path operations.
+    pub const Point = struct {
+        x: f32,
+        y: f32,
+    };
+
+    /// Stroke a polyline path through the given points.
+    /// Uses current join and cap settings. Minimum 2 points required.
+    /// Payload format: stroke_width, r, g, b, a (5 x f32), point_count (u32), points (N x 2 x f32)
+    pub fn strokePath(
+        self: *Encoder,
+        points: []const Point,
+        stroke_width: f32,
+        r: f32,
+        g: f32,
+        b: f32,
+        a: f32,
+    ) !void {
+        if (!(stroke_width > 0.0)) return error.InvalidArgument;
+        if (points.len < 2) return error.InvalidArgument;
+        if (points.len > 65535) return error.InvalidArgument; // Reasonable limit
+
+        // Header: stroke_width, r, g, b, a (5 f32 = 20 bytes) + point_count (u32 = 4 bytes)
+        const header_len: usize = 24;
+        const points_len: usize = points.len * 8; // 2 f32 per point
+        const payload_len: usize = header_len + points_len;
+        const payload = try self.allocator.alloc(u8, payload_len);
+        defer self.allocator.free(payload);
+
+        var off: usize = 0;
+        putF32LE(payload, &off, stroke_width);
+        putF32LE(payload, &off, r);
+        putF32LE(payload, &off, g);
+        putF32LE(payload, &off, b);
+        putF32LE(payload, &off, a);
+        putU32LE(payload, &off, @intCast(points.len));
+
+        for (points) |pt| {
+            putF32LE(payload, &off, pt.x);
+            putF32LE(payload, &off, pt.y);
+        }
+
+        try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.STROKE_PATH, payload);
+    }
+
     /// Stroke a cubic Bezier curve from (x0,y0) through control points (cx1,cy1) and (cx2,cy2) to (x1,y1).
     /// Payload format: x0, y0, cx1, cy1, cx2, cy2, x1, y1, stroke_width, r, g, b, a (13 x f32 = 52 bytes)
     pub fn strokeCubicBezier(
