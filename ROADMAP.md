@@ -29,11 +29,12 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 * Stroke path v1 (polyline with arbitrary segments)
 * DRAW_GLYPH_RUN / Text v1 (simple glyph atlas)
 * Deterministic anti-aliasing (SET_ANTIALIAS opcode, 4x4 sub-pixel coverage sampling)
+* AA test suite (sdcs_make_aa test generator with golden hash verification)
 
 ## Next
 
 ### Features
-* AA test suite (sdcs_make_aa test generator)
+* (no pending items)
 
 ## Later
 
