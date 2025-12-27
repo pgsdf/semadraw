@@ -54,6 +54,30 @@ fn clampU8(v: f32) u8 {
     if (x > 1.0) x = 1.0;
     return @intFromFloat(@round(x * 255.0));
 }
+
+// 4x4 sub-pixel sample offsets for deterministic anti-aliasing.
+// Positions are evenly distributed within [0,1) x [0,1).
+const AA_SAMPLES: u32 = 16;
+const AA_SAMPLE_OFFSETS: [16][2]f32 = .{
+    .{ 0.0625, 0.0625 }, .{ 0.3125, 0.0625 }, .{ 0.5625, 0.0625 }, .{ 0.8125, 0.0625 },
+    .{ 0.0625, 0.3125 }, .{ 0.3125, 0.3125 }, .{ 0.5625, 0.3125 }, .{ 0.8125, 0.3125 },
+    .{ 0.0625, 0.5625 }, .{ 0.3125, 0.5625 }, .{ 0.5625, 0.5625 }, .{ 0.8125, 0.5625 },
+    .{ 0.0625, 0.8125 }, .{ 0.3125, 0.8125 }, .{ 0.5625, 0.8125 }, .{ 0.8125, 0.8125 },
+};
+
+/// Blend a pixel with coverage-based anti-aliasing.
+/// Coverage is a value from 0.0 to 1.0 representing partial pixel coverage.
+fn fbBlendPixelAA(rgba: []u8, idx: usize, sr: u8, sg: u8, sb: u8, sa: u8, mode: u32, coverage: f32) void {
+    if (coverage <= 0.0) return;
+
+    // Modulate source alpha by coverage
+    const sa_f: f32 = @as(f32, @floatFromInt(sa)) * coverage;
+    const sa_cov: u8 = @intFromFloat(@min(@max(sa_f, 0.0), 255.0));
+
+    if (sa_cov == 0) return;
+
+    fbBlendPixel(rgba, idx, sr, sg, sb, sa_cov, mode);
+}
 fn emitSquareCap(
     rgba: []u8,
     w: usize,
@@ -229,6 +253,127 @@ fn emitStrokedLineArbitrary(
     }
 }
 
+/// Rasterize an arbitrary-angle stroked line with anti-aliasing.
+/// Uses 4x4 sub-pixel sampling for smooth edge coverage.
+fn emitStrokedLineArbitraryAA(
+    rgba: []u8,
+    w: usize,
+    h: usize,
+    t: Transform2D,
+    clip_enabled: bool,
+    clip_rects: []const ClipRect,
+    blend_mode: u32,
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+    sw: f32,
+    cr: f32,
+    cg: f32,
+    cb: f32,
+    ca: f32,
+) void {
+    // Direction vector
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const len = @sqrt(dx * dx + dy * dy);
+    if (len < 0.0001) return; // Degenerate line
+
+    // Normalize direction
+    const ux = dx / len;
+    const uy = dy / len;
+
+    // Perpendicular (90° CCW)
+    const px = -uy;
+    const py = ux;
+
+    // Half stroke width
+    const half = sw * 0.5;
+
+    // Four corners of the stroke rectangle in user space
+    const c0x = x1 + px * half;
+    const c0y = y1 + py * half;
+    const c1x = x1 - px * half;
+    const c1y = y1 - py * half;
+    const c2x = x2 - px * half;
+    const c2y = y2 - py * half;
+    const c3x = x2 + px * half;
+    const c3y = y2 + py * half;
+
+    // Transform corners to screen space
+    const p0 = applyT(t, c0x, c0y);
+    const p1 = applyT(t, c1x, c1y);
+    const p2 = applyT(t, c2x, c2y);
+    const p3 = applyT(t, c3x, c3y);
+
+    // Compute axis-aligned bounding box
+    var minx: f32 = @min(@min(p0.x, p1.x), @min(p2.x, p3.x));
+    var maxx: f32 = @max(@max(p0.x, p1.x), @max(p2.x, p3.x));
+    var miny: f32 = @min(@min(p0.y, p1.y), @min(p2.y, p3.y));
+    var maxy: f32 = @max(@max(p0.y, p1.y), @max(p2.y, p3.y));
+
+    // Clamp to framebuffer
+    if (minx < 0) minx = 0;
+    if (miny < 0) miny = 0;
+    if (maxx > @as(f32, @floatFromInt(w))) maxx = @as(f32, @floatFromInt(w));
+    if (maxy > @as(f32, @floatFromInt(h))) maxy = @as(f32, @floatFromInt(h));
+
+    const ix0: isize = @intFromFloat(@floor(minx));
+    const iy0: isize = @intFromFloat(@floor(miny));
+    const ix1: isize = @intFromFloat(@ceil(maxx));
+    const iy1: isize = @intFromFloat(@ceil(maxy));
+
+    // Edge vectors for half-plane tests (CCW winding: p0 -> p3 -> p2 -> p1)
+    const e0x = p3.x - p0.x;
+    const e0y = p3.y - p0.y;
+    const e1x = p2.x - p3.x;
+    const e1y = p2.y - p3.y;
+    const e2x = p1.x - p2.x;
+    const e2y = p1.y - p2.y;
+    const e3x = p0.x - p1.x;
+    const e3y = p0.y - p1.y;
+
+    const r8 = clampU8(cr);
+    const g8 = clampU8(cg);
+    const b8 = clampU8(cb);
+    const a8 = clampU8(ca);
+
+    var iy: isize = iy0;
+    while (iy < iy1) : (iy += 1) {
+        var ix: isize = ix0;
+        while (ix < ix1) : (ix += 1) {
+            const base_px: f32 = @floatFromInt(ix);
+            const base_py: f32 = @floatFromInt(iy);
+
+            // Sub-pixel sampling for AA
+            var samples_inside: u32 = 0;
+            for (AA_SAMPLE_OFFSETS) |offset| {
+                const spx = base_px + offset[0];
+                const spy = base_py + offset[1];
+
+                // Clip test at sub-pixel level
+                if (clip_enabled and !pointInClips(spx, spy, clip_rects)) continue;
+
+                // Half-plane tests
+                const d0 = (spx - p0.x) * e0y - (spy - p0.y) * e0x;
+                const d1 = (spx - p3.x) * e1y - (spy - p3.y) * e1x;
+                const d2 = (spx - p2.x) * e2y - (spy - p2.y) * e2x;
+                const d3 = (spx - p1.x) * e3y - (spy - p1.y) * e3x;
+
+                if (d0 >= 0 and d1 >= 0 and d2 >= 0 and d3 >= 0) {
+                    samples_inside += 1;
+                }
+            }
+
+            if (samples_inside > 0) {
+                const coverage: f32 = @as(f32, @floatFromInt(samples_inside)) / @as(f32, @floatFromInt(AA_SAMPLES));
+                const idx: usize = (@as(usize, @intCast(iy)) * w + @as(usize, @intCast(ix))) * 4;
+                fbBlendPixelAA(rgba, idx, r8, g8, b8, a8, blend_mode, coverage);
+            }
+        }
+    }
+}
+
 /// Evaluate a quadratic Bezier at parameter t (0..1)
 fn evalQuadBezier(x0: f32, y0: f32, cx: f32, cy: f32, x1: f32, y1: f32, t_param: f32) struct { x: f32, y: f32 } {
     const mt = 1.0 - t_param;
@@ -367,6 +512,82 @@ fn emitStrokedCubicBezier(
     }
 }
 
+/// Stroke a quadratic Bezier with anti-aliasing by subdividing into line segments
+fn emitStrokedQuadBezierAA(
+    rgba: []u8,
+    w: usize,
+    h: usize,
+    t: Transform2D,
+    clip_enabled: bool,
+    clip_rects: []const ClipRect,
+    blend_mode: u32,
+    x0: f32,
+    y0: f32,
+    cx: f32,
+    cy: f32,
+    x1: f32,
+    y1: f32,
+    sw: f32,
+    cr: f32,
+    cg: f32,
+    cb: f32,
+    ca: f32,
+) void {
+    const segments: u32 = 16;
+    var prev_x = x0;
+    var prev_y = y0;
+
+    var i: u32 = 1;
+    while (i <= segments) : (i += 1) {
+        const t_param: f32 = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(segments));
+        const pt = evalQuadBezier(x0, y0, cx, cy, x1, y1, t_param);
+
+        emitStrokedLineArbitraryAA(rgba, w, h, t, clip_enabled, clip_rects, blend_mode, prev_x, prev_y, pt.x, pt.y, sw, cr, cg, cb, ca);
+
+        prev_x = pt.x;
+        prev_y = pt.y;
+    }
+}
+
+/// Stroke a cubic Bezier with anti-aliasing by subdividing into line segments
+fn emitStrokedCubicBezierAA(
+    rgba: []u8,
+    w: usize,
+    h: usize,
+    t: Transform2D,
+    clip_enabled: bool,
+    clip_rects: []const ClipRect,
+    blend_mode: u32,
+    x0: f32,
+    y0: f32,
+    cx1: f32,
+    cy1: f32,
+    cx2: f32,
+    cy2: f32,
+    x1: f32,
+    y1: f32,
+    sw: f32,
+    cr: f32,
+    cg: f32,
+    cb: f32,
+    ca: f32,
+) void {
+    const segments: u32 = 24;
+    var prev_x = x0;
+    var prev_y = y0;
+
+    var i: u32 = 1;
+    while (i <= segments) : (i += 1) {
+        const t_param: f32 = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(segments));
+        const pt = evalCubicBezier(x0, y0, cx1, cy1, cx2, cy2, x1, y1, t_param);
+
+        emitStrokedLineArbitraryAA(rgba, w, h, t, clip_enabled, clip_rects, blend_mode, prev_x, prev_y, pt.x, pt.y, sw, cr, cg, cb, ca);
+
+        prev_x = pt.x;
+        prev_y = pt.y;
+    }
+}
+
 fn emitRoundCap(
     rgba: []u8,
     w: usize,
@@ -434,6 +655,92 @@ fn emitRoundCap(
     }
 }
 
+/// Emit a round cap/join with anti-aliasing.
+/// Uses 4x4 sub-pixel sampling for smooth circle edges.
+fn emitRoundCapAA(
+    rgba: []u8,
+    w: usize,
+    h: usize,
+    t: Transform2D,
+    clip_enabled: bool,
+    clip_rects: []const ClipRect,
+    blend_mode: u32,
+    x: f32,
+    y: f32,
+    sw: f32,
+    cr: f32,
+    cg: f32,
+    cb: f32,
+    ca: f32,
+) void {
+    const r: f32 = sw * 0.5;
+
+    const c = applyT(t, x, y);
+    const vx = struct { x: f32, y: f32 }{ .x = t.a * r, .y = t.b * r };
+    const vy = struct { x: f32, y: f32 }{ .x = t.c * r, .y = t.d * r };
+
+    const ex = @abs(vx.x) + @abs(vy.x);
+    const ey = @abs(vx.y) + @abs(vy.y);
+
+    var minx: isize = @intFromFloat(@floor(c.x - ex));
+    var maxx: isize = @intFromFloat(@ceil(c.x + ex));
+    var miny: isize = @intFromFloat(@floor(c.y - ey));
+    var maxy: isize = @intFromFloat(@ceil(c.y + ey));
+
+    if (minx < 0) minx = 0;
+    if (miny < 0) miny = 0;
+    if (maxx > @as(isize, @intCast(w))) maxx = @as(isize, @intCast(w));
+    if (maxy > @as(isize, @intCast(h))) maxy = @as(isize, @intCast(h));
+
+    const det: f32 = vx.x * vy.y - vx.y * vy.x;
+    const use_affine = @abs(det) > 1e-6;
+
+    const r8 = clampU8(cr);
+    const g8 = clampU8(cg);
+    const b8 = clampU8(cb);
+    const a8 = clampU8(ca);
+
+    var iy: isize = miny;
+    while (iy < maxy) : (iy += 1) {
+        var ix: isize = minx;
+        while (ix < maxx) : (ix += 1) {
+            const base_px: f32 = @floatFromInt(ix);
+            const base_py: f32 = @floatFromInt(iy);
+
+            // Sub-pixel sampling for AA
+            var samples_inside: u32 = 0;
+            for (AA_SAMPLE_OFFSETS) |offset| {
+                const spx = base_px + offset[0];
+                const spy = base_py + offset[1];
+
+                if (clip_enabled and !pointInClips(spx, spy, clip_rects)) continue;
+
+                const dx = spx - c.x;
+                const dy = spy - c.y;
+
+                var inside: bool = false;
+                if (use_affine) {
+                    const u = (dx * vy.y - dy * vy.x) / det;
+                    const v = (-dx * vx.y + dy * vx.x) / det;
+                    inside = (u * u + v * v) <= 1.0;
+                } else {
+                    inside = (dx * dx + dy * dy) <= (r * r);
+                }
+
+                if (inside) {
+                    samples_inside += 1;
+                }
+            }
+
+            if (samples_inside > 0) {
+                const coverage: f32 = @as(f32, @floatFromInt(samples_inside)) / @as(f32, @floatFromInt(AA_SAMPLES));
+                const idx: usize = (@as(usize, @intCast(iy)) * w + @as(usize, @intCast(ix))) * 4;
+                fbBlendPixelAA(rgba, idx, r8, g8, b8, a8, blend_mode, coverage);
+            }
+        }
+    }
+}
+
 
 fn fbBlendPixel(rgba: []u8, idx: usize, sr: u8, sg: u8, sb: u8, sa: u8, mode: u32) void {
     const dr = rgba[idx + 0];
@@ -497,6 +804,58 @@ fn fbFillRect(rgba: []u8, w: usize, h: usize, x: f32, y: f32, rw: f32, rh: f32, 
     }
 }
 
+/// Fill an axis-aligned rectangle with anti-aliasing at edges.
+/// Uses 4x4 sub-pixel sampling for smooth edge coverage.
+fn fbFillRectAA(rgba: []u8, w: usize, h: usize, x: f32, y: f32, rw: f32, rh: f32, r: u8, g: u8, b: u8, a: u8, mode: u32) void {
+    if (rw <= 0.0 or rh <= 0.0) return;
+
+    const x1 = x;
+    const y1 = y;
+    const x2 = x + rw;
+    const y2 = y + rh;
+
+    // Expand bounds by 1 pixel to include edge pixels that might have partial coverage
+    const ix0: isize = @intFromFloat(@floor(x1));
+    const iy0: isize = @intFromFloat(@floor(y1));
+    const ix1: isize = @intFromFloat(@ceil(x2));
+    const iy1: isize = @intFromFloat(@ceil(y2));
+
+    var iy: isize = iy0;
+    while (iy < iy1) : (iy += 1) {
+        if (iy < 0 or iy >= @as(isize, @intCast(h))) continue;
+        var ix: isize = ix0;
+        while (ix < ix1) : (ix += 1) {
+            if (ix < 0 or ix >= @as(isize, @intCast(w))) continue;
+
+            const px: f32 = @floatFromInt(ix);
+            const py: f32 = @floatFromInt(iy);
+
+            // Check if this pixel is fully inside (no AA needed)
+            if (px >= x1 and px + 1.0 <= x2 and py >= y1 and py + 1.0 <= y2) {
+                const idx: usize = (@as(usize, @intCast(iy)) * w + @as(usize, @intCast(ix))) * 4;
+                fbBlendPixel(rgba, idx, r, g, b, a, mode);
+                continue;
+            }
+
+            // Edge pixel - compute coverage with sub-pixel sampling
+            var samples_inside: u32 = 0;
+            for (AA_SAMPLE_OFFSETS) |offset| {
+                const sx = px + offset[0];
+                const sy = py + offset[1];
+                if (sx >= x1 and sx < x2 and sy >= y1 and sy < y2) {
+                    samples_inside += 1;
+                }
+            }
+
+            if (samples_inside > 0) {
+                const coverage: f32 = @as(f32, @floatFromInt(samples_inside)) / @as(f32, @floatFromInt(AA_SAMPLES));
+                const idx: usize = (@as(usize, @intCast(iy)) * w + @as(usize, @intCast(ix))) * 4;
+                fbBlendPixelAA(rgba, idx, r, g, b, a, mode, coverage);
+            }
+        }
+    }
+}
+
 
 fn readF32LE(r: anytype) !f32 {
 
@@ -543,6 +902,24 @@ fn fbFillRectClipped(rgba: []u8, w: usize, h: usize, rx: f32, ry: f32, rw: f32, 
         }
     } else {
         fbFillRect(rgba, w, h, rx, ry, rw, rh, r, g, b, a, mode);
+    }
+}
+
+fn fbFillRectClippedAA(rgba: []u8, w: usize, h: usize, rx: f32, ry: f32, rw: f32, rh: f32, r: u8, g: u8, b: u8, a: u8, mode: u32, clips: ?[]const ClipRect) void {
+    if (clips) |cs| {
+        // Apply union of clip rects by filling each intersection.
+        for (cs) |c| {
+            const ix = @max(rx, c.x);
+            const iy = @max(ry, c.y);
+            const ix2 = @min(rx + rw, c.x + c.w);
+            const iy2 = @min(ry + rh, c.y + c.h);
+            const iw = ix2 - ix;
+            const ih = iy2 - iy;
+            if (iw <= 0.0 or ih <= 0.0) continue;
+            fbFillRectAA(rgba, w, h, ix, iy, iw, ih, r, g, b, a, mode);
+        }
+    } else {
+        fbFillRectAA(rgba, w, h, rx, ry, rw, rh, r, g, b, a, mode);
     }
 }
 
@@ -612,6 +989,7 @@ pub fn main() !void {
     var clip_enabled: bool = false;
     var t = Transform2D{};
     var blend_mode: u32 = 0;
+    var aa_enabled: bool = false;
 var stroke_join: StrokeJoin = .Miter;
 var stroke_cap: StrokeCap = .Butt;
 var miter_limit: f32 = 4.0; // SVG default
@@ -705,22 +1083,11 @@ if (pending_cap_valid and cmd.opcode != sdcs.Op.STROKE_LINE) {
         );
     }
 else if (stroke_cap == .Round) {
-    emitRoundCap(
-        rgba,
-        w,
-        h,
-        pending_t,
-        clip_enabled,
-        clip_rects.items,
-        blend_mode,
-        pending_end_x,
-        pending_end_y,
-        pending_sw,
-        pending_cr,
-        pending_cg,
-        pending_cb,
-        pending_ca,
-    );
+    if (aa_enabled) {
+        emitRoundCapAA(rgba, w, h, pending_t, clip_enabled, clip_rects.items, blend_mode, pending_end_x, pending_end_y, pending_sw, pending_cr, pending_cg, pending_cb, pending_ca);
+    } else {
+        emitRoundCap(rgba, w, h, pending_t, clip_enabled, clip_rects.items, blend_mode, pending_end_x, pending_end_y, pending_sw, pending_cr, pending_cg, pending_cb, pending_ca);
+    }
 }
 
     pending_cap_valid = false;
@@ -739,6 +1106,9 @@ if (cmd.opcode == 0 and cmd.flags == 0 and cmd.payload_bytes == 0) {
 
             if (cmd.opcode == sdcs.Op.SET_BLEND) {
                 blend_mode = try readU32LE(r);
+            } else if (cmd.opcode == sdcs.Op.SET_ANTIALIAS) {
+                const aa_val = try readU32LE(r);
+                aa_enabled = (aa_val != 0);
             } else if (cmd.opcode == sdcs.Op.SET_TRANSFORM_2D) {
                 t.a = try readF32LE(r);
                 t.b = try readF32LE(r);
@@ -838,22 +1208,11 @@ if (cmd.opcode == 0 and cmd.flags == 0 and cmd.payload_bytes == 0) {
                         );
                     }
 else if (stroke_cap == .Round) {
-    emitRoundCap(
-        rgba,
-        w,
-        h,
-        pending_t,
-        clip_enabled,
-        clip_rects.items,
-        blend_mode,
-        pending_end_x,
-        pending_end_y,
-        pending_sw,
-        pending_cr,
-        pending_cg,
-        pending_cb,
-        pending_ca,
-    );
+    if (aa_enabled) {
+        emitRoundCapAA(rgba, w, h, pending_t, clip_enabled, clip_rects.items, blend_mode, pending_end_x, pending_end_y, pending_sw, pending_cr, pending_cg, pending_cb, pending_ca);
+    } else {
+        emitRoundCap(rgba, w, h, pending_t, clip_enabled, clip_rects.items, blend_mode, pending_end_x, pending_end_y, pending_sw, pending_cr, pending_cg, pending_cb, pending_ca);
+    }
 }
 
                 }
@@ -944,22 +1303,11 @@ else if (stroke_cap == .Round) {
                     if (connects) {
                         if (stroke_join == .Round) {
                             // Round join is approximated by a filled disk at the join point.
-                            emitRoundCap(
-                                rgba,
-                                w,
-                                h,
-                                t,
-                                clip_enabled,
-                                clip_rects.items,
-                                blend_mode,
-                                jx,
-                                jy,
-                                sw,
-                                cr,
-                                cg,
-                                cb,
-                                ca,
-                            );
+                            if (aa_enabled) {
+                                emitRoundCapAA(rgba, w, h, t, clip_enabled, clip_rects.items, blend_mode, jx, jy, sw, cr, cg, cb, ca);
+                            } else {
+                                emitRoundCap(rgba, w, h, t, clip_enabled, clip_rects.items, blend_mode, jx, jy, sw, cr, cg, cb, ca);
+                            }
                         } else if (stroke_join == .Miter) {
                             // Miter join v1: emit an extra sw x sw corner block on the outer corner.
                             // For 90-degree (right angle) joins, the miter ratio is sqrt(2) ≈ 1.414.
@@ -985,7 +1333,12 @@ else if (stroke_cap == .Round) {
                                     const px = jx + (if (sx > 0) 0 else -sw);
                                     const py = jy + (if (sy > 0) 0 else -sw);
                                     const patch = rectApplyTBounds(t, px, py, sw, sw);
-                                    fbFillRectClipped(rgba, w, h, patch.x, patch.y, patch.w, patch.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, if (clip_enabled) clip_rects.items else null);
+                                    const join_clips = if (clip_enabled) clip_rects.items else null;
+                                    if (aa_enabled) {
+                                        fbFillRectClippedAA(rgba, w, h, patch.x, patch.y, patch.w, patch.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, join_clips);
+                                    } else {
+                                        fbFillRectClipped(rgba, w, h, patch.x, patch.y, patch.w, patch.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, join_clips);
+                                    }
                                 }
                             }
                             // else: miter_limit < sqrt(2), fall back to bevel (no extra geometry)
@@ -1001,37 +1354,33 @@ else if (stroke_cap == .Round) {
 
     // v1 semantics: only axis aligned lines in user space
     const s2: f32 = sw / 2.0;
+    const clips = if (clip_enabled) clip_rects.items else null;
 
     if (x1 == x2) {
         const yy0 = @min(y1, y2);
         const yy1 = @max(y1, y2);
         const rect = rectApplyTBounds(t, x1 - s2, yy0, sw, yy1 - yy0);
-        fbFillRectClipped(rgba, w, h, rect.x, rect.y, rect.w, rect.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, if (clip_enabled) clip_rects.items else null);
+        if (aa_enabled) {
+            fbFillRectClippedAA(rgba, w, h, rect.x, rect.y, rect.w, rect.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, clips);
+        } else {
+            fbFillRectClipped(rgba, w, h, rect.x, rect.y, rect.w, rect.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, clips);
+        }
     } else if (y1 == y2) {
         const xx0 = @min(x1, x2);
         const xx1 = @max(x1, x2);
         const rect = rectApplyTBounds(t, xx0, y1 - s2, xx1 - xx0, sw);
-        fbFillRectClipped(rgba, w, h, rect.x, rect.y, rect.w, rect.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, if (clip_enabled) clip_rects.items else null);
+        if (aa_enabled) {
+            fbFillRectClippedAA(rgba, w, h, rect.x, rect.y, rect.w, rect.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, clips);
+        } else {
+            fbFillRectClipped(rgba, w, h, rect.x, rect.y, rect.w, rect.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, clips);
+        }
     } else {
         // v2: arbitrary-angle lines with proper oriented quad rasterization
-        emitStrokedLineArbitrary(
-            rgba,
-            w,
-            h,
-            t,
-            clip_enabled,
-            clip_rects.items,
-            blend_mode,
-            x1,
-            y1,
-            x2,
-            y2,
-            sw,
-            cr,
-            cg,
-            cb,
-            ca,
-        );
+        if (aa_enabled) {
+            emitStrokedLineArbitraryAA(rgba, w, h, t, clip_enabled, clip_rects.items, blend_mode, x1, y1, x2, y2, sw, cr, cg, cb, ca);
+        } else {
+            emitStrokedLineArbitrary(rgba, w, h, t, clip_enabled, clip_rects.items, blend_mode, x1, y1, x2, y2, sw, cr, cg, cb, ca);
+        }
     }
             // update last segment info for join detection
             last_line_valid = true;
@@ -1071,10 +1420,18 @@ else if (cmd.opcode == sdcs.Op.STROKE_RECT) {
     const left = rectApplyTBounds(t, rx - s2, ry + s2, sw, @max(0.0, rh2 - sw));
     const right = rectApplyTBounds(t, rx + rw2 - s2, ry + s2, sw, @max(0.0, rh2 - sw));
 
-    fbFillRectClipped(rgba, w, h, top.x, top.y, top.w, top.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, if (clip_enabled) clip_rects.items else null);
-    fbFillRectClipped(rgba, w, h, bottom.x, bottom.y, bottom.w, bottom.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, if (clip_enabled) clip_rects.items else null);
-    fbFillRectClipped(rgba, w, h, left.x, left.y, left.w, left.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, if (clip_enabled) clip_rects.items else null);
-    fbFillRectClipped(rgba, w, h, right.x, right.y, right.w, right.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, if (clip_enabled) clip_rects.items else null);
+    const clips = if (clip_enabled) clip_rects.items else null;
+    if (aa_enabled) {
+        fbFillRectClippedAA(rgba, w, h, top.x, top.y, top.w, top.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, clips);
+        fbFillRectClippedAA(rgba, w, h, bottom.x, bottom.y, bottom.w, bottom.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, clips);
+        fbFillRectClippedAA(rgba, w, h, left.x, left.y, left.w, left.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, clips);
+        fbFillRectClippedAA(rgba, w, h, right.x, right.y, right.w, right.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, clips);
+    } else {
+        fbFillRectClipped(rgba, w, h, top.x, top.y, top.w, top.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, clips);
+        fbFillRectClipped(rgba, w, h, bottom.x, bottom.y, bottom.w, bottom.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, clips);
+        fbFillRectClipped(rgba, w, h, left.x, left.y, left.w, left.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, clips);
+        fbFillRectClipped(rgba, w, h, right.x, right.y, right.w, right.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, clips);
+    }
 }
 
 else if (cmd.opcode == sdcs.Op.FILL_RECT) {
@@ -1088,7 +1445,11 @@ else if (cmd.opcode == sdcs.Op.FILL_RECT) {
                 const cb = try readF32LE(r);
                 const ca = try readF32LE(r);
                 const tb = rectApplyTBounds(t, rx, ry, rw2, rh2);
-                fbFillRectClipped(rgba, w, h, tb.x, tb.y, tb.w, tb.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, if (clip_enabled) clip_rects.items else null);
+                if (aa_enabled) {
+                    fbFillRectClippedAA(rgba, w, h, tb.x, tb.y, tb.w, tb.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, if (clip_enabled) clip_rects.items else null);
+                } else {
+                    fbFillRectClipped(rgba, w, h, tb.x, tb.y, tb.w, tb.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, if (clip_enabled) clip_rects.items else null);
+                }
 
             } else if (cmd.opcode == sdcs.Op.BLIT_IMAGE) {
                 // Payload: dst_x(f32), dst_y(f32), img_w(u32), img_h(u32), pixels(RGBA)
@@ -1157,26 +1518,11 @@ else if (cmd.opcode == sdcs.Op.FILL_RECT) {
 
                 if (bsw <= 0.0) continue;
 
-                emitStrokedQuadBezier(
-                    rgba,
-                    w,
-                    h,
-                    t,
-                    clip_enabled,
-                    clip_rects.items,
-                    blend_mode,
-                    bx0,
-                    by0,
-                    bcx,
-                    bcy,
-                    bx1,
-                    by1,
-                    bsw,
-                    bcr,
-                    bcg,
-                    bcb,
-                    bca,
-                );
+                if (aa_enabled) {
+                    emitStrokedQuadBezierAA(rgba, w, h, t, clip_enabled, clip_rects.items, blend_mode, bx0, by0, bcx, bcy, bx1, by1, bsw, bcr, bcg, bcb, bca);
+                } else {
+                    emitStrokedQuadBezier(rgba, w, h, t, clip_enabled, clip_rects.items, blend_mode, bx0, by0, bcx, bcy, bx1, by1, bsw, bcr, bcg, bcb, bca);
+                }
 
                 // Reset line tracking state since curves don't participate in joins
                 last_line_valid = false;
@@ -1200,28 +1546,11 @@ else if (cmd.opcode == sdcs.Op.FILL_RECT) {
 
                 if (bsw <= 0.0) continue;
 
-                emitStrokedCubicBezier(
-                    rgba,
-                    w,
-                    h,
-                    t,
-                    clip_enabled,
-                    clip_rects.items,
-                    blend_mode,
-                    bx0,
-                    by0,
-                    bcx1,
-                    bcy1,
-                    bcx2,
-                    bcy2,
-                    bx1,
-                    by1,
-                    bsw,
-                    bcr,
-                    bcg,
-                    bcb,
-                    bca,
-                );
+                if (aa_enabled) {
+                    emitStrokedCubicBezierAA(rgba, w, h, t, clip_enabled, clip_rects.items, blend_mode, bx0, by0, bcx1, bcy1, bcx2, bcy2, bx1, by1, bsw, bcr, bcg, bcb, bca);
+                } else {
+                    emitStrokedCubicBezier(rgba, w, h, t, clip_enabled, clip_rects.items, blend_mode, bx0, by0, bcx1, bcy1, bcx2, bcy2, bx1, by1, bsw, bcr, bcg, bcb, bca);
+                }
 
                 // Reset line tracking state since curves don't participate in joins
                 last_line_valid = false;
@@ -1272,6 +1601,7 @@ else if (cmd.opcode == sdcs.Op.FILL_RECT) {
                     const cur_v = (@abs(sx1 - sx2) < eps);
 
                     // Emit join at start of segment if connected to previous
+                    const path_clips = if (clip_enabled) clip_rects.items else null;
                     if (prev_seg_valid) {
                         const prev_h = (@abs(prev_seg_y1 - prev_seg_y2) < eps);
                         const prev_v = (@abs(prev_seg_x1 - prev_seg_x2) < eps);
@@ -1284,7 +1614,11 @@ else if (cmd.opcode == sdcs.Op.FILL_RECT) {
 
                             if (connects) {
                                 if (stroke_join == .Round) {
-                                    emitRoundCap(rgba, w, h, t, clip_enabled, clip_rects.items, blend_mode, jx, jy, psw, pcr, pcg, pcb, pca);
+                                    if (aa_enabled) {
+                                        emitRoundCapAA(rgba, w, h, t, clip_enabled, clip_rects.items, blend_mode, jx, jy, psw, pcr, pcg, pcb, pca);
+                                    } else {
+                                        emitRoundCap(rgba, w, h, t, clip_enabled, clip_rects.items, blend_mode, jx, jy, psw, pcr, pcg, pcb, pca);
+                                    }
                                 } else if (stroke_join == .Miter) {
                                     const sqrt2: f32 = 1.41421356237;
                                     if (miter_limit >= sqrt2) {
@@ -1304,7 +1638,11 @@ else if (cmd.opcode == sdcs.Op.FILL_RECT) {
                                             const px = jx + (if (sx > 0) 0 else -psw);
                                             const py = jy + (if (sy > 0) 0 else -psw);
                                             const patch = rectApplyTBounds(t, px, py, psw, psw);
-                                            fbFillRectClipped(rgba, w, h, patch.x, patch.y, patch.w, patch.h, clampU8(pcr), clampU8(pcg), clampU8(pcb), clampU8(pca), blend_mode, if (clip_enabled) clip_rects.items else null);
+                                            if (aa_enabled) {
+                                                fbFillRectClippedAA(rgba, w, h, patch.x, patch.y, patch.w, patch.h, clampU8(pcr), clampU8(pcg), clampU8(pcb), clampU8(pca), blend_mode, path_clips);
+                                            } else {
+                                                fbFillRectClipped(rgba, w, h, patch.x, patch.y, patch.w, patch.h, clampU8(pcr), clampU8(pcg), clampU8(pcb), clampU8(pca), blend_mode, path_clips);
+                                            }
                                         }
                                     }
                                 }
@@ -1318,15 +1656,27 @@ else if (cmd.opcode == sdcs.Op.FILL_RECT) {
                         const yy0 = @min(sy1, sy2);
                         const yy1 = @max(sy1, sy2);
                         const rect = rectApplyTBounds(t, sx1 - s2, yy0, psw, yy1 - yy0);
-                        fbFillRectClipped(rgba, w, h, rect.x, rect.y, rect.w, rect.h, clampU8(pcr), clampU8(pcg), clampU8(pcb), clampU8(pca), blend_mode, if (clip_enabled) clip_rects.items else null);
+                        if (aa_enabled) {
+                            fbFillRectClippedAA(rgba, w, h, rect.x, rect.y, rect.w, rect.h, clampU8(pcr), clampU8(pcg), clampU8(pcb), clampU8(pca), blend_mode, path_clips);
+                        } else {
+                            fbFillRectClipped(rgba, w, h, rect.x, rect.y, rect.w, rect.h, clampU8(pcr), clampU8(pcg), clampU8(pcb), clampU8(pca), blend_mode, path_clips);
+                        }
                     } else if (sy1 == sy2) {
                         const xx0 = @min(sx1, sx2);
                         const xx1 = @max(sx1, sx2);
                         const rect = rectApplyTBounds(t, xx0, sy1 - s2, xx1 - xx0, psw);
-                        fbFillRectClipped(rgba, w, h, rect.x, rect.y, rect.w, rect.h, clampU8(pcr), clampU8(pcg), clampU8(pcb), clampU8(pca), blend_mode, if (clip_enabled) clip_rects.items else null);
+                        if (aa_enabled) {
+                            fbFillRectClippedAA(rgba, w, h, rect.x, rect.y, rect.w, rect.h, clampU8(pcr), clampU8(pcg), clampU8(pcb), clampU8(pca), blend_mode, path_clips);
+                        } else {
+                            fbFillRectClipped(rgba, w, h, rect.x, rect.y, rect.w, rect.h, clampU8(pcr), clampU8(pcg), clampU8(pcb), clampU8(pca), blend_mode, path_clips);
+                        }
                     } else {
                         // Arbitrary angle
-                        emitStrokedLineArbitrary(rgba, w, h, t, clip_enabled, clip_rects.items, blend_mode, sx1, sy1, sx2, sy2, psw, pcr, pcg, pcb, pca);
+                        if (aa_enabled) {
+                            emitStrokedLineArbitraryAA(rgba, w, h, t, clip_enabled, clip_rects.items, blend_mode, sx1, sy1, sx2, sy2, psw, pcr, pcg, pcb, pca);
+                        } else {
+                            emitStrokedLineArbitrary(rgba, w, h, t, clip_enabled, clip_rects.items, blend_mode, sx1, sy1, sx2, sy2, psw, pcr, pcg, pcb, pca);
+                        }
                     }
 
                     prev_seg_x1 = sx1;
@@ -1497,22 +1847,11 @@ if (pending_cap_valid) {
         );
     }
 else if (stroke_cap == .Round) {
-    emitRoundCap(
-        rgba,
-        w,
-        h,
-        pending_t,
-        clip_enabled,
-        clip_rects.items,
-        blend_mode,
-        pending_end_x,
-        pending_end_y,
-        pending_sw,
-        pending_cr,
-        pending_cg,
-        pending_cb,
-        pending_ca,
-    );
+    if (aa_enabled) {
+        emitRoundCapAA(rgba, w, h, pending_t, clip_enabled, clip_rects.items, blend_mode, pending_end_x, pending_end_y, pending_sw, pending_cr, pending_cg, pending_cb, pending_ca);
+    } else {
+        emitRoundCap(rgba, w, h, pending_t, clip_enabled, clip_rects.items, blend_mode, pending_end_x, pending_end_y, pending_sw, pending_cr, pending_cg, pending_cb, pending_ca);
+    }
 }
 
     pending_cap_valid = false;
