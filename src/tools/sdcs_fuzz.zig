@@ -25,10 +25,9 @@ pub fn main() !void {
     defer std.process.argsFree(std.heap.page_allocator, args);
 
     if (args.len < 2) {
-        const stderr = std.io.getStdErr().writer();
-        try stderr.print("Usage: {s} <input_file>\n", .{args[0]});
-        try stderr.print("\nFuzzing harness for SDCS validator.\n", .{});
-        try stderr.print("Processes input file and reports validation status.\n", .{});
+        std.debug.print("Usage: {s} <input_file>\n", .{args[0]});
+        std.debug.print("\nFuzzing harness for SDCS validator.\n", .{});
+        std.debug.print("Processes input file and reports validation status.\n", .{});
         std.process.exit(2);
     }
 
@@ -37,8 +36,7 @@ pub fn main() !void {
     // Open the input file
     const file = std.fs.cwd().openFile(input_path, .{}) catch |err| {
         // File errors are not crashes, just exit cleanly
-        const stderr = std.io.getStdErr().writer();
-        try stderr.print("Could not open file: {any}\n", .{err});
+        std.debug.print("Could not open file: {any}\n", .{err});
         std.process.exit(1);
     };
     defer file.close();
@@ -82,18 +80,13 @@ export fn LLVMFuzzerTestOneInput(data: [*]const u8, size: usize) c_int {
     defer read_file.close();
 
     var diag = sdcs.ValidationDiagnostics{};
-    _ = sdcs.validateFileWithDiagnostics(read_file, &diag);
+    sdcs.validateFileWithDiagnostics(read_file, &diag) catch {};
 
     return 0;
 }
 
 /// Corpus generation: create a set of valid and edge-case SDCS files.
 pub fn generateCorpus(output_dir: []const u8) !void {
-    const allocator = std.heap.page_allocator;
-    _ = allocator;
-
-    const stdout = std.io.getStdOut().writer();
-
     // Create output directory
     std.fs.cwd().makeDir(output_dir) catch |err| {
         if (err != error.PathAlreadyExists) return err;
@@ -101,17 +94,17 @@ pub fn generateCorpus(output_dir: []const u8) !void {
 
     // Generate minimal valid file
     try generateMinimalValid(output_dir);
-    try stdout.print("Generated: {s}/minimal_valid.sdcs\n", .{output_dir});
+    std.debug.print("Generated: {s}/minimal_valid.sdcs\n", .{output_dir});
 
     // Generate file with all opcodes
     try generateAllOpcodes(output_dir);
-    try stdout.print("Generated: {s}/all_opcodes.sdcs\n", .{output_dir});
+    std.debug.print("Generated: {s}/all_opcodes.sdcs\n", .{output_dir});
 
     // Generate edge case files
     try generateEdgeCases(output_dir);
-    try stdout.print("Generated edge case files\n", .{});
+    std.debug.print("Generated edge case files\n", .{});
 
-    try stdout.print("\nCorpus generation complete.\n", .{});
+    std.debug.print("\nCorpus generation complete.\n", .{});
 }
 
 fn generateMinimalValid(output_dir: []const u8) !void {

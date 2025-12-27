@@ -165,11 +165,10 @@ pub fn main() !void {
     }
 
     // Summary
-    const stdout = std.io.getStdOut().writer();
-    try stdout.print("\n=== Malformed Input Tests ===\n", .{});
-    try stdout.print("Passed: {d}\n", .{passed});
-    try stdout.print("Failed: {d}\n", .{failed});
-    try stdout.print("Total:  {d}\n", .{passed + failed});
+    std.debug.print("\n=== Malformed Input Tests ===\n", .{});
+    std.debug.print("Passed: {d}\n", .{passed});
+    std.debug.print("Failed: {d}\n", .{failed});
+    std.debug.print("Total:  {d}\n", .{passed + failed});
 
     if (failed > 0) {
         std.process.exit(1);
@@ -217,23 +216,22 @@ fn testMalformed(allocator: std.mem.Allocator, data: []const u8, name: []const u
 
 fn testMalformedExpectError(allocator: std.mem.Allocator, data: []const u8, expected_error: ?sdcs.ValidateError, name: []const u8) bool {
     _ = allocator;
-    const stdout = std.io.getStdOut().writer();
 
     // Write data to a temporary file
     const tmp_path = "/tmp/sdcs_malformed_test.sdcs";
     const file = std.fs.cwd().createFile(tmp_path, .{}) catch |err| {
-        stdout.print("FAIL [{s}]: could not create temp file: {any}\n", .{ name, err }) catch {};
+        std.debug.print("FAIL [{s}]: could not create temp file: {any}\n", .{ name, err });
         return false;
     };
     defer file.close();
     file.writeAll(data) catch |err| {
-        stdout.print("FAIL [{s}]: could not write temp file: {any}\n", .{ name, err }) catch {};
+        std.debug.print("FAIL [{s}]: could not write temp file: {any}\n", .{ name, err });
         return false;
     };
 
     // Re-open for reading
     const read_file = std.fs.cwd().openFile(tmp_path, .{}) catch |err| {
-        stdout.print("FAIL [{s}]: could not open temp file: {any}\n", .{ name, err }) catch {};
+        std.debug.print("FAIL [{s}]: could not open temp file: {any}\n", .{ name, err });
         return false;
     };
     defer read_file.close();
@@ -244,17 +242,17 @@ fn testMalformedExpectError(allocator: std.mem.Allocator, data: []const u8, expe
 
     if (result) |_| {
         // Validation succeeded - this is a failure for malformed input tests
-        stdout.print("FAIL [{s}]: validation should have failed but succeeded\n", .{name}) catch {};
+        std.debug.print("FAIL [{s}]: validation should have failed but succeeded\n", .{name});
         return false;
     } else |err| {
         // Validation failed as expected
         if (expected_error) |exp| {
             if (err != exp) {
-                stdout.print("FAIL [{s}]: expected {any}, got {any}\n", .{ name, exp, err }) catch {};
+                std.debug.print("FAIL [{s}]: expected {any}, got {any}\n", .{ name, exp, err });
                 return false;
             }
         }
-        stdout.print("PASS [{s}]: rejected with \"{s}\" at offset 0x{x}\n", .{ name, diag.message, diag.file_offset }) catch {};
+        std.debug.print("PASS [{s}]: rejected with \"{s}\" at offset 0x{x}\n", .{ name, diag.message, diag.file_offset });
         return true;
     }
 }
