@@ -95,3 +95,28 @@ Fields:
 Strokes a polyline path connecting all points in sequence.
 The path is affected by the current transform, clip, blend state, join mode, and cap mode.
 Joins are applied between consecutive segments; caps are applied at the endpoints.
+
+## DRAW_GLYPH_RUN
+
+Payload: 48 + (N × 12) + (atlas_width × atlas_height) bytes
+
+Header (48 bytes):
+- base_x, base_y (f32): starting position for text
+- r, g, b, a (f32): text color
+- cell_width, cell_height (u32): size of each glyph cell in the atlas
+- atlas_cols (u32): number of glyph columns in the atlas
+- atlas_width, atlas_height (u32): atlas texture dimensions in pixels
+- glyph_count (u32): number of glyphs in this run (N)
+
+Per-glyph data (N × 12 bytes):
+- glyph_index (u32): which glyph in atlas (row × atlas_cols + col)
+- x_offset (f32): horizontal offset from base position
+- y_offset (f32): vertical offset from base position
+
+Atlas data (atlas_width × atlas_height bytes):
+- Alpha values (0-255) for each pixel
+
+Renders text using a simple grid-based glyph atlas.
+Glyphs are arranged in a grid within the atlas, each cell having fixed dimensions.
+The atlas contains alpha values that are multiplied with the specified color.
+Affected by the current transform, clip, and blend state.

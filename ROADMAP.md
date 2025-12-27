@@ -27,15 +27,15 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 * BLIT_IMAGE implementation (encoder, replay, tests)
 * Curves v1 (quadratic and cubic Bezier strokes)
 * Stroke path v1 (polyline with arbitrary segments)
+* DRAW_GLYPH_RUN / Text v1 (simple glyph atlas)
 
 ## Next
 
 ### Features
-* DRAW_GLYPH_RUN / Text v1 (simple glyph atlas)
+* Deterministic anti-aliasing strategy (coverage masks)
 
 ## Later
 
-* Deterministic anti-aliasing strategy (coverage masks)
 * Performance optimization (SIMD vectorization for rasterization)
 * semadrawd service and host bridge
 * Vulkan backend

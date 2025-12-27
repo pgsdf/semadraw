@@ -1339,6 +1339,117 @@ else if (cmd.opcode == sdcs.Op.FILL_RECT) {
                 // Reset line tracking state
                 last_line_valid = false;
 
+            } else if (cmd.opcode == sdcs.Op.DRAW_GLYPH_RUN) {
+                // Payload: base_x, base_y, r, g, b, a, cell_w, cell_h, atlas_cols,
+                //          atlas_w, atlas_h, glyph_count, [glyphs...], [atlas...]
+                if (pb < 48) return error.Protocol;
+                const gbase_x = try readF32LE(r);
+                const gbase_y = try readF32LE(r);
+                const gr = try readF32LE(r);
+                const gg = try readF32LE(r);
+                const gb = try readF32LE(r);
+                const ga = try readF32LE(r);
+                const cell_w = try readU32LE(r);
+                const cell_h = try readU32LE(r);
+                const atlas_cols = try readU32LE(r);
+                const atlas_w = try readU32LE(r);
+                const atlas_h = try readU32LE(r);
+                const glyph_count = try readU32LE(r);
+
+                // Validate payload size
+                const glyphs_size: usize = @as(usize, glyph_count) * 12;
+                const atlas_size: usize = @as(usize, atlas_w) * @as(usize, atlas_h);
+                const expected_size: usize = 48 + glyphs_size + atlas_size;
+                if (pb != expected_size) return error.Protocol;
+                if (glyph_count == 0) continue;
+                if (cell_w == 0 or cell_h == 0) continue;
+                if (atlas_cols == 0) continue;
+
+                // Read glyph data
+                const GlyphEntry = struct { index: u32, x_off: f32, y_off: f32 };
+                const glyph_entries = try alloc.alloc(GlyphEntry, glyph_count);
+                defer alloc.free(glyph_entries);
+
+                for (glyph_entries) |*ge| {
+                    ge.index = try readU32LE(r);
+                    ge.x_off = try readF32LE(r);
+                    ge.y_off = try readF32LE(r);
+                }
+
+                // Read atlas data
+                const atlas_data = try alloc.alloc(u8, atlas_size);
+                defer alloc.free(atlas_data);
+                const bytes_read = try r.read(atlas_data);
+                if (bytes_read != atlas_size) return error.Protocol;
+
+                // Render each glyph
+                const cr8 = clampU8(gr);
+                const cg8 = clampU8(gg);
+                const cb8 = clampU8(gb);
+
+                for (glyph_entries) |ge| {
+                    // Calculate glyph position in atlas
+                    const glyph_row = ge.index / atlas_cols;
+                    const glyph_col = ge.index % atlas_cols;
+                    const atlas_x: usize = @as(usize, glyph_col) * @as(usize, cell_w);
+                    const atlas_y: usize = @as(usize, glyph_row) * @as(usize, cell_h);
+
+                    // Calculate destination position
+                    const dst_x = gbase_x + ge.x_off;
+                    const dst_y = gbase_y + ge.y_off;
+
+                    // Apply transform to destination
+                    const tx = dst_x * t.a + dst_y * t.c + t.e;
+                    const ty = dst_x * t.b + dst_y * t.d + t.f;
+
+                    // Render glyph pixels
+                    var py: usize = 0;
+                    while (py < cell_h) : (py += 1) {
+                        var px: usize = 0;
+                        while (px < cell_w) : (px += 1) {
+                            const src_x = atlas_x + px;
+                            const src_y = atlas_y + py;
+                            if (src_x >= atlas_w or src_y >= atlas_h) continue;
+
+                            const alpha_idx = src_y * @as(usize, atlas_w) + src_x;
+                            const glyph_alpha = atlas_data[alpha_idx];
+                            if (glyph_alpha == 0) continue;
+
+                            // Calculate final alpha (glyph alpha * color alpha)
+                            const final_alpha: f32 = (@as(f32, @floatFromInt(glyph_alpha)) / 255.0) * ga;
+                            const ca8 = clampU8(final_alpha);
+                            if (ca8 == 0) continue;
+
+                            // Destination pixel
+                            const dx: isize = @as(isize, @intFromFloat(tx)) + @as(isize, @intCast(px));
+                            const dy: isize = @as(isize, @intFromFloat(ty)) + @as(isize, @intCast(py));
+
+                            if (dx < 0 or dy < 0) continue;
+                            if (dx >= @as(isize, @intCast(w)) or dy >= @as(isize, @intCast(h))) continue;
+
+                            // Check clipping
+                            if (clip_enabled) {
+                                var in_clip = false;
+                                for (clip_rects.items) |cr| {
+                                    if (dx >= cr.x and dx < cr.x + @as(isize, @intCast(cr.w)) and
+                                        dy >= cr.y and dy < cr.y + @as(isize, @intCast(cr.h)))
+                                    {
+                                        in_clip = true;
+                                        break;
+                                    }
+                                }
+                                if (!in_clip) continue;
+                            }
+
+                            const dst_idx: usize = (@as(usize, @intCast(dy)) * w + @as(usize, @intCast(dx))) * 4;
+                            fbBlendPixel(rgba, dst_idx, cr8, cg8, cb8, ca8, blend_mode);
+                        }
+                    }
+                }
+
+                // Reset line tracking state
+                last_line_valid = false;
+
             } else {
                 try file.seekBy(@intCast(pb));
 
