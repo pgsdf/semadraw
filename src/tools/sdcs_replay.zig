@@ -1244,7 +1244,7 @@ else if (cmd.opcode == sdcs.Op.FILL_RECT) {
 
                 // Read all points
                 const PathPoint = struct { x: f32, y: f32 };
-                var path_points = try alloc.alloc(PathPoint, point_count);
+                const path_points = try alloc.alloc(PathPoint, point_count);
                 defer alloc.free(path_points);
 
                 for (path_points) |*pt| {
