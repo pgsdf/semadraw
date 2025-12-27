@@ -56,6 +56,9 @@ mkdir -p tests/out
 ./zig-out/bin/sdcs_make_miter_limit tests/out/miter_limit.sdcs
 ./zig-out/bin/sdcs_replay tests/out/miter_limit.sdcs tests/out/miter_limit.ppm 256 256
 
+./zig-out/bin/sdcs_make_diagonal tests/out/diagonal.sdcs
+./zig-out/bin/sdcs_replay tests/out/diagonal.sdcs tests/out/diagonal.ppm 256 256
+
 hash_one=""
 hash_two=""
 hash_three=""
@@ -68,6 +71,7 @@ hash_nine=""
 hash_ten=""
 hash_eleven=""
 hash_miter_limit=""
+hash_diagonal=""
 
 if command -v sha256 >/dev/null 2>&1; then
   hash_one=$(sha256 -q tests/out/test.ppm)
@@ -77,6 +81,7 @@ if command -v sha256 >/dev/null 2>&1; then
   hash_five=$(sha256 -q tests/out/transform.ppm)
   hash_six=$(sha256 -q tests/out/blend.ppm)
   hash_miter_limit=$(sha256 -q tests/out/miter_limit.ppm)
+  hash_diagonal=$(sha256 -q tests/out/diagonal.ppm)
 elif command -v sha256sum >/dev/null 2>&1; then
   hash_one=$(sha256sum tests/out/test.ppm | awk '{print $1}')
   hash_two=$(sha256sum tests/out/overlap.ppm | awk '{print $1}')
@@ -85,6 +90,7 @@ elif command -v sha256sum >/dev/null 2>&1; then
   hash_five=$(sha256sum tests/out/transform.ppm | awk '{print $1}')
   hash_six=$(sha256sum tests/out/blend.ppm | awk '{print $1}')
   hash_miter_limit=$(sha256sum tests/out/miter_limit.ppm | awk '{print $1}')
+  hash_diagonal=$(sha256sum tests/out/diagonal.ppm | awk '{print $1}')
 else
   echo "sha256 tool not found"
   exit 1
@@ -99,6 +105,7 @@ if [ ! -f "$expected_file" ]; then
   echo "$hash_five  transform.ppm" >> "$expected_file"
   echo "$hash_six  blend.ppm" >> "$expected_file"
   echo "$hash_miter_limit  miter_limit.ppm" >> "$expected_file"
+  echo "$hash_diagonal  diagonal.ppm" >> "$expected_file"
   echo "golden hashes created at $expected_file"
   exit 0
 fi
@@ -146,6 +153,12 @@ if ! grep -q ' miter_limit.ppm$' "$expected_file"; then
   exit 0
 fi
 
+if ! grep -q ' diagonal.ppm$' "$expected_file"; then
+  echo "$hash_diagonal  diagonal.ppm" >> "$expected_file"
+  echo "added missing golden entry for diagonal.ppm"
+  exit 0
+fi
+
 expected_one=$(grep ' test.ppm$' "$expected_file" | awk '{print $1}')
 expected_two=$(grep ' overlap.ppm$' "$expected_file" | awk '{print $1}')
 expected_three=$(grep ' fractional.ppm$' "$expected_file" | awk '{print $1}')
@@ -153,6 +166,7 @@ expected_four=$(grep ' clip.ppm$' "$expected_file" | awk '{print $1}')
 expected_five=$(grep ' transform.ppm$' "$expected_file" | awk '{print $1}')
 expected_six=$(grep ' blend.ppm$' "$expected_file" | awk '{print $1}')
 expected_miter_limit=$(grep ' miter_limit.ppm$' "$expected_file" | awk '{print $1}')
+expected_diagonal=$(grep ' diagonal.ppm$' "$expected_file" | awk '{print $1}')
 
 if [ "$hash_one" != "$expected_one" ]; then
   echo "golden mismatch for test.ppm"
@@ -200,6 +214,13 @@ if [ "$hash_miter_limit" != "$expected_miter_limit" ]; then
   echo "golden mismatch for miter_limit.ppm"
   echo "expected: $expected_miter_limit"
   echo "got:      $hash_miter_limit"
+  exit 1
+fi
+
+if [ "$hash_diagonal" != "$expected_diagonal" ]; then
+  echo "golden mismatch for diagonal.ppm"
+  echo "expected: $expected_diagonal"
+  echo "got:      $hash_diagonal"
   exit 1
 fi
 

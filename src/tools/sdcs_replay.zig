@@ -118,6 +118,117 @@ fn pointInClips(px: f32, py: f32, clips: ?[]const ClipRect) bool {
     return true;
 }
 
+/// Rasterize an arbitrary-angle stroked line as an oriented rectangle.
+/// The line from (x1,y1) to (x2,y2) is stroked with width sw.
+fn emitStrokedLineArbitrary(
+    rgba: []u8,
+    w: usize,
+    h: usize,
+    t: Transform2D,
+    clip_enabled: bool,
+    clip_rects: []const ClipRect,
+    blend_mode: u32,
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+    sw: f32,
+    cr: f32,
+    cg: f32,
+    cb: f32,
+    ca: f32,
+) void {
+    // Direction vector
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const len = @sqrt(dx * dx + dy * dy);
+    if (len < 0.0001) return; // Degenerate line
+
+    // Normalize direction
+    const ux = dx / len;
+    const uy = dy / len;
+
+    // Perpendicular (90° CCW)
+    const px = -uy;
+    const py = ux;
+
+    // Half stroke width
+    const half = sw * 0.5;
+
+    // Four corners of the stroke rectangle in user space
+    // p0 = (x1, y1) + half * perp
+    // p1 = (x1, y1) - half * perp
+    // p2 = (x2, y2) - half * perp
+    // p3 = (x2, y2) + half * perp
+    const c0x = x1 + px * half;
+    const c0y = y1 + py * half;
+    const c1x = x1 - px * half;
+    const c1y = y1 - py * half;
+    const c2x = x2 - px * half;
+    const c2y = y2 - py * half;
+    const c3x = x2 + px * half;
+    const c3y = y2 + py * half;
+
+    // Transform corners to screen space
+    const p0 = applyT(t, c0x, c0y);
+    const p1 = applyT(t, c1x, c1y);
+    const p2 = applyT(t, c2x, c2y);
+    const p3 = applyT(t, c3x, c3y);
+
+    // Compute axis-aligned bounding box
+    var minx: f32 = @min(@min(p0.x, p1.x), @min(p2.x, p3.x));
+    var maxx: f32 = @max(@max(p0.x, p1.x), @max(p2.x, p3.x));
+    var miny: f32 = @min(@min(p0.y, p1.y), @min(p2.y, p3.y));
+    var maxy: f32 = @max(@max(p0.y, p1.y), @max(p2.y, p3.y));
+
+    // Clamp to framebuffer
+    if (minx < 0) minx = 0;
+    if (miny < 0) miny = 0;
+    if (maxx > @as(f32, @floatFromInt(w))) maxx = @as(f32, @floatFromInt(w));
+    if (maxy > @as(f32, @floatFromInt(h))) maxy = @as(f32, @floatFromInt(h));
+
+    const ix0: isize = @intFromFloat(@floor(minx));
+    const iy0: isize = @intFromFloat(@floor(miny));
+    const ix1: isize = @intFromFloat(@ceil(maxx));
+    const iy1: isize = @intFromFloat(@ceil(maxy));
+
+    // Edge vectors for half-plane tests (CCW winding: p0 -> p3 -> p2 -> p1)
+    // Each edge: point is inside if cross product with edge normal is >= 0
+    const e0x = p3.x - p0.x;
+    const e0y = p3.y - p0.y;
+    const e1x = p2.x - p3.x;
+    const e1y = p2.y - p3.y;
+    const e2x = p1.x - p2.x;
+    const e2y = p1.y - p2.y;
+    const e3x = p0.x - p1.x;
+    const e3y = p0.y - p1.y;
+
+    var iy: isize = iy0;
+    while (iy < iy1) : (iy += 1) {
+        var ix: isize = ix0;
+        while (ix < ix1) : (ix += 1) {
+            const px_f: f32 = @as(f32, @floatFromInt(ix)) + 0.5;
+            const py_f: f32 = @as(f32, @floatFromInt(iy)) + 0.5;
+
+            // Clip test
+            if (clip_enabled and !pointInClips(px_f, py_f, clip_rects)) continue;
+
+            // Half-plane tests: check if point is on the inside of all 4 edges
+            // Cross product sign determines which side of the edge the point is on
+            const d0 = (px_f - p0.x) * e0y - (py_f - p0.y) * e0x;
+            const d1 = (px_f - p3.x) * e1y - (py_f - p3.y) * e1x;
+            const d2 = (px_f - p2.x) * e2y - (py_f - p2.y) * e2x;
+            const d3 = (px_f - p1.x) * e3y - (py_f - p1.y) * e3x;
+
+            // Point is inside if all cross products have the same sign (>= 0 for CCW)
+            if (d0 >= 0 and d1 >= 0 and d2 >= 0 and d3 >= 0) {
+                const idx: usize = (@as(usize, @intCast(iy)) * w + @as(usize, @intCast(ix))) * 4;
+                fbBlendPixel(rgba, idx, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode);
+            }
+        }
+    }
+}
+
 fn emitRoundCap(
     rgba: []u8,
     w: usize,
@@ -764,8 +875,25 @@ else if (stroke_cap == .Round) {
         const rect = rectApplyTBounds(t, xx0, y1 - s2, xx1 - xx0, sw);
         fbFillRectClipped(rgba, w, h, rect.x, rect.y, rect.w, rect.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, if (clip_enabled) clip_rects.items else null);
     } else {
-        // Not supported in v1. Ignore.
-        continue;
+        // v2: arbitrary-angle lines with proper oriented quad rasterization
+        emitStrokedLineArbitrary(
+            rgba,
+            w,
+            h,
+            t,
+            clip_enabled,
+            clip_rects.items,
+            blend_mode,
+            x1,
+            y1,
+            x2,
+            y2,
+            sw,
+            cr,
+            cg,
+            cb,
+            ca,
+        );
     }
             // update last segment info for join detection
             last_line_valid = true;
