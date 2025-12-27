@@ -1,7 +1,5 @@
 const std = @import("std");
-const sdcs = @import("sdcs");
-
-const Encoder = @import("semadraw").Encoder;
+const semadraw = @import("semadraw");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -18,7 +16,10 @@ pub fn main() !void {
 
     const out_path = args[1];
 
-    var enc = Encoder.init(alloc);
+    var file = try std.fs.cwd().createFile(out_path, .{ .truncate = true });
+    defer file.close();
+
+    var enc = semadraw.Encoder.init(alloc);
     defer enc.deinit();
 
     try enc.reset();
@@ -47,7 +48,7 @@ pub fn main() !void {
 
     // Test 5: Path with round joins (should have smooth circular joins)
     try enc.setStrokeJoin(.Round);
-    const path_points = [_]Encoder.Point{
+    const path_points = [_]semadraw.Encoder.Point{
         .{ .x = 10.0, .y = 180.0 },
         .{ .x = 30.0, .y = 200.0 },
         .{ .x = 50.0, .y = 180.0 },
@@ -70,12 +71,6 @@ pub fn main() !void {
     try enc.fillRect(130.3, 220.7, 30.0, 20.0, 1.0, 0.0, 0.0, 1.0);
     try enc.strokeLine(170.0, 220.0, 210.0, 250.0, 2.0, 0.0, 1.0, 0.0, 1.0);
 
-    const cmds = try enc.finishBytes();
-    defer alloc.free(cmds);
-
-    var file = try std.fs.cwd().createFile(out_path, .{ .truncate = true });
-    defer file.close();
-
-    try sdcs.writeHeader(file);
-    try sdcs.writeCmdsChunk(file, cmds);
+    try enc.end();
+    try enc.writeToFile(file);
 }
