@@ -1,8 +1,6 @@
 const std = @import("std");
 const sdcs = @import("sdcs.zig");
 
-
-
 fn putU16LE(buf: []u8, off: *usize, v: u16) void {
     buf[off.* + 0] = @intCast(v & 0xff);
     buf[off.* + 1] = @intCast((v >> 8) & 0xff);
@@ -63,18 +61,17 @@ pub const Encoder = struct {
         pub const Add: u32 = 3;
     };
 
-pub const StrokeJoin = enum(u32) {
-    Miter = 0,
-    Bevel = 1,
-    Round = 2,
-};
+    pub const StrokeJoin = enum(u32) {
+        Miter = 0,
+        Bevel = 1,
+        Round = 2,
+    };
 
-pub const StrokeCap = enum(u32) {
-    Butt = 0,
-    Square = 1,
-    Round = 2,
-};
-
+    pub const StrokeCap = enum(u32) {
+        Butt = 0,
+        Square = 1,
+        Round = 2,
+    };
 
     pub fn init(allocator: std.mem.Allocator) Encoder {
         return .{ .allocator = allocator, .cmds = std.ArrayList(u8){} };
@@ -122,60 +119,60 @@ pub const StrokeCap = enum(u32) {
     }
 
     pub fn strokeRect(
-    self: *Encoder,
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
-    stroke_width: f32,
-    r: f32,
-    g: f32,
-    b: f32,
-    a: f32,
-) !void {
-    if (!(stroke_width > 0.0)) return error.InvalidArgument;
+        self: *Encoder,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        stroke_width: f32,
+        r: f32,
+        g: f32,
+        b: f32,
+        a: f32,
+    ) !void {
+        if (!(stroke_width > 0.0)) return error.InvalidArgument;
 
-    var payload: [36]u8 = undefined;
-    var off: usize = 0;
+        var payload: [36]u8 = undefined;
+        var off: usize = 0;
 
-    putF32LE(payload[0..], &off, x);
-    putF32LE(payload[0..], &off, y);
-    putF32LE(payload[0..], &off, w);
-    putF32LE(payload[0..], &off, h);
-    putF32LE(payload[0..], &off, stroke_width);
-    putF32LE(payload[0..], &off, r);
-    putF32LE(payload[0..], &off, g);
-    putF32LE(payload[0..], &off, b);
-    putF32LE(payload[0..], &off, a);
+        putF32LE(payload[0..], &off, x);
+        putF32LE(payload[0..], &off, y);
+        putF32LE(payload[0..], &off, w);
+        putF32LE(payload[0..], &off, h);
+        putF32LE(payload[0..], &off, stroke_width);
+        putF32LE(payload[0..], &off, r);
+        putF32LE(payload[0..], &off, g);
+        putF32LE(payload[0..], &off, b);
+        putF32LE(payload[0..], &off, a);
 
-    try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.STROKE_RECT, payload[0..]);
-}
+        try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.STROKE_RECT, payload[0..]);
+    }
 
-pub fn setBlend(self: *Encoder, mode: u32) !void {
-    var payload: [4]u8 = undefined;
-    var off: usize = 0;
-    putU32LE(payload[0..], &off, mode);
-    try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.SET_BLEND, payload[0..]);
-}
+    pub fn setBlend(self: *Encoder, mode: u32) !void {
+        var payload: [4]u8 = undefined;
+        var off: usize = 0;
+        putU32LE(payload[0..], &off, mode);
+        try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.SET_BLEND, payload[0..]);
+    }
 
-pub fn setTransform2D(self: *Encoder, a: f32, b: f32, c: f32, d: f32, e: f32, f: f32) !void {
-    // Payload: 6 f32 values (a b c d e f), little endian
-    var payload: [24]u8 = undefined;
-    var off: usize = 0;
-    putF32LE(payload[0..], &off, a);
-    putF32LE(payload[0..], &off, b);
-    putF32LE(payload[0..], &off, c);
-    putF32LE(payload[0..], &off, d);
-    putF32LE(payload[0..], &off, e);
-    putF32LE(payload[0..], &off, f);
-    try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.SET_TRANSFORM_2D, payload[0..]);
-}
+    pub fn setTransform2D(self: *Encoder, a: f32, b: f32, c: f32, d: f32, e: f32, f: f32) !void {
+        // Payload: 6 f32 values (a b c d e f), little endian
+        var payload: [24]u8 = undefined;
+        var off: usize = 0;
+        putF32LE(payload[0..], &off, a);
+        putF32LE(payload[0..], &off, b);
+        putF32LE(payload[0..], &off, c);
+        putF32LE(payload[0..], &off, d);
+        putF32LE(payload[0..], &off, e);
+        putF32LE(payload[0..], &off, f);
+        try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.SET_TRANSFORM_2D, payload[0..]);
+    }
 
-pub fn resetTransform(self: *Encoder) !void {
-    try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.RESET_TRANSFORM, &[_]u8{});
-}
+    pub fn resetTransform(self: *Encoder) !void {
+        try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.RESET_TRANSFORM, &[_]u8{});
+    }
 
-pub fn fillRect(self: *Encoder, x: f32, y: f32, w: f32, h: f32, r: f32, g: f32, b: f32, a: f32) !void {
+    pub fn fillRect(self: *Encoder, x: f32, y: f32, w: f32, h: f32, r: f32, g: f32, b: f32, a: f32) !void {
         var payload: [32]u8 = undefined;
         var off: usize = 0;
         putF32LE(payload[0..], &off, x);
@@ -189,36 +186,35 @@ pub fn fillRect(self: *Encoder, x: f32, y: f32, w: f32, h: f32, r: f32, g: f32, 
         try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.FILL_RECT, payload[0..]);
     }
 
-pub fn strokeLine(
-    self: *Encoder,
-    x1: f32,
-    y1: f32,
-    x2: f32,
-    y2: f32,
-    stroke_width: f32,
-    r: f32,
-    g: f32,
-    b: f32,
-    a: f32,
-) !void {
-    if (!(stroke_width > 0.0)) return error.InvalidArgument;
+    pub fn strokeLine(
+        self: *Encoder,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        stroke_width: f32,
+        r: f32,
+        g: f32,
+        b: f32,
+        a: f32,
+    ) !void {
+        if (!(stroke_width > 0.0)) return error.InvalidArgument;
 
-    var payload: [36]u8 = undefined;
-    var off: usize = 0;
+        var payload: [36]u8 = undefined;
+        var off: usize = 0;
 
-    putF32LE(payload[0..], &off, x1);
-    putF32LE(payload[0..], &off, y1);
-    putF32LE(payload[0..], &off, x2);
-    putF32LE(payload[0..], &off, y2);
-    putF32LE(payload[0..], &off, stroke_width);
-    putF32LE(payload[0..], &off, r);
-    putF32LE(payload[0..], &off, g);
-    putF32LE(payload[0..], &off, b);
-    putF32LE(payload[0..], &off, a);
+        putF32LE(payload[0..], &off, x1);
+        putF32LE(payload[0..], &off, y1);
+        putF32LE(payload[0..], &off, x2);
+        putF32LE(payload[0..], &off, y2);
+        putF32LE(payload[0..], &off, stroke_width);
+        putF32LE(payload[0..], &off, r);
+        putF32LE(payload[0..], &off, g);
+        putF32LE(payload[0..], &off, b);
+        putF32LE(payload[0..], &off, a);
 
-    try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.STROKE_LINE, payload[0..]);
-}
-
+        try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.STROKE_LINE, payload[0..]);
+    }
 
     pub fn setStrokeJoin(self: *Encoder, join: StrokeJoin) !void {
         var payload: [4]u8 = undefined;
@@ -233,8 +229,6 @@ pub fn strokeLine(
         putU32LE(payload[0..], &off, @intFromEnum(cap));
         try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.SET_STROKE_CAP, payload[0..]);
     }
-
-
 
     pub fn end(self: *Encoder) !void {
         try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.END, &[_]u8{});
