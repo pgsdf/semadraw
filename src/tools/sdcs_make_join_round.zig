@@ -20,8 +20,13 @@ pub fn main() !void {
 
     const out_path = args[1];
 
+    var out = try std.fs.cwd().createFile(out_path, .{ .truncate = true });
+    defer out.close();
+
     var enc = semadraw.Encoder.init(alloc);
     defer enc.deinit();
+
+    try enc.reset();
 
     // Stroke style.
     try enc.setBlend(semadraw.Encoder.BlendMode.SrcOver);
@@ -36,10 +41,6 @@ pub fn main() !void {
     try enc.strokeLine(64.0, 64.0, 192.0, 64.0, stroke_w, cr, cg, cb, ca);
     try enc.strokeLine(192.0, 64.0, 192.0, 192.0, stroke_w, cr, cg, cb, ca);
 
-    const bytes = try enc.finishBytes();
-    defer alloc.free(bytes);
-
-    var out = try std.fs.cwd().createFile(out_path, .{ .truncate = true });
-    defer out.close();
-    try out.writeAll(bytes);
+    try enc.end();
+    try enc.writeToFile(out);
 }
