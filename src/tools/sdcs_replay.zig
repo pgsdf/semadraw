@@ -952,6 +952,56 @@ else if (cmd.opcode == sdcs.Op.FILL_RECT) {
                 const tb = rectApplyTBounds(t, rx, ry, rw2, rh2);
                 fbFillRectClipped(rgba, w, h, tb.x, tb.y, tb.w, tb.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, if (clip_enabled) clip_rects.items else null);
 
+            } else if (cmd.opcode == sdcs.Op.BLIT_IMAGE) {
+                // Payload: dst_x(f32), dst_y(f32), img_w(u32), img_h(u32), pixels(RGBA)
+                if (pb < 16) return error.Protocol;
+                const dst_x = try readF32LE(r);
+                const dst_y = try readF32LE(r);
+                const img_w = try readU32LE(r);
+                const img_h = try readU32LE(r);
+
+                const pixel_bytes: usize = @as(usize, img_w) * @as(usize, img_h) * 4;
+                if (pb != 16 + pixel_bytes) return error.Protocol;
+                if (img_w == 0 or img_h == 0) continue;
+
+                // Read pixel data into temporary buffer
+                const pixels = try alloc.alloc(u8, pixel_bytes);
+                defer alloc.free(pixels);
+                try readExact(r, pixels);
+
+                // Blit each pixel with transform, clip, and blend
+                var iy: u32 = 0;
+                while (iy < img_h) : (iy += 1) {
+                    var ix: u32 = 0;
+                    while (ix < img_w) : (ix += 1) {
+                        const src_idx: usize = (@as(usize, iy) * @as(usize, img_w) + @as(usize, ix)) * 4;
+                        const sr = pixels[src_idx + 0];
+                        const sg = pixels[src_idx + 1];
+                        const sb = pixels[src_idx + 2];
+                        const sa = pixels[src_idx + 3];
+
+                        // Skip fully transparent pixels
+                        if (sa == 0) continue;
+
+                        // Transform source pixel position to screen space
+                        const px = dst_x + @as(f32, @floatFromInt(ix)) + 0.5;
+                        const py = dst_y + @as(f32, @floatFromInt(iy)) + 0.5;
+                        const tp = applyT(t, px, py);
+
+                        // Clip test
+                        if (clip_enabled and !pointInClips(tp.x, tp.y, clip_rects.items)) continue;
+
+                        // Bounds check
+                        const dx: isize = @intFromFloat(@floor(tp.x));
+                        const dy: isize = @intFromFloat(@floor(tp.y));
+                        if (dx < 0 or dy < 0) continue;
+                        if (dx >= @as(isize, @intCast(w)) or dy >= @as(isize, @intCast(h))) continue;
+
+                        const dst_idx: usize = (@as(usize, @intCast(dy)) * w + @as(usize, @intCast(dx))) * 4;
+                        fbBlendPixel(rgba, dst_idx, sr, sg, sb, sa, blend_mode);
+                    }
+                }
+
             } else {
                 try file.seekBy(@intCast(pb));
 
