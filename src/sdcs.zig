@@ -82,6 +82,7 @@ pub const Op = struct {
     pub const STROKE_LINE: u16 = 0x0012;
     pub const SET_STROKE_JOIN: u16 = 0x0013;
     pub const SET_STROKE_CAP: u16 = 0x0014;
+    pub const SET_MITER_LIMIT: u16 = 0x0015;
     pub const BLIT_IMAGE: u16 = 0x0020;
     pub const DRAW_GLYPH_RUN: u16 = 0x0030;
     pub const END: u16 = 0x00F0;
@@ -146,6 +147,7 @@ pub fn opcodeName(opcode: u16) ?[]const u8 {
         Op.STROKE_LINE => "STROKE_LINE",
         Op.SET_STROKE_JOIN => "SET_STROKE_JOIN",
         Op.SET_STROKE_CAP => "SET_STROKE_CAP",
+        Op.SET_MITER_LIMIT => "SET_MITER_LIMIT",
         Op.BLIT_IMAGE => "BLIT_IMAGE",
         Op.DRAW_GLYPH_RUN => "DRAW_GLYPH_RUN",
         Op.END => "END",
@@ -247,6 +249,12 @@ fn validateOpcodePayload(op: u16, payload_bytes: u32) ValidateError!void {
     }
 
     if (op == Op.SET_STROKE_CAP) {
+        if (payload_bytes != 4) return ValidateError.Protocol;
+        return;
+    }
+
+    if (op == Op.SET_MITER_LIMIT) {
+        // Single f32 value for miter limit
         if (payload_bytes != 4) return ValidateError.Protocol;
         return;
     }
@@ -429,6 +437,7 @@ pub fn validateFile(file: std.fs.File) ValidateError!void {
                 Op.STROKE_LINE,
                 Op.SET_STROKE_JOIN,
                 Op.SET_STROKE_CAP,
+                Op.SET_MITER_LIMIT,
                 Op.BLIT_IMAGE,
                 Op.DRAW_GLYPH_RUN,
                 => {
@@ -656,7 +665,7 @@ pub fn validateFileWithDiagnostics(file: std.fs.File, diag: *ValidationDiagnosti
                     if (cmd.opcode == Op.END) end_seen = true;
                 },
 
-                Op.SET_CLIP_RECTS, Op.SET_BLEND, Op.SET_TRANSFORM_2D, Op.FILL_RECT, Op.STROKE_RECT, Op.STROKE_LINE, Op.SET_STROKE_JOIN, Op.SET_STROKE_CAP, Op.BLIT_IMAGE, Op.DRAW_GLYPH_RUN => {
+                Op.SET_CLIP_RECTS, Op.SET_BLEND, Op.SET_TRANSFORM_2D, Op.FILL_RECT, Op.STROKE_RECT, Op.STROKE_LINE, Op.SET_STROKE_JOIN, Op.SET_STROKE_CAP, Op.SET_MITER_LIMIT, Op.BLIT_IMAGE, Op.DRAW_GLYPH_RUN => {
                     if (cmd.payload_bytes != 0) {
                         file.seekBy(@as(i64, @intCast(cmd.payload_bytes))) catch {
                             diag.* = .{
@@ -750,6 +759,7 @@ test "opcodeName returns correct names for known opcodes" {
     try std.testing.expectEqualStrings("STROKE_LINE", opcodeName(Op.STROKE_LINE).?);
     try std.testing.expectEqualStrings("SET_STROKE_JOIN", opcodeName(Op.SET_STROKE_JOIN).?);
     try std.testing.expectEqualStrings("SET_STROKE_CAP", opcodeName(Op.SET_STROKE_CAP).?);
+    try std.testing.expectEqualStrings("SET_MITER_LIMIT", opcodeName(Op.SET_MITER_LIMIT).?);
     try std.testing.expectEqualStrings("BLIT_IMAGE", opcodeName(Op.BLIT_IMAGE).?);
     try std.testing.expectEqualStrings("DRAW_GLYPH_RUN", opcodeName(Op.DRAW_GLYPH_RUN).?);
     try std.testing.expectEqualStrings("END", opcodeName(Op.END).?);
@@ -835,6 +845,14 @@ test "validateOpcodePayload accepts correct payload sizes" {
     try validateOpcodePayload(Op.STROKE_LINE, 36);
     try validateOpcodePayload(Op.SET_STROKE_JOIN, 4);
     try validateOpcodePayload(Op.SET_STROKE_CAP, 4);
+    try validateOpcodePayload(Op.SET_MITER_LIMIT, 4);
+}
+
+test "SET_MITER_LIMIT payload validation" {
+    // SET_MITER_LIMIT requires exactly 4 bytes (single f32)
+    try validateOpcodePayload(Op.SET_MITER_LIMIT, 4);
+    try std.testing.expectError(ValidateError.Protocol, validateOpcodePayload(Op.SET_MITER_LIMIT, 0));
+    try std.testing.expectError(ValidateError.Protocol, validateOpcodePayload(Op.SET_MITER_LIMIT, 8));
 }
 
 test "SET_CLIP_RECTS payload validation" {

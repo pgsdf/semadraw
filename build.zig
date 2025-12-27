@@ -183,8 +183,17 @@ pub fn build(b: *std.Build) void {
 	sdcs_make_cap_round.root_module.addImport("sdcs", sdcs_mod);
 	b.installArtifact(sdcs_make_cap_round);
 
-
-
+	const sdcs_make_miter_limit = b.addExecutable(.{
+	    .name = "sdcs_make_miter_limit",
+	    .root_module = b.createModule(.{
+	        .root_source_file = b.path("src/tools/sdcs_make_miter_limit.zig"),
+	        .target = target,
+	        .optimize = optimize,
+	    }),
+	});
+	sdcs_make_miter_limit.root_module.addImport("semadraw", semadraw_mod);
+	sdcs_make_miter_limit.root_module.addImport("sdcs", sdcs_mod);
+	b.installArtifact(sdcs_make_miter_limit);
 
 
     const sdcs_replay = b.addExecutable(.{

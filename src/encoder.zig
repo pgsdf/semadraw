@@ -230,6 +230,18 @@ pub const Encoder = struct {
         try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.SET_STROKE_CAP, payload[0..]);
     }
 
+    /// Set the miter limit for stroke joins.
+    /// When a miter join would extend beyond miter_limit * stroke_width / 2,
+    /// it falls back to a bevel join instead.
+    /// Default value is 4.0 (same as SVG default).
+    /// Must be >= 1.0; values less than 1.0 are clamped to 1.0.
+    pub fn setMiterLimit(self: *Encoder, limit: f32) !void {
+        var payload: [4]u8 = undefined;
+        var off: usize = 0;
+        putF32LE(payload[0..], &off, limit);
+        try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.SET_MITER_LIMIT, payload[0..]);
+    }
+
     pub fn end(self: *Encoder) !void {
         try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.END, &[_]u8{});
     }

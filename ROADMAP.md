@@ -22,10 +22,7 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 * Malformed input test suite (sdcs_test_malformed)
 * Fuzzing harness (sdcs_fuzz with AFL/libFuzzer support)
 * Determinism verification in test suite
-
-## In Progress
-
-* Miter limit (miter clamp fallback to bevel)
+* Miter limit (SET_MITER_LIMIT opcode, miter-to-bevel fallback for 90° joins)
 
 ## Next
 

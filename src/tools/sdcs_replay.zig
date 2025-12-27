@@ -365,6 +365,7 @@ pub fn main() !void {
     var blend_mode: u32 = 0;
 var stroke_join: StrokeJoin = .Miter;
 var stroke_cap: StrokeCap = .Butt;
+var miter_limit: f32 = 4.0; // SVG default
 
 var last_line_valid: bool = false;
 
@@ -539,6 +540,10 @@ if (cmd.opcode == 0 and cmd.flags == 0 and cmd.payload_bytes == 0) {
                 }
                 last_line_valid = false;
                 pending_cap_valid = false;
+            } else if (cmd.opcode == sdcs.Op.SET_MITER_LIMIT) {
+                const limit = try readF32LE(r);
+                // Clamp to minimum of 1.0 (values below 1.0 don't make geometric sense)
+                miter_limit = if (limit < 1.0) 1.0 else limit;
             } else if (cmd.opcode == sdcs.Op.STROKE_LINE) {
     // x1,y1,x2,y2,stroke_width,r,g,b,a (9 x f32 = 36 bytes)
     const x1 = try readF32LE(r);
@@ -708,27 +713,33 @@ else if (stroke_cap == .Round) {
                             );
                         } else if (stroke_join == .Miter) {
                             // Miter join v1: emit an extra sw x sw corner block on the outer corner.
-                            var sx: f32 = 0;
-                            var sy: f32 = 0;
+                            // For 90-degree (right angle) joins, the miter ratio is sqrt(2) ≈ 1.414.
+                            // If miter_limit < sqrt(2), fall back to bevel (no extra geometry).
+                            const sqrt2: f32 = 1.41421356237;
+                            if (miter_limit >= sqrt2) {
+                                var sx: f32 = 0;
+                                var sy: f32 = 0;
 
-                            if (last_h) {
-                                if (@abs(last_x2 - jx) < eps) sx = if (last_x2 > last_x1) 1 else -1 else sx = if (last_x1 > last_x2) 1 else -1;
-                            } else if (cur_h) {
-                                if (@abs(x2 - jx) < eps) sx = if (x2 > x1) 1 else -1 else sx = if (x1 > x2) 1 else -1;
-                            }
+                                if (last_h) {
+                                    if (@abs(last_x2 - jx) < eps) sx = if (last_x2 > last_x1) 1 else -1 else sx = if (last_x1 > last_x2) 1 else -1;
+                                } else if (cur_h) {
+                                    if (@abs(x2 - jx) < eps) sx = if (x2 > x1) 1 else -1 else sx = if (x1 > x2) 1 else -1;
+                                }
 
-                            if (last_v) {
-                                if (@abs(last_y2 - jy) < eps) sy = if (last_y2 > last_y1) 1 else -1 else sy = if (last_y1 > last_y2) 1 else -1;
-                            } else if (cur_v) {
-                                if (@abs(y2 - jy) < eps) sy = if (y2 > y1) 1 else -1 else sy = if (y1 > y2) 1 else -1;
-                            }
+                                if (last_v) {
+                                    if (@abs(last_y2 - jy) < eps) sy = if (last_y2 > last_y1) 1 else -1 else sy = if (last_y1 > last_y2) 1 else -1;
+                                } else if (cur_v) {
+                                    if (@abs(y2 - jy) < eps) sy = if (y2 > y1) 1 else -1 else sy = if (y1 > y2) 1 else -1;
+                                }
 
-                            if (sx != 0 and sy != 0) {
-                                const px = jx + (if (sx > 0) 0 else -sw);
-                                const py = jy + (if (sy > 0) 0 else -sw);
-                                const patch = rectApplyTBounds(t, px, py, sw, sw);
-                                fbFillRectClipped(rgba, w, h, patch.x, patch.y, patch.w, patch.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, if (clip_enabled) clip_rects.items else null);
+                                if (sx != 0 and sy != 0) {
+                                    const px = jx + (if (sx > 0) 0 else -sw);
+                                    const py = jy + (if (sy > 0) 0 else -sw);
+                                    const patch = rectApplyTBounds(t, px, py, sw, sw);
+                                    fbFillRectClipped(rgba, w, h, patch.x, patch.y, patch.w, patch.h, clampU8(cr), clampU8(cg), clampU8(cb), clampU8(ca), blend_mode, if (clip_enabled) clip_rects.items else null);
+                                }
                             }
+                            // else: miter_limit < sqrt(2), fall back to bevel (no extra geometry)
                         }
                     }
                 }
