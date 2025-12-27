@@ -52,15 +52,15 @@ pub const Daemon = struct {
         log.info("semadrawd starting on {s}", .{self.config.socket_path});
 
         // Poll fd array: [0] = server, [1..N] = clients
-        var poll_fds = std.ArrayList(PollFd).init(self.allocator);
-        defer poll_fds.deinit();
+        var poll_fds: std.ArrayListUnmanaged(PollFd) = .{};
+        defer poll_fds.deinit(self.allocator);
 
         while (self.running) {
             // Rebuild poll fd list
             poll_fds.clearRetainingCapacity();
 
             // Add server socket
-            try poll_fds.append(.{
+            try poll_fds.append(self.allocator, .{
                 .fd = self.server.getFd(),
                 .events = std.posix.POLL.IN,
                 .revents = 0,
@@ -69,7 +69,7 @@ pub const Daemon = struct {
             // Add client sockets
             var client_iter = self.clients.iterator();
             while (client_iter.next()) |session| {
-                try poll_fds.append(.{
+                try poll_fds.append(self.allocator, .{
                     .fd = session.*.getFd(),
                     .events = std.posix.POLL.IN,
                     .revents = 0,
