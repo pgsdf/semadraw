@@ -1429,10 +1429,12 @@ else if (cmd.opcode == sdcs.Op.FILL_RECT) {
 
                             // Check clipping
                             if (clip_enabled) {
+                                const dx_f: f32 = @floatFromInt(dx);
+                                const dy_f: f32 = @floatFromInt(dy);
                                 var in_clip = false;
                                 for (clip_rects.items) |cr| {
-                                    if (dx >= cr.x and dx < cr.x + @as(isize, @intCast(cr.w)) and
-                                        dy >= cr.y and dy < cr.y + @as(isize, @intCast(cr.h)))
+                                    if (dx_f >= cr.x and dx_f < cr.x + cr.w and
+                                        dy_f >= cr.y and dy_f < cr.y + cr.h)
                                     {
                                         in_clip = true;
                                         break;
