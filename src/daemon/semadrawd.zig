@@ -355,17 +355,11 @@ pub fn main() !void {
             }
             config.socket_path = args[i];
         } else if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
-            const stdout = std.io.getStdOut().writer();
-            try stdout.print(
-                \\semadrawd - SemaDraw compositor daemon
-                \\
-                \\Usage: semadrawd [OPTIONS]
-                \\
-                \\Options:
-                \\  -s, --socket PATH   Socket path (default: {s})
-                \\  -h, --help          Show this help
-                \\
-            , .{protocol.DEFAULT_SOCKET_PATH});
+            log.info("semadrawd - SemaDraw compositor daemon", .{});
+            log.info("Usage: semadrawd [OPTIONS]", .{});
+            log.info("Options:", .{});
+            log.info("  -s, --socket PATH   Socket path (default: {s})", .{protocol.DEFAULT_SOCKET_PATH});
+            log.info("  -h, --help          Show this help", .{});
             return;
         } else {
             log.err("unknown argument: {s}", .{arg});
