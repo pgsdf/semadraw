@@ -363,6 +363,77 @@ pub const Encoder = struct {
         try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.STROKE_CUBIC_BEZIER, payload[0..]);
     }
 
+    /// Glyph structure for text rendering operations.
+    pub const Glyph = struct {
+        index: u32, // Glyph index in atlas (row * atlas_cols + col)
+        x_offset: f32, // X offset from base position
+        y_offset: f32, // Y offset from base position
+    };
+
+    /// Draw a run of glyphs using a simple grid-based glyph atlas.
+    /// The atlas contains alpha values (0-255) for each pixel.
+    /// Glyphs are arranged in a grid with cell_width × cell_height cells.
+    /// Payload format: base_x, base_y, r, g, b, a, cell_w, cell_h, atlas_cols,
+    ///                 atlas_w, atlas_h, glyph_count, [glyphs...], [atlas...]
+    pub fn drawGlyphRun(
+        self: *Encoder,
+        base_x: f32,
+        base_y: f32,
+        r: f32,
+        g: f32,
+        b: f32,
+        a: f32,
+        cell_width: u32,
+        cell_height: u32,
+        atlas_cols: u32,
+        atlas_width: u32,
+        atlas_height: u32,
+        glyphs: []const Glyph,
+        atlas_data: []const u8,
+    ) !void {
+        if (glyphs.len == 0) return error.InvalidArgument;
+        if (glyphs.len > 65535) return error.InvalidArgument;
+        if (cell_width == 0 or cell_height == 0) return error.InvalidArgument;
+        if (atlas_cols == 0) return error.InvalidArgument;
+        if (atlas_width == 0 or atlas_height == 0) return error.InvalidArgument;
+        if (atlas_data.len != @as(usize, atlas_width) * @as(usize, atlas_height)) {
+            return error.InvalidArgument;
+        }
+
+        // Header: 48 bytes
+        // Per-glyph: 12 bytes each (index u32, x_offset f32, y_offset f32)
+        // Atlas: atlas_width * atlas_height bytes
+        const header_len: usize = 48;
+        const glyphs_len: usize = glyphs.len * 12;
+        const payload_len: usize = header_len + glyphs_len + atlas_data.len;
+        const payload = try self.allocator.alloc(u8, payload_len);
+        defer self.allocator.free(payload);
+
+        var off: usize = 0;
+        putF32LE(payload, &off, base_x);
+        putF32LE(payload, &off, base_y);
+        putF32LE(payload, &off, r);
+        putF32LE(payload, &off, g);
+        putF32LE(payload, &off, b);
+        putF32LE(payload, &off, a);
+        putU32LE(payload, &off, cell_width);
+        putU32LE(payload, &off, cell_height);
+        putU32LE(payload, &off, atlas_cols);
+        putU32LE(payload, &off, atlas_width);
+        putU32LE(payload, &off, atlas_height);
+        putU32LE(payload, &off, @intCast(glyphs.len));
+
+        for (glyphs) |glyph| {
+            putU32LE(payload, &off, glyph.index);
+            putF32LE(payload, &off, glyph.x_offset);
+            putF32LE(payload, &off, glyph.y_offset);
+        }
+
+        @memcpy(payload[header_len + glyphs_len ..], atlas_data);
+
+        try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.DRAW_GLYPH_RUN, payload);
+    }
+
     /// Blit an RGBA image at the specified destination position.
     /// The image is drawn at 1:1 scale, affected by the current transform.
     /// Payload format: dst_x(f32), dst_y(f32), img_w(u32), img_h(u32), pixels(RGBA bytes)

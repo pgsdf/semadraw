@@ -68,6 +68,9 @@ mkdir -p tests/out
 ./zig-out/bin/sdcs_make_path tests/out/path.sdcs
 ./zig-out/bin/sdcs_replay tests/out/path.sdcs tests/out/path.ppm 256 256
 
+./zig-out/bin/sdcs_make_text tests/out/text.sdcs
+./zig-out/bin/sdcs_replay tests/out/text.sdcs tests/out/text.ppm 256 256
+
 hash_one=""
 hash_two=""
 hash_three=""
@@ -84,6 +87,7 @@ hash_diagonal=""
 hash_blit=""
 hash_curves=""
 hash_path=""
+hash_text=""
 
 if command -v sha256 >/dev/null 2>&1; then
   hash_one=$(sha256 -q tests/out/test.ppm)
@@ -97,6 +101,7 @@ if command -v sha256 >/dev/null 2>&1; then
   hash_blit=$(sha256 -q tests/out/blit.ppm)
   hash_curves=$(sha256 -q tests/out/curves.ppm)
   hash_path=$(sha256 -q tests/out/path.ppm)
+  hash_text=$(sha256 -q tests/out/text.ppm)
 elif command -v sha256sum >/dev/null 2>&1; then
   hash_one=$(sha256sum tests/out/test.ppm | awk '{print $1}')
   hash_two=$(sha256sum tests/out/overlap.ppm | awk '{print $1}')
@@ -109,6 +114,7 @@ elif command -v sha256sum >/dev/null 2>&1; then
   hash_blit=$(sha256sum tests/out/blit.ppm | awk '{print $1}')
   hash_curves=$(sha256sum tests/out/curves.ppm | awk '{print $1}')
   hash_path=$(sha256sum tests/out/path.ppm | awk '{print $1}')
+  hash_text=$(sha256sum tests/out/text.ppm | awk '{print $1}')
 else
   echo "sha256 tool not found"
   exit 1
@@ -127,6 +133,7 @@ if [ ! -f "$expected_file" ]; then
   echo "$hash_blit  blit.ppm" >> "$expected_file"
   echo "$hash_curves  curves.ppm" >> "$expected_file"
   echo "$hash_path  path.ppm" >> "$expected_file"
+  echo "$hash_text  text.ppm" >> "$expected_file"
   echo "golden hashes created at $expected_file"
   exit 0
 fi
@@ -198,6 +205,12 @@ if ! grep -q ' path.ppm$' "$expected_file"; then
   exit 0
 fi
 
+if ! grep -q ' text.ppm$' "$expected_file"; then
+  echo "$hash_text  text.ppm" >> "$expected_file"
+  echo "added missing golden entry for text.ppm"
+  exit 0
+fi
+
 expected_one=$(grep ' test.ppm$' "$expected_file" | awk '{print $1}')
 expected_two=$(grep ' overlap.ppm$' "$expected_file" | awk '{print $1}')
 expected_three=$(grep ' fractional.ppm$' "$expected_file" | awk '{print $1}')
@@ -209,6 +222,7 @@ expected_diagonal=$(grep ' diagonal.ppm$' "$expected_file" | awk '{print $1}')
 expected_blit=$(grep ' blit.ppm$' "$expected_file" | awk '{print $1}')
 expected_curves=$(grep ' curves.ppm$' "$expected_file" | awk '{print $1}')
 expected_path=$(grep ' path.ppm$' "$expected_file" | awk '{print $1}')
+expected_text=$(grep ' text.ppm$' "$expected_file" | awk '{print $1}')
 
 if [ "$hash_one" != "$expected_one" ]; then
   echo "golden mismatch for test.ppm"
@@ -284,6 +298,13 @@ if [ "$hash_path" != "$expected_path" ]; then
   echo "golden mismatch for path.ppm"
   echo "expected: $expected_path"
   echo "got:      $hash_path"
+  exit 1
+fi
+
+if [ "$hash_text" != "$expected_text" ]; then
+  echo "golden mismatch for text.ppm"
+  echo "expected: $expected_text"
+  echo "got:      $hash_text"
   exit 1
 fi
 
