@@ -71,3 +71,14 @@ Rendering options supported by the encoder and replay tool:
 Early implementation.
 The SDCS format is executable and replayable.
 The software backend provides deterministic reference behavior.
+
+## License
+
+BSD 2-Clause License
+
+Copyright (c) 2025, Pacific Grove Software Distribution Foundation
+
+## Author
+
+Vester "Vic" Thacker, Principal Scientist, Pacific Grove Software Distribution Foundation
+
