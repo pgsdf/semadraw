@@ -315,6 +315,32 @@ pub fn build(b: *std.Build) void {
     sdcs_fuzz.root_module.addImport("sdcs", sdcs_mod);
     b.installArtifact(sdcs_fuzz);
 
+    // IPC protocol module (for semadrawd and clients)
+    const ipc_protocol_mod = b.createModule(.{
+        .root_source_file = b.path("src/ipc/protocol.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const ipc_socket_mod = b.createModule(.{
+        .root_source_file = b.path("src/ipc/socket_server.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "protocol", .module = ipc_protocol_mod },
+        },
+    });
+
+    const client_session_mod = b.createModule(.{
+        .root_source_file = b.path("src/daemon/client_session.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "protocol", .module = ipc_protocol_mod },
+            .{ .name = "socket_server", .module = ipc_socket_mod },
+        },
+    });
+
     // semadrawd daemon
     const semadrawd = b.addExecutable(.{
         .name = "semadrawd",
@@ -322,6 +348,11 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/daemon/semadrawd.zig"),
             .target = target,
             .optimize = optimize,
+            .imports = &.{
+                .{ .name = "protocol", .module = ipc_protocol_mod },
+                .{ .name = "socket_server", .module = ipc_socket_mod },
+                .{ .name = "client_session", .module = client_session_mod },
+            },
         }),
     });
     b.installArtifact(semadrawd);

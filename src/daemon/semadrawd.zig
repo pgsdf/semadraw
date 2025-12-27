@@ -1,8 +1,8 @@
 const std = @import("std");
 const posix = std.posix;
-const protocol = @import("../ipc/protocol.zig");
-const socket_server = @import("../ipc/socket_server.zig");
-const client_session = @import("client_session.zig");
+const protocol = @import("protocol");
+const socket_server = @import("socket_server");
+const client_session = @import("client_session");
 
 const log = std.log.scoped(.semadrawd);
 

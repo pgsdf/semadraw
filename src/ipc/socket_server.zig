@@ -1,6 +1,6 @@
 const std = @import("std");
 const posix = std.posix;
-const protocol = @import("protocol.zig");
+const protocol = @import("protocol");
 
 /// Unix domain socket server for semadrawd
 pub const SocketServer = struct {

@@ -1,7 +1,7 @@
 const std = @import("std");
 const posix = std.posix;
-const protocol = @import("../ipc/protocol.zig");
-const socket = @import("../ipc/socket_server.zig");
+const protocol = @import("protocol");
+const socket = @import("socket_server");
 
 /// Client session state
 pub const SessionState = enum {
