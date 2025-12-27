@@ -66,6 +66,33 @@ Rendering options supported by the encoder and replay tool:
 * StrokeJoin: 0 = Miter, 1 = Bevel, 2 = Round
 * StrokeCap: 0 = Butt, 1 = Square, 2 = Round
 
+## Demo
+
+Generate and view a 1280x1080 showcase of SemaDraw capabilities:
+
+```sh
+./zig-out/bin/sdcs_make_demo /tmp/demo.sdcs
+./zig-out/bin/sdcs_replay /tmp/demo.sdcs /tmp/demo.ppm 1280 1080
+feh /tmp/demo.ppm
+```
+
+The demo showcases:
+
+* Anti-aliased Bezier curves (cubic and quadratic)
+* Stroked paths with round and miter joins
+* Overlapping rectangles with alpha transparency
+* Additive blend mode for glow effects
+* Diagonal lines with smooth edges
+* AA vs non-AA comparison
+
+## Run Tests
+
+```sh
+bash tests/run.sh
+```
+
+This runs unit tests, malformed input validation, golden image tests, and determinism verification.
+
 ## Status
 
 Early implementation.
