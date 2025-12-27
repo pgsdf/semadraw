@@ -262,11 +262,19 @@ pub const Encoder = struct {
         const payload_start = try file.getPos();
         try file.writeAll(self.cmds.items);
 
+        // Pad chunk payload to 8-byte alignment
+        const payload_bytes: u64 = self.cmds.items.len;
+        const pad = sdcs.pad8Len(self.cmds.items.len);
+        if (pad != 0) {
+            const zeros = [_]u8{0} ** 8;
+            try file.writeAll(zeros[0..pad]);
+        }
+
         const end_pos = try file.getPos();
-        const payload_bytes: u64 = end_pos - payload_start;
+        const aligned_payload: u64 = end_pos - payload_start;
 
         ch.payload_bytes = payload_bytes;
-        ch.bytes = @sizeOf(sdcs.ChunkHeader) + payload_bytes;
+        ch.bytes = @sizeOf(sdcs.ChunkHeader) + aligned_payload;
 
         try file.seekTo(chunk_pos);
         try file.writeAll(std.mem.asBytes(&ch));
