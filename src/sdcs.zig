@@ -146,6 +146,7 @@ pub fn opcodeName(opcode: u16) ?[]const u8 {
         Op.SET_BLEND => "SET_BLEND",
         Op.SET_TRANSFORM_2D => "SET_TRANSFORM_2D",
         Op.RESET_TRANSFORM => "RESET_TRANSFORM",
+        Op.SET_ANTIALIAS => "SET_ANTIALIAS",
         Op.FILL_RECT => "FILL_RECT",
         Op.STROKE_RECT => "STROKE_RECT",
         Op.STROKE_LINE => "STROKE_LINE",
@@ -439,6 +440,7 @@ pub fn validateFile(file: std.fs.File) ValidateError!void {
                 Op.SET_CLIP_RECTS,
                 Op.SET_BLEND,
                 Op.SET_TRANSFORM_2D,
+                Op.SET_ANTIALIAS,
                 Op.FILL_RECT,
                 Op.STROKE_RECT,
                 Op.STROKE_LINE,
@@ -675,7 +677,7 @@ pub fn validateFileWithDiagnostics(file: std.fs.File, diag: *ValidationDiagnosti
                     if (cmd.opcode == Op.END) end_seen = true;
                 },
 
-                Op.SET_CLIP_RECTS, Op.SET_BLEND, Op.SET_TRANSFORM_2D, Op.FILL_RECT, Op.STROKE_RECT, Op.STROKE_LINE, Op.SET_STROKE_JOIN, Op.SET_STROKE_CAP, Op.SET_MITER_LIMIT, Op.STROKE_QUAD_BEZIER, Op.STROKE_CUBIC_BEZIER, Op.STROKE_PATH, Op.BLIT_IMAGE, Op.DRAW_GLYPH_RUN => {
+                Op.SET_CLIP_RECTS, Op.SET_BLEND, Op.SET_TRANSFORM_2D, Op.SET_ANTIALIAS, Op.FILL_RECT, Op.STROKE_RECT, Op.STROKE_LINE, Op.SET_STROKE_JOIN, Op.SET_STROKE_CAP, Op.SET_MITER_LIMIT, Op.STROKE_QUAD_BEZIER, Op.STROKE_CUBIC_BEZIER, Op.STROKE_PATH, Op.BLIT_IMAGE, Op.DRAW_GLYPH_RUN => {
                     if (cmd.payload_bytes != 0) {
                         file.seekBy(@as(i64, @intCast(cmd.payload_bytes))) catch {
                             diag.* = .{
