@@ -242,6 +242,82 @@ pub const Encoder = struct {
         try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.SET_MITER_LIMIT, payload[0..]);
     }
 
+    /// Stroke a quadratic Bezier curve from (x0,y0) through control point (cx,cy) to (x1,y1).
+    /// Payload format: x0, y0, cx, cy, x1, y1, stroke_width, r, g, b, a (11 x f32 = 44 bytes)
+    pub fn strokeQuadBezier(
+        self: *Encoder,
+        x0: f32,
+        y0: f32,
+        cx: f32,
+        cy: f32,
+        x1: f32,
+        y1: f32,
+        stroke_width: f32,
+        r: f32,
+        g: f32,
+        b: f32,
+        a: f32,
+    ) !void {
+        if (!(stroke_width > 0.0)) return error.InvalidArgument;
+
+        var payload: [44]u8 = undefined;
+        var off: usize = 0;
+
+        putF32LE(payload[0..], &off, x0);
+        putF32LE(payload[0..], &off, y0);
+        putF32LE(payload[0..], &off, cx);
+        putF32LE(payload[0..], &off, cy);
+        putF32LE(payload[0..], &off, x1);
+        putF32LE(payload[0..], &off, y1);
+        putF32LE(payload[0..], &off, stroke_width);
+        putF32LE(payload[0..], &off, r);
+        putF32LE(payload[0..], &off, g);
+        putF32LE(payload[0..], &off, b);
+        putF32LE(payload[0..], &off, a);
+
+        try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.STROKE_QUAD_BEZIER, payload[0..]);
+    }
+
+    /// Stroke a cubic Bezier curve from (x0,y0) through control points (cx1,cy1) and (cx2,cy2) to (x1,y1).
+    /// Payload format: x0, y0, cx1, cy1, cx2, cy2, x1, y1, stroke_width, r, g, b, a (13 x f32 = 52 bytes)
+    pub fn strokeCubicBezier(
+        self: *Encoder,
+        x0: f32,
+        y0: f32,
+        cx1: f32,
+        cy1: f32,
+        cx2: f32,
+        cy2: f32,
+        x1: f32,
+        y1: f32,
+        stroke_width: f32,
+        r: f32,
+        g: f32,
+        b: f32,
+        a: f32,
+    ) !void {
+        if (!(stroke_width > 0.0)) return error.InvalidArgument;
+
+        var payload: [52]u8 = undefined;
+        var off: usize = 0;
+
+        putF32LE(payload[0..], &off, x0);
+        putF32LE(payload[0..], &off, y0);
+        putF32LE(payload[0..], &off, cx1);
+        putF32LE(payload[0..], &off, cy1);
+        putF32LE(payload[0..], &off, cx2);
+        putF32LE(payload[0..], &off, cy2);
+        putF32LE(payload[0..], &off, x1);
+        putF32LE(payload[0..], &off, y1);
+        putF32LE(payload[0..], &off, stroke_width);
+        putF32LE(payload[0..], &off, r);
+        putF32LE(payload[0..], &off, g);
+        putF32LE(payload[0..], &off, b);
+        putF32LE(payload[0..], &off, a);
+
+        try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.STROKE_CUBIC_BEZIER, payload[0..]);
+    }
+
     /// Blit an RGBA image at the specified destination position.
     /// The image is drawn at 1:1 scale, affected by the current transform.
     /// Payload format: dst_x(f32), dst_y(f32), img_w(u32), img_h(u32), pixels(RGBA bytes)

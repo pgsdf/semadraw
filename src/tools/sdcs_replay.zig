@@ -229,6 +229,144 @@ fn emitStrokedLineArbitrary(
     }
 }
 
+/// Evaluate a quadratic Bezier at parameter t (0..1)
+fn evalQuadBezier(x0: f32, y0: f32, cx: f32, cy: f32, x1: f32, y1: f32, t_param: f32) struct { x: f32, y: f32 } {
+    const mt = 1.0 - t_param;
+    const mt2 = mt * mt;
+    const t2 = t_param * t_param;
+    return .{
+        .x = mt2 * x0 + 2.0 * mt * t_param * cx + t2 * x1,
+        .y = mt2 * y0 + 2.0 * mt * t_param * cy + t2 * y1,
+    };
+}
+
+/// Evaluate a cubic Bezier at parameter t (0..1)
+fn evalCubicBezier(x0: f32, y0: f32, cx1: f32, cy1: f32, cx2: f32, cy2: f32, x1: f32, y1: f32, t_param: f32) struct { x: f32, y: f32 } {
+    const mt = 1.0 - t_param;
+    const mt2 = mt * mt;
+    const mt3 = mt2 * mt;
+    const t2 = t_param * t_param;
+    const t3 = t2 * t_param;
+    return .{
+        .x = mt3 * x0 + 3.0 * mt2 * t_param * cx1 + 3.0 * mt * t2 * cx2 + t3 * x1,
+        .y = mt3 * y0 + 3.0 * mt2 * t_param * cy1 + 3.0 * mt * t2 * cy2 + t3 * y1,
+    };
+}
+
+/// Stroke a quadratic Bezier by subdividing into line segments
+fn emitStrokedQuadBezier(
+    rgba: []u8,
+    w: usize,
+    h: usize,
+    t: Transform2D,
+    clip_enabled: bool,
+    clip_rects: []const ClipRect,
+    blend_mode: u32,
+    x0: f32,
+    y0: f32,
+    cx: f32,
+    cy: f32,
+    x1: f32,
+    y1: f32,
+    sw: f32,
+    cr: f32,
+    cg: f32,
+    cb: f32,
+    ca: f32,
+) void {
+    // Adaptive subdivision based on curve flatness
+    // Use fixed number of segments for simplicity in v1
+    const segments: u32 = 16;
+    var prev_x = x0;
+    var prev_y = y0;
+
+    var i: u32 = 1;
+    while (i <= segments) : (i += 1) {
+        const t_param: f32 = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(segments));
+        const pt = evalQuadBezier(x0, y0, cx, cy, x1, y1, t_param);
+
+        emitStrokedLineArbitrary(
+            rgba,
+            w,
+            h,
+            t,
+            clip_enabled,
+            clip_rects,
+            blend_mode,
+            prev_x,
+            prev_y,
+            pt.x,
+            pt.y,
+            sw,
+            cr,
+            cg,
+            cb,
+            ca,
+        );
+
+        prev_x = pt.x;
+        prev_y = pt.y;
+    }
+}
+
+/// Stroke a cubic Bezier by subdividing into line segments
+fn emitStrokedCubicBezier(
+    rgba: []u8,
+    w: usize,
+    h: usize,
+    t: Transform2D,
+    clip_enabled: bool,
+    clip_rects: []const ClipRect,
+    blend_mode: u32,
+    x0: f32,
+    y0: f32,
+    cx1: f32,
+    cy1: f32,
+    cx2: f32,
+    cy2: f32,
+    x1: f32,
+    y1: f32,
+    sw: f32,
+    cr: f32,
+    cg: f32,
+    cb: f32,
+    ca: f32,
+) void {
+    // Adaptive subdivision based on curve flatness
+    // Use fixed number of segments for simplicity in v1
+    const segments: u32 = 24;
+    var prev_x = x0;
+    var prev_y = y0;
+
+    var i: u32 = 1;
+    while (i <= segments) : (i += 1) {
+        const t_param: f32 = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(segments));
+        const pt = evalCubicBezier(x0, y0, cx1, cy1, cx2, cy2, x1, y1, t_param);
+
+        emitStrokedLineArbitrary(
+            rgba,
+            w,
+            h,
+            t,
+            clip_enabled,
+            clip_rects,
+            blend_mode,
+            prev_x,
+            prev_y,
+            pt.x,
+            pt.y,
+            sw,
+            cr,
+            cg,
+            cb,
+            ca,
+        );
+
+        prev_x = pt.x;
+        prev_y = pt.y;
+    }
+}
+
 fn emitRoundCap(
     rgba: []u8,
     w: usize,
@@ -1001,6 +1139,92 @@ else if (cmd.opcode == sdcs.Op.FILL_RECT) {
                         fbBlendPixel(rgba, dst_idx, sr, sg, sb, sa, blend_mode);
                     }
                 }
+
+            } else if (cmd.opcode == sdcs.Op.STROKE_QUAD_BEZIER) {
+                // Payload: x0, y0, cx, cy, x1, y1, stroke_width, r, g, b, a (11 x f32 = 44 bytes)
+                if (pb != 44) return error.Protocol;
+                const bx0 = try readF32LE(r);
+                const by0 = try readF32LE(r);
+                const bcx = try readF32LE(r);
+                const bcy = try readF32LE(r);
+                const bx1 = try readF32LE(r);
+                const by1 = try readF32LE(r);
+                const bsw = try readF32LE(r);
+                const bcr = try readF32LE(r);
+                const bcg = try readF32LE(r);
+                const bcb = try readF32LE(r);
+                const bca = try readF32LE(r);
+
+                if (bsw <= 0.0) continue;
+
+                emitStrokedQuadBezier(
+                    rgba,
+                    w,
+                    h,
+                    t,
+                    clip_enabled,
+                    clip_rects.items,
+                    blend_mode,
+                    bx0,
+                    by0,
+                    bcx,
+                    bcy,
+                    bx1,
+                    by1,
+                    bsw,
+                    bcr,
+                    bcg,
+                    bcb,
+                    bca,
+                );
+
+                // Reset line tracking state since curves don't participate in joins
+                last_line_valid = false;
+
+            } else if (cmd.opcode == sdcs.Op.STROKE_CUBIC_BEZIER) {
+                // Payload: x0, y0, cx1, cy1, cx2, cy2, x1, y1, stroke_width, r, g, b, a (13 x f32 = 52 bytes)
+                if (pb != 52) return error.Protocol;
+                const bx0 = try readF32LE(r);
+                const by0 = try readF32LE(r);
+                const bcx1 = try readF32LE(r);
+                const bcy1 = try readF32LE(r);
+                const bcx2 = try readF32LE(r);
+                const bcy2 = try readF32LE(r);
+                const bx1 = try readF32LE(r);
+                const by1 = try readF32LE(r);
+                const bsw = try readF32LE(r);
+                const bcr = try readF32LE(r);
+                const bcg = try readF32LE(r);
+                const bcb = try readF32LE(r);
+                const bca = try readF32LE(r);
+
+                if (bsw <= 0.0) continue;
+
+                emitStrokedCubicBezier(
+                    rgba,
+                    w,
+                    h,
+                    t,
+                    clip_enabled,
+                    clip_rects.items,
+                    blend_mode,
+                    bx0,
+                    by0,
+                    bcx1,
+                    bcy1,
+                    bcx2,
+                    bcy2,
+                    bx1,
+                    by1,
+                    bsw,
+                    bcr,
+                    bcg,
+                    bcb,
+                    bca,
+                );
+
+                // Reset line tracking state since curves don't participate in joins
+                last_line_valid = false;
 
             } else {
                 try file.seekBy(@intCast(pb));
