@@ -137,16 +137,16 @@ pub fn main() !void {
     };
     try enc.strokePath(&miter_path, 4.0, 0.0, 0.8, 0.6, 0.9);
 
-    // Section 5: Blend mode showcase
-    try enc.setBlend(semadraw.Encoder.BlendMode.Multiply);
-    try enc.fillRect(600, 750, 200, 150, 1.0, 0.0, 0.0, 0.9);
-    try enc.fillRect(700, 800, 200, 150, 0.0, 0.0, 1.0, 0.9);
+    // Section 5: Blend mode showcase (using available modes: Src, SrcOver, Clear, Add)
+    // Additive blending for glow effect
+    try enc.setBlend(semadraw.Encoder.BlendMode.Add);
+    try enc.fillRect(600, 750, 200, 150, 0.5, 0.0, 0.0, 0.7);
+    try enc.fillRect(700, 800, 200, 150, 0.0, 0.0, 0.5, 0.7);
 
-    try enc.setBlend(semadraw.Encoder.BlendMode.Screen);
-    try enc.fillRect(950, 750, 200, 150, 0.0, 0.5, 0.0, 0.9);
-    try enc.fillRect(1050, 800, 200, 150, 0.5, 0.0, 0.5, 0.9);
-
+    // SrcOver with transparency
     try enc.setBlend(semadraw.Encoder.BlendMode.SrcOver);
+    try enc.fillRect(950, 750, 200, 150, 0.0, 0.6, 0.0, 0.7);
+    try enc.fillRect(1050, 800, 200, 150, 0.6, 0.0, 0.6, 0.5);
 
     // Section 6: Anti-aliasing comparison
     // AA enabled (already on)
