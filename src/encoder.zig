@@ -155,6 +155,15 @@ pub const Encoder = struct {
         try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.SET_BLEND, payload[0..]);
     }
 
+    /// Set anti-aliasing mode.
+    /// enabled: 1 = enable AA, 0 = disable AA (default is disabled)
+    pub fn setAntialias(self: *Encoder, enabled: bool) !void {
+        var payload: [4]u8 = undefined;
+        var off: usize = 0;
+        putU32LE(payload[0..], &off, if (enabled) 1 else 0);
+        try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.SET_ANTIALIAS, payload[0..]);
+    }
+
     pub fn setTransform2D(self: *Encoder, a: f32, b: f32, c: f32, d: f32, e: f32, f: f32) !void {
         // Payload: 6 f32 values (a b c d e f), little endian
         var payload: [24]u8 = undefined;

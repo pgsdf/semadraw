@@ -28,11 +28,12 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 * Curves v1 (quadratic and cubic Bezier strokes)
 * Stroke path v1 (polyline with arbitrary segments)
 * DRAW_GLYPH_RUN / Text v1 (simple glyph atlas)
+* Deterministic anti-aliasing (SET_ANTIALIAS opcode, 4x4 sub-pixel coverage sampling)
 
 ## Next
 
 ### Features
-* Deterministic anti-aliasing strategy (coverage masks)
+* AA test suite (sdcs_make_aa test generator)
 
 ## Later
 

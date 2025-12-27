@@ -18,6 +18,19 @@ Field: mode (u32)
 
 Modes: 0 SrcOver, 1 Src, 2 Clear, 3 Add
 
+## SET_ANTIALIAS
+
+Payload: 4 bytes
+
+Field: enabled (u32)
+
+Values: 0 = disabled (default), 1 = enabled
+
+Enables or disables anti-aliasing for subsequent drawing operations.
+When enabled, uses 4x4 sub-pixel sampling to compute edge coverage,
+producing smooth edges on all primitives (rectangles, lines, curves, round caps/joins).
+The anti-aliasing is fully deterministic - the same input always produces the same output.
+
 ## STROKE_LINE
 
 Payload: 36 bytes

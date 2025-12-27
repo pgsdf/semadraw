@@ -77,6 +77,7 @@ pub const Op = struct {
     pub const SET_BLEND: u16 = 0x0004;
     pub const SET_TRANSFORM_2D: u16 = 0x0005;
     pub const RESET_TRANSFORM: u16 = 0x0006;
+    pub const SET_ANTIALIAS: u16 = 0x0007;
     pub const FILL_RECT: u16 = 0x0010;
     pub const STROKE_RECT: u16 = 0x0011;
     pub const STROKE_LINE: u16 = 0x0012;
