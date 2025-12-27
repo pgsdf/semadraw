@@ -1226,6 +1226,119 @@ else if (cmd.opcode == sdcs.Op.FILL_RECT) {
                 // Reset line tracking state since curves don't participate in joins
                 last_line_valid = false;
 
+            } else if (cmd.opcode == sdcs.Op.STROKE_PATH) {
+                // Payload: stroke_width, r, g, b, a (5 f32), point_count (u32), points (N x 2 x f32)
+                if (pb < 24) return error.Protocol;
+                const psw = try readF32LE(r);
+                const pcr = try readF32LE(r);
+                const pcg = try readF32LE(r);
+                const pcb = try readF32LE(r);
+                const pca = try readF32LE(r);
+                const point_count = try readU32LE(r);
+
+                // Validate payload size: 24 bytes header + point_count * 8 bytes
+                const expected_size: usize = 24 + @as(usize, point_count) * 8;
+                if (pb != expected_size) return error.Protocol;
+                if (point_count < 2) continue;
+                if (psw <= 0.0) continue;
+
+                // Read all points
+                const PathPoint = struct { x: f32, y: f32 };
+                var path_points = try alloc.alloc(PathPoint, point_count);
+                defer alloc.free(path_points);
+
+                for (path_points) |*pt| {
+                    pt.x = try readF32LE(r);
+                    pt.y = try readF32LE(r);
+                }
+
+                // Draw each line segment with proper joins
+                const eps: f32 = 0.0001;
+                var prev_seg_x1: f32 = 0;
+                var prev_seg_y1: f32 = 0;
+                var prev_seg_x2: f32 = 0;
+                var prev_seg_y2: f32 = 0;
+                var prev_seg_valid: bool = false;
+
+                var seg_i: usize = 0;
+                while (seg_i < point_count - 1) : (seg_i += 1) {
+                    const sx1 = path_points[seg_i].x;
+                    const sy1 = path_points[seg_i].y;
+                    const sx2 = path_points[seg_i + 1].x;
+                    const sy2 = path_points[seg_i + 1].y;
+
+                    // Check if current segment is axis-aligned
+                    const cur_h = (@abs(sy1 - sy2) < eps);
+                    const cur_v = (@abs(sx1 - sx2) < eps);
+
+                    // Emit join at start of segment if connected to previous
+                    if (prev_seg_valid) {
+                        const prev_h = (@abs(prev_seg_y1 - prev_seg_y2) < eps);
+                        const prev_v = (@abs(prev_seg_x1 - prev_seg_x2) < eps);
+
+                        // Only right-angle joins between axis-aligned segments
+                        if ((prev_h and cur_v) or (prev_v and cur_h)) {
+                            const jx = sx1;
+                            const jy = sy1;
+                            const connects = (@abs(prev_seg_x2 - jx) < eps and @abs(prev_seg_y2 - jy) < eps);
+
+                            if (connects) {
+                                if (stroke_join == .Round) {
+                                    emitRoundCap(rgba, w, h, t, clip_enabled, clip_rects.items, blend_mode, jx, jy, psw, pcr, pcg, pcb, pca);
+                                } else if (stroke_join == .Miter) {
+                                    const sqrt2: f32 = 1.41421356237;
+                                    if (miter_limit >= sqrt2) {
+                                        var sx: f32 = 0;
+                                        var sy: f32 = 0;
+                                        if (prev_h) {
+                                            sx = if (prev_seg_x2 > prev_seg_x1) 1 else -1;
+                                        } else if (cur_h) {
+                                            sx = if (sx2 > sx1) 1 else -1;
+                                        }
+                                        if (prev_v) {
+                                            sy = if (prev_seg_y2 > prev_seg_y1) 1 else -1;
+                                        } else if (cur_v) {
+                                            sy = if (sy2 > sy1) 1 else -1;
+                                        }
+                                        if (sx != 0 and sy != 0) {
+                                            const px = jx + (if (sx > 0) 0 else -psw);
+                                            const py = jy + (if (sy > 0) 0 else -psw);
+                                            const patch = rectApplyTBounds(t, px, py, psw, psw);
+                                            fbFillRectClipped(rgba, w, h, patch.x, patch.y, patch.w, patch.h, clampU8(pcr), clampU8(pcg), clampU8(pcb), clampU8(pca), blend_mode, if (clip_enabled) clip_rects.items else null);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Draw the line segment
+                    const s2: f32 = psw / 2.0;
+                    if (sx1 == sx2) {
+                        const yy0 = @min(sy1, sy2);
+                        const yy1 = @max(sy1, sy2);
+                        const rect = rectApplyTBounds(t, sx1 - s2, yy0, psw, yy1 - yy0);
+                        fbFillRectClipped(rgba, w, h, rect.x, rect.y, rect.w, rect.h, clampU8(pcr), clampU8(pcg), clampU8(pcb), clampU8(pca), blend_mode, if (clip_enabled) clip_rects.items else null);
+                    } else if (sy1 == sy2) {
+                        const xx0 = @min(sx1, sx2);
+                        const xx1 = @max(sx1, sx2);
+                        const rect = rectApplyTBounds(t, xx0, sy1 - s2, xx1 - xx0, psw);
+                        fbFillRectClipped(rgba, w, h, rect.x, rect.y, rect.w, rect.h, clampU8(pcr), clampU8(pcg), clampU8(pcb), clampU8(pca), blend_mode, if (clip_enabled) clip_rects.items else null);
+                    } else {
+                        // Arbitrary angle
+                        emitStrokedLineArbitrary(rgba, w, h, t, clip_enabled, clip_rects.items, blend_mode, sx1, sy1, sx2, sy2, psw, pcr, pcg, pcb, pca);
+                    }
+
+                    prev_seg_x1 = sx1;
+                    prev_seg_y1 = sy1;
+                    prev_seg_x2 = sx2;
+                    prev_seg_y2 = sy2;
+                    prev_seg_valid = true;
+                }
+
+                // Reset line tracking state
+                last_line_valid = false;
+
             } else {
                 try file.seekBy(@intCast(pb));
 
