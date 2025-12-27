@@ -23,9 +23,9 @@ pub fn main() !void {
     try enc.reset();
 
     // Dark background
-    try enc.setBlend(.Src);
+    try enc.setBlend(semadraw.Encoder.BlendMode.Src);
     try enc.fillRect(0, 0, 1280, 1080, 0.08, 0.08, 0.12, 1.0);
-    try enc.setBlend(.SrcOver);
+    try enc.setBlend(semadraw.Encoder.BlendMode.SrcOver);
 
     // Enable anti-aliasing for smooth edges
     try enc.setAntialias(true);
@@ -138,15 +138,15 @@ pub fn main() !void {
     try enc.strokePath(&miter_path, 4.0, 0.0, 0.8, 0.6, 0.9);
 
     // Section 5: Blend mode showcase
-    try enc.setBlend(.Multiply);
+    try enc.setBlend(semadraw.Encoder.BlendMode.Multiply);
     try enc.fillRect(600, 750, 200, 150, 1.0, 0.0, 0.0, 0.9);
     try enc.fillRect(700, 800, 200, 150, 0.0, 0.0, 1.0, 0.9);
 
-    try enc.setBlend(.Screen);
+    try enc.setBlend(semadraw.Encoder.BlendMode.Screen);
     try enc.fillRect(950, 750, 200, 150, 0.0, 0.5, 0.0, 0.9);
     try enc.fillRect(1050, 800, 200, 150, 0.5, 0.0, 0.5, 0.9);
 
-    try enc.setBlend(.SrcOver);
+    try enc.setBlend(semadraw.Encoder.BlendMode.SrcOver);
 
     // Section 6: Anti-aliasing comparison
     // AA enabled (already on)
