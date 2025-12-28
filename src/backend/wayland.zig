@@ -79,9 +79,11 @@ extern fn wl_display_prepare_read(display: *anyopaque) c_int;
 extern fn wl_display_cancel_read(display: *anyopaque) void;
 extern fn wl_display_read_events(display: *anyopaque) c_int;
 
-// Wayland registry functions
-extern fn wl_display_get_registry(display: *anyopaque) ?*anyopaque;
+// Wayland registry interface
 extern const wl_registry_interface: wl_interface;
+
+// wl_display opcodes
+const WL_DISPLAY_GET_REGISTRY: u32 = 1;
 
 // SHM format constants
 const WL_SHM_FORMAT_ARGB8888: u32 = 0;
@@ -169,8 +171,14 @@ pub const WaylandBackend = struct {
         }
         errdefer self.disconnectDisplay();
 
-        // Get registry
-        self.registry = wl_display_get_registry(self.display.?);
+        // Get registry: wl_display.get_registry (opcode 1)
+        self.registry = wl_proxy_marshal_flags(
+            self.display.?,
+            WL_DISPLAY_GET_REGISTRY,
+            &wl_registry_interface,
+            1, // version
+            0, // flags
+        );
         if (self.registry == null) {
             return error.WaylandRegistryFailed;
         }
