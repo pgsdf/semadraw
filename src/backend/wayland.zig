@@ -663,6 +663,226 @@ pub const WaylandBackend = struct {
     }
 
     // ========================================================================
+    // SDCS Command Execution
+    // ========================================================================
+
+    fn executeSdcs(self: *Self, fb: []u8, data: []const u8) !void {
+        if (data.len < 64) return error.InvalidSdcs;
+
+        var offset: usize = 64;
+
+        while (offset + 32 <= data.len) {
+            const chunk_payload_bytes = std.mem.readInt(u64, data[offset + 24 ..][0..8], .little);
+            offset += 32;
+
+            if (offset + chunk_payload_bytes > data.len) break;
+
+            const chunk_end = offset + @as(usize, @intCast(chunk_payload_bytes));
+            try self.executeChunkCommands(fb, data[offset..chunk_end]);
+
+            offset = chunk_end;
+            offset = std.mem.alignForward(usize, offset, 8);
+        }
+    }
+
+    fn executeChunkCommands(self: *Self, fb: []u8, commands: []const u8) !void {
+        var offset: usize = 0;
+
+        while (offset + 8 <= commands.len) {
+            const opcode = std.mem.readInt(u16, commands[offset..][0..2], .little);
+            const payload_len = std.mem.readInt(u32, commands[offset + 4 ..][0..4], .little);
+            offset += 8;
+
+            if (offset + payload_len > commands.len) break;
+
+            const payload = commands[offset..][0..payload_len];
+            try self.executeCommand(fb, opcode, payload);
+
+            offset += payload_len;
+            const record_bytes = 8 + payload_len;
+            const pad = (8 - (record_bytes % 8)) % 8;
+            offset += pad;
+
+            if (opcode == 0x00F0) break;
+        }
+    }
+
+    fn executeCommand(self: *Self, fb: []u8, opcode: u16, payload: []const u8) !void {
+        switch (opcode) {
+            0x0001 => {}, // RESET
+            0x0004 => {}, // SET_BLEND
+            0x0010 => { // FILL_RECT
+                if (payload.len >= 32) {
+                    const x = readF32(payload[0..4]);
+                    const y = readF32(payload[4..8]);
+                    const w = readF32(payload[8..12]);
+                    const h = readF32(payload[12..16]);
+                    const r = readF32(payload[16..20]);
+                    const g = readF32(payload[20..24]);
+                    const b_col = readF32(payload[24..28]);
+                    const a = readF32(payload[28..32]);
+                    self.fillRect(fb, x, y, w, h, r, g, b_col, a);
+                }
+            },
+            0x0030 => { // DRAW_GLYPH_RUN
+                if (payload.len >= 48) {
+                    self.drawGlyphRun(fb, payload);
+                }
+            },
+            0x00F0 => {}, // END
+            else => {},
+        }
+    }
+
+    fn fillRect(self: *Self, fb: []u8, x: f32, y: f32, w: f32, h: f32, r: f32, g: f32, b_col: f32, a: f32) void {
+        const fb_w = self.width;
+        const fb_h = self.height;
+
+        const x0: i32 = @intFromFloat(@max(0, x));
+        const y0: i32 = @intFromFloat(@max(0, y));
+        const x1: i32 = @intFromFloat(@min(@as(f32, @floatFromInt(fb_w)), x + w));
+        const y1: i32 = @intFromFloat(@min(@as(f32, @floatFromInt(fb_h)), y + h));
+
+        if (x0 >= x1 or y0 >= y1) return;
+
+        // Wayland ARGB format
+        const ca: u8 = clampU8(a);
+        const cr: u8 = clampU8(r);
+        const cg: u8 = clampU8(g);
+        const cb: u8 = clampU8(b_col);
+
+        const pixels: [*]u32 = @ptrCast(@alignCast(fb.ptr));
+
+        var py: i32 = y0;
+        while (py < y1) : (py += 1) {
+            var px: i32 = x0;
+            while (px < x1) : (px += 1) {
+                const idx = @as(usize, @intCast(py)) * @as(usize, fb_w) + @as(usize, @intCast(px));
+                if (idx < fb_w * fb_h) {
+                    if (ca == 255) {
+                        pixels[idx] = (@as(u32, ca) << 24) | (@as(u32, cr) << 16) | (@as(u32, cg) << 8) | @as(u32, cb);
+                    } else if (ca > 0) {
+                        const sa: f32 = @as(f32, @floatFromInt(ca)) / 255.0;
+                        const existing = pixels[idx];
+                        const da: f32 = @as(f32, @floatFromInt((existing >> 24) & 0xFF)) / 255.0;
+                        const out_a = sa + da * (1.0 - sa);
+
+                        if (out_a > 0) {
+                            const dr: u8 = @intCast((existing >> 16) & 0xFF);
+                            const dg: u8 = @intCast((existing >> 8) & 0xFF);
+                            const db: u8 = @intCast(existing & 0xFF);
+                            const new_a: u8 = @intFromFloat(@min(255.0, out_a * 255.0));
+                            const new_r = blendChannel(cr, dr, sa, da, out_a);
+                            const new_g = blendChannel(cg, dg, sa, da, out_a);
+                            const new_b = blendChannel(cb, db, sa, da, out_a);
+                            pixels[idx] = (@as(u32, new_a) << 24) | (@as(u32, new_r) << 16) | (@as(u32, new_g) << 8) | @as(u32, new_b);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn drawGlyphRun(self: *Self, fb: []u8, payload: []const u8) void {
+        const base_x = readF32(payload[0..4]);
+        const base_y = readF32(payload[4..8]);
+        const r = readF32(payload[8..12]);
+        const g = readF32(payload[12..16]);
+        const b_col = readF32(payload[16..20]);
+        const a = readF32(payload[20..24]);
+        const cell_width = std.mem.readInt(u32, payload[24..28], .little);
+        const cell_height = std.mem.readInt(u32, payload[28..32], .little);
+        const atlas_cols = std.mem.readInt(u32, payload[32..36], .little);
+        const atlas_width = std.mem.readInt(u32, payload[36..40], .little);
+        const atlas_height = std.mem.readInt(u32, payload[40..44], .little);
+        const glyph_count = std.mem.readInt(u32, payload[44..48], .little);
+
+        if (cell_width == 0 or cell_height == 0 or atlas_cols == 0) return;
+
+        const glyphs_offset: usize = 48;
+        const glyphs_size = glyph_count * 12;
+        const atlas_offset = glyphs_offset + glyphs_size;
+        const atlas_size = @as(usize, atlas_width) * @as(usize, atlas_height);
+
+        if (payload.len < atlas_offset + atlas_size) return;
+
+        const atlas_data = payload[atlas_offset..][0..atlas_size];
+        const cr: u8 = clampU8(r);
+        const cg: u8 = clampU8(g);
+        const cb: u8 = clampU8(b_col);
+
+        var i: u32 = 0;
+        while (i < glyph_count) : (i += 1) {
+            const glyph_off = glyphs_offset + i * 12;
+            if (glyph_off + 12 > payload.len) break;
+
+            const glyph_index = std.mem.readInt(u32, payload[glyph_off..][0..4], .little);
+            const x_offset = readF32(payload[glyph_off + 4 ..][0..4]);
+            const y_offset = readF32(payload[glyph_off + 8 ..][0..4]);
+
+            const atlas_col = glyph_index % atlas_cols;
+            const atlas_row = glyph_index / atlas_cols;
+            const atlas_x = atlas_col * cell_width;
+            const atlas_y = atlas_row * cell_height;
+
+            self.blitGlyph(fb, base_x + x_offset, base_y + y_offset, cell_width, cell_height, atlas_data, atlas_width, atlas_x, atlas_y, cr, cg, cb, a);
+        }
+    }
+
+    fn blitGlyph(self: *Self, fb: []u8, dst_x: f32, dst_y: f32, cell_w: u32, cell_h: u32, atlas: []const u8, atlas_w: u32, atlas_x: u32, atlas_y: u32, r: u8, g: u8, b: u8, base_alpha: f32) void {
+        const fb_w = self.width;
+        const fb_h = self.height;
+        const pixels: [*]u32 = @ptrCast(@alignCast(fb.ptr));
+
+        var cy: u32 = 0;
+        while (cy < cell_h) : (cy += 1) {
+            var cx: u32 = 0;
+            while (cx < cell_w) : (cx += 1) {
+                const px: i32 = @as(i32, @intFromFloat(dst_x)) + @as(i32, @intCast(cx));
+                const py: i32 = @as(i32, @intFromFloat(dst_y)) + @as(i32, @intCast(cy));
+
+                if (px < 0 or py < 0) continue;
+                if (px >= @as(i32, @intCast(fb_w)) or py >= @as(i32, @intCast(fb_h))) continue;
+
+                const ax = atlas_x + cx;
+                const ay = atlas_y + cy;
+                if (ax >= atlas_w or ay * atlas_w + ax >= atlas.len) continue;
+
+                const atlas_alpha = atlas[ay * atlas_w + ax];
+                if (atlas_alpha == 0) continue;
+
+                const glyph_a: f32 = @as(f32, @floatFromInt(atlas_alpha)) / 255.0;
+                const final_a: f32 = glyph_a * base_alpha;
+                const ca: u8 = @intFromFloat(final_a * 255.0);
+
+                if (ca == 0) continue;
+
+                const idx = @as(usize, @intCast(py)) * @as(usize, fb_w) + @as(usize, @intCast(px));
+                if (idx >= fb_w * fb_h) continue;
+
+                if (ca == 255) {
+                    pixels[idx] = (255 << 24) | (@as(u32, r) << 16) | (@as(u32, g) << 8) | @as(u32, b);
+                } else {
+                    const existing = pixels[idx];
+                    const da: f32 = @as(f32, @floatFromInt((existing >> 24) & 0xFF)) / 255.0;
+                    const out_a = final_a + da * (1.0 - final_a);
+
+                    if (out_a > 0) {
+                        const dr: u8 = @intCast((existing >> 16) & 0xFF);
+                        const dg: u8 = @intCast((existing >> 8) & 0xFF);
+                        const db: u8 = @intCast(existing & 0xFF);
+                        const new_a: u8 = @intFromFloat(@min(255.0, out_a * 255.0));
+                        const new_r = blendChannel(r, dr, final_a, da, out_a);
+                        const new_g = blendChannel(g, dg, final_a, da, out_a);
+                        const new_b = blendChannel(b, db, final_a, da, out_a);
+                        pixels[idx] = (@as(u32, new_a) << 24) | (@as(u32, new_r) << 16) | (@as(u32, new_g) << 8) | @as(u32, new_b);
+                    }
+                }
+            }
+        }
+    }
+
+    // ========================================================================
     // Backend interface
     // ========================================================================
 
@@ -713,8 +933,10 @@ pub const WaylandBackend = struct {
             }
         }
 
-        // TODO: Parse and render SDCS commands
-        _ = request.sdcs_data;
+        // Execute SDCS commands
+        self.executeSdcs(fb[0..self.shm_size], request.sdcs_data) catch |err| {
+            log.warn("SDCS execution failed: {}", .{err});
+        };
 
         // Present
         self.present();
@@ -774,4 +996,27 @@ pub const WaylandBackend = struct {
 pub fn create(allocator: std.mem.Allocator) !backend.Backend {
     const wl = try WaylandBackend.init(allocator);
     return wl.toBackend();
+}
+
+// ============================================================================
+// Helper functions
+// ============================================================================
+
+fn clampU8(v: f32) u8 {
+    var x = v;
+    if (x < 0.0) x = 0.0;
+    if (x > 1.0) x = 1.0;
+    return @intFromFloat(@round(x * 255.0));
+}
+
+fn readF32(bytes: *const [4]u8) f32 {
+    const u = std.mem.readInt(u32, bytes, .little);
+    return @bitCast(u);
+}
+
+fn blendChannel(src: u8, dst: u8, sa: f32, da: f32, out_a: f32) u8 {
+    const s: f32 = @floatFromInt(src);
+    const d: f32 = @floatFromInt(dst);
+    const result = (s * sa + d * da * (1.0 - sa)) / out_a;
+    return @intFromFloat(@min(255.0, @max(0.0, result)));
 }
