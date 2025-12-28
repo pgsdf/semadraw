@@ -107,7 +107,7 @@ pub const SoftwareBackend = struct {
 
     fn resizeImpl(ctx: *anyopaque, width: u32, height: u32) anyerror!void {
         const self: *Self = @ptrCast(@alignCast(ctx));
-        try self.initFramebufferImpl(ctx, .{
+        try initFramebufferImpl(ctx, .{
             .width = width,
             .height = height,
             .format = self.format,
