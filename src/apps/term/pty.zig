@@ -1,10 +1,12 @@
 const std = @import("std");
 const posix = std.posix;
 
-// Linux-specific PTY ioctl constants (not in std.c.T)
+// Linux-specific ioctl constants
 // These need @bitCast because the values exceed c_int max when interpreted as unsigned
 const TIOCGPTN: c_int = @bitCast(@as(c_uint, 0x80045430)); // Get PTY number
 const TIOCSPTLCK: c_int = @bitCast(@as(c_uint, 0x40045431)); // Lock/unlock PTY
+const TIOCSWINSZ: c_int = @bitCast(@as(c_uint, 0x5414)); // Set window size
+const TIOCSCTTY: c_int = @bitCast(@as(c_uint, 0x540E)); // Set controlling terminal
 
 /// Pseudo-terminal handler for shell communication
 pub const Pty = struct {
@@ -33,7 +35,7 @@ pub const Pty = struct {
             .xpixel = 0,
             .ypixel = 0,
         };
-        _ = std.c.ioctl(master_fd, std.posix.T.IOCSWINSZ, &ws);
+        _ = std.c.ioctl(master_fd, TIOCSWINSZ, &ws);
 
         // Fork
         const pid = try posix.fork();
@@ -52,7 +54,7 @@ pub const Pty = struct {
             };
 
             // Set as controlling terminal
-            _ = std.c.ioctl(slave_fd, std.posix.T.IOCSCTTY, @as(c_ulong, 0));
+            _ = std.c.ioctl(slave_fd, TIOCSCTTY, @as(c_ulong, 0));
 
             // Duplicate to stdin/stdout/stderr
             posix.dup2(slave_fd, 0) catch posix.exit(1);
@@ -64,7 +66,7 @@ pub const Pty = struct {
             }
 
             // Set window size on slave
-            _ = std.c.ioctl(0, std.posix.T.IOCSWINSZ, &ws);
+            _ = std.c.ioctl(0, TIOCSWINSZ, &ws);
 
             // Execute shell
             const shell_path = shell orelse getDefaultShell();
@@ -140,7 +142,7 @@ pub const Pty = struct {
             .xpixel = 0,
             .ypixel = 0,
         };
-        _ = std.c.ioctl(self.master_fd, std.posix.T.IOCSWINSZ, &ws);
+        _ = std.c.ioctl(self.master_fd, TIOCSWINSZ, &ws);
     }
 
     /// Check if child is still running
