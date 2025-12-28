@@ -5,6 +5,7 @@ const c = @cImport({
     @cDefine("VK_USE_PLATFORM_XLIB_KHR", "1");
     @cInclude("vulkan/vulkan.h");
     @cInclude("X11/Xlib.h");
+    @cInclude("X11/keysymdef.h");
 });
 
 const log = std.log.scoped(.vulkan_backend);
