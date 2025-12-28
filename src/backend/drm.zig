@@ -318,12 +318,18 @@ pub const DrmBackend = struct {
             "/dev/drm0", // FreeBSD
         };
 
+        var last_err: ?anyerror = null;
         for (paths) |path| {
             if (init(allocator, path)) |self| {
                 return self;
-            } else |_| {
+            } else |err| {
+                log.warn("failed to open {s}: {}", .{ path, err });
+                last_err = err;
                 continue;
             }
+        }
+        if (last_err) |err| {
+            return err;
         }
         return error.NoDeviceFound;
     }
