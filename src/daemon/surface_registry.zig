@@ -54,7 +54,7 @@ pub const AttachedBuffer = struct {
             return byte_ptr[self.offset..][0..self.length];
         }
 
-        const ptr = try posix.mmap(
+        const mapped = try posix.mmap(
             null,
             self.shm_size,
             posix.PROT.READ,
@@ -62,9 +62,8 @@ pub const AttachedBuffer = struct {
             self.shm_fd,
             0,
         );
-        self.mapped_ptr = ptr;
-        const byte_ptr: [*]u8 = @ptrCast(ptr);
-        return byte_ptr[self.offset..][0..self.length];
+        self.mapped_ptr = mapped.ptr;
+        return mapped[self.offset..][0..self.length];
     }
 
     /// Legacy alias for getData
