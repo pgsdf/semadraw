@@ -52,6 +52,7 @@ Tools and libraries produced:
 4. sdcs_replay - Software renderer
 5. sdcs_make_demo - Demo showcase generator
 6. sdcs_make_* - Various test generators
+7. semadraw-term - VT100 terminal emulator
 
 Rendering options supported by the encoder and replay tool:
 
@@ -141,6 +142,36 @@ semadrawd supports TCP connections for remote SDCS streaming:
 ```
 
 Remote clients use inline buffer transfer instead of shared memory.
+
+## semadraw-term Usage
+
+Terminal emulator for running shell sessions in the SemaDraw console environment:
+
+```sh
+# Basic usage (connects to local semadrawd)
+./zig-out/bin/semadraw-term
+
+# Custom terminal size
+./zig-out/bin/semadraw-term --cols 120 --rows 40
+
+# Specify shell
+./zig-out/bin/semadraw-term --shell /bin/zsh
+
+# Connect to custom socket
+./zig-out/bin/semadraw-term --socket /tmp/custom.sock
+```
+
+Options:
+* `-c, --cols N` - Terminal columns (default: 80)
+* `-r, --rows N` - Terminal rows (default: 24)
+* `-e, --shell PATH` - Shell to execute (default: $SHELL or /bin/sh)
+* `-s, --socket PATH` - Daemon socket path
+
+Features:
+* VT100/ANSI escape sequence support
+* 8x16 VGA-style bitmap font
+* 256-color support with RGB extensions
+* PTY-based shell communication
 
 ## License
 
