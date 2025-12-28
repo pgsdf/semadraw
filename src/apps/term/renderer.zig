@@ -83,8 +83,8 @@ pub const Renderer = struct {
             const start_bg = start_cell.attr.effectiveBg();
 
             // Collect consecutive cells with same attributes
-            var glyphs = std.ArrayList(semadraw.Encoder.Glyph).init(self.allocator);
-            defer glyphs.deinit();
+            var glyphs: std.ArrayList(semadraw.Encoder.Glyph) = .empty;
+            defer glyphs.deinit(self.allocator);
 
             while (col < self.scr.cols) {
                 const cell = self.scr.getCell(col, row);
@@ -99,7 +99,7 @@ pub const Renderer = struct {
                 // Skip spaces with default background (optimization)
                 if (cell.char != ' ' or !colorEqual(bg, screen.Color.default_bg)) {
                     if (font.Font.charToIndex(cell.char)) |glyph_idx| {
-                        try glyphs.append(.{
+                        try glyphs.append(self.allocator, .{
                             .index = glyph_idx,
                             .x_offset = @floatFromInt((col - start_col) * font.Font.GLYPH_WIDTH),
                             .y_offset = 0,
