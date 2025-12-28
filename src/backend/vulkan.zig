@@ -724,6 +724,12 @@ pub const VulkanBackend = struct {
     }
 
     fn destroyCommandPool(self: *Self) void {
+        // Free command buffers allocation
+        if (self.command_buffers.len > 0) {
+            self.allocator.free(self.command_buffers);
+            self.command_buffers = &.{};
+        }
+
         if (self.command_pool != null) {
             c.vkDestroyCommandPool(self.device, self.command_pool, null);
             self.command_pool = null;
