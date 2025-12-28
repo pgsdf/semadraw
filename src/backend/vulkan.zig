@@ -329,7 +329,8 @@ pub const VulkanBackend = struct {
 
                 var props: c.VkPhysicalDeviceProperties = undefined;
                 c.vkGetPhysicalDeviceProperties(device, &props);
-                log.info("selected GPU: {s}", .{@as([*:0]const u8, &props.deviceName)});
+                const device_name = std.mem.sliceTo(&props.deviceName, 0);
+                log.info("selected GPU: {s}", .{device_name});
 
                 return;
             }
