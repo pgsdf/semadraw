@@ -17,13 +17,12 @@ fn DRM_IOWR(nr: u8, comptime T: type) u32 {
 
 /// Wrapper for DRM ioctl calls that handles the type conversion
 fn drm_ioctl(fd: posix.fd_t, request: u32, arg: usize) c_int {
-    // Use raw syscall to avoid c_int limitations
-    const result = std.os.linux.syscall(.ioctl, .{
-        @as(usize, @bitCast(@as(isize, fd))),
-        @as(usize, request),
-        arg,
-    });
-    return @intCast(@as(isize, @bitCast(result)));
+    // Use std.os.linux.ioctl which accepts u32 request directly
+    const linux = std.os.linux;
+    const rc = linux.ioctl(@intCast(fd), request, arg);
+    // Convert result - negative errno comes back as large positive
+    const signed_rc: isize = @bitCast(rc);
+    return @intCast(signed_rc);
 }
 
 const DRM_IOCTL_SET_MASTER = DRM_IO(0x1e);
