@@ -44,14 +44,12 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 * Frame scheduler with vsync timing
 * Client library (Connection and Surface wrappers)
 * DRM/KMS presentation backend (direct framebuffer output)
+* SIMD vectorization for rasterization (SSE/AVX, NEON)
 
 ## Next
 
 ### Backends
 * Vulkan backend (GPU-accelerated rendering)
-
-### Performance
-* SIMD vectorization for rasterization (SSE/AVX, NEON)
 
 ### Integration
 * Toolkit bridges (X11, Wayland host integration)

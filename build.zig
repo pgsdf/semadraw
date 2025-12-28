@@ -19,6 +19,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // SIMD acceleration module
+    const simd_mod = b.createModule(.{
+        .root_source_file = b.path("src/simd.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     // Static library
     const lib = b.addLibrary(.{
         .name = "semadraw",
@@ -287,6 +294,7 @@ pub fn build(b: *std.Build) void {
     });
     sdcs_replay.root_module.addImport("semadraw", semadraw_mod);
     sdcs_replay.root_module.addImport("sdcs", sdcs_mod);
+    sdcs_replay.root_module.addImport("simd", simd_mod);
     b.installArtifact(sdcs_replay);
 
     // Test tool for malformed inputs
@@ -501,6 +509,17 @@ pub fn build(b: *std.Build) void {
     });
     const run_tests = b.addRunArtifact(tests);
 
+    // SIMD unit tests
+    const simd_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/simd.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_simd_tests = b.addRunArtifact(simd_tests);
+
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_tests.step);
+    test_step.dependOn(&run_simd_tests.step);
 }

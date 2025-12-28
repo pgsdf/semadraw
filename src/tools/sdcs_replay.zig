@@ -1,5 +1,6 @@
 const std = @import("std");
 const sdcs = @import("sdcs");
+const simd = @import("simd");
 
 fn readExact(r: anytype, buf: []u8) !void {
     var off: usize = 0;
@@ -792,20 +793,26 @@ fn fbFillRect(rgba: []u8, w: usize, h: usize, x: f32, y: f32, rw: f32, rh: f32, 
     const ix1: isize = @intFromFloat(@ceil(x + rw));
     const iy1: isize = @intFromFloat(@ceil(y + rh));
 
-    var iy: isize = iy0;
-    while (iy < iy1) : (iy += 1) {
-        if (iy < 0 or iy >= @as(isize, @intCast(h))) continue;
-        var ix: isize = ix0;
-        while (ix < ix1) : (ix += 1) {
-            if (ix < 0 or ix >= @as(isize, @intCast(w))) continue;
-            const idx: usize = (@as(usize, @intCast(iy)) * w + @as(usize, @intCast(ix))) * 4;
-            fbBlendPixel(rgba, idx, r, g, b, a, mode);
-        }
+    // Clamp to framebuffer bounds
+    const x0: usize = @intCast(@max(ix0, 0));
+    const y0: usize = @intCast(@max(iy0, 0));
+    const x1: usize = @intCast(@min(ix1, @as(isize, @intCast(w))));
+    const y1: usize = @intCast(@min(iy1, @as(isize, @intCast(h))));
+
+    if (x0 >= x1 or y0 >= y1) return;
+
+    const span_width = x1 - x0;
+
+    // Use SIMD-optimized span fill for each row
+    var iy: usize = y0;
+    while (iy < y1) : (iy += 1) {
+        const row_start = (iy * w + x0) * 4;
+        simd.fillSpan(rgba, row_start, span_width, r, g, b, a, mode);
     }
 }
 
 /// Fill an axis-aligned rectangle with anti-aliasing at edges.
-/// Uses 4x4 sub-pixel sampling for smooth edge coverage.
+/// Uses SIMD-accelerated 4x4 sub-pixel sampling for smooth edge coverage.
 fn fbFillRectAA(rgba: []u8, w: usize, h: usize, x: f32, y: f32, rw: f32, rh: f32, r: u8, g: u8, b: u8, a: u8, mode: u32) void {
     if (rw <= 0.0 or rh <= 0.0) return;
 
@@ -820,37 +827,55 @@ fn fbFillRectAA(rgba: []u8, w: usize, h: usize, x: f32, y: f32, rw: f32, rh: f32
     const ix1: isize = @intFromFloat(@ceil(x2));
     const iy1: isize = @intFromFloat(@ceil(y2));
 
-    var iy: isize = iy0;
-    while (iy < iy1) : (iy += 1) {
-        if (iy < 0 or iy >= @as(isize, @intCast(h))) continue;
-        var ix: isize = ix0;
-        while (ix < ix1) : (ix += 1) {
-            if (ix < 0 or ix >= @as(isize, @intCast(w))) continue;
+    // Clamp to framebuffer bounds
+    const px0: usize = @intCast(@max(ix0, 0));
+    const py0: usize = @intCast(@max(iy0, 0));
+    const px1: usize = @intCast(@min(ix1, @as(isize, @intCast(w))));
+    const py1: usize = @intCast(@min(iy1, @as(isize, @intCast(h))));
+
+    if (px0 >= px1 or py0 >= py1) return;
+
+    // Identify interior region (fully covered pixels)
+    const interior_x0: usize = @intCast(@max(@as(isize, @intFromFloat(@ceil(x1))), @as(isize, @intCast(px0))));
+    const interior_y0: usize = @intCast(@max(@as(isize, @intFromFloat(@ceil(y1))), @as(isize, @intCast(py0))));
+    const interior_x1: usize = @intCast(@min(@as(isize, @intFromFloat(@floor(x2))), @as(isize, @intCast(px1))));
+    const interior_y1: usize = @intCast(@min(@as(isize, @intFromFloat(@floor(y2))), @as(isize, @intCast(py1))));
+
+    // Fill interior rows with SIMD (no AA needed)
+    if (interior_x0 < interior_x1 and interior_y0 < interior_y1) {
+        const span_width = interior_x1 - interior_x0;
+        var iy: usize = interior_y0;
+        while (iy < interior_y1) : (iy += 1) {
+            const row_start = (iy * w + interior_x0) * 4;
+            simd.fillSpan(rgba, row_start, span_width, r, g, b, a, mode);
+        }
+    }
+
+    // Process edge pixels with vectorized AA coverage calculation
+    var iy: usize = py0;
+    while (iy < py1) : (iy += 1) {
+        var ix: usize = px0;
+        while (ix < px1) : (ix += 1) {
+            // Skip interior pixels (already filled above)
+            if (ix >= interior_x0 and ix < interior_x1 and
+                iy >= interior_y0 and iy < interior_y1)
+            {
+                continue;
+            }
 
             const px: f32 = @floatFromInt(ix);
             const py: f32 = @floatFromInt(iy);
 
-            // Check if this pixel is fully inside (no AA needed)
-            if (px >= x1 and px + 1.0 <= x2 and py >= y1 and py + 1.0 <= y2) {
-                const idx: usize = (@as(usize, @intCast(iy)) * w + @as(usize, @intCast(ix))) * 4;
-                fbBlendPixel(rgba, idx, r, g, b, a, mode);
-                continue;
-            }
+            // Use SIMD-accelerated coverage calculation
+            const coverage = simd.computeRectCoverageAA(px, py, x1, y1, x2, y2);
 
-            // Edge pixel - compute coverage with sub-pixel sampling
-            var samples_inside: u32 = 0;
-            for (AA_SAMPLE_OFFSETS) |offset| {
-                const sx = px + offset[0];
-                const sy = py + offset[1];
-                if (sx >= x1 and sx < x2 and sy >= y1 and sy < y2) {
-                    samples_inside += 1;
+            if (coverage > 0.0) {
+                const idx: usize = (iy * w + ix) * 4;
+                if (coverage >= 1.0) {
+                    fbBlendPixel(rgba, idx, r, g, b, a, mode);
+                } else {
+                    fbBlendPixelAA(rgba, idx, r, g, b, a, mode, coverage);
                 }
-            }
-
-            if (samples_inside > 0) {
-                const coverage: f32 = @as(f32, @floatFromInt(samples_inside)) / @as(f32, @floatFromInt(AA_SAMPLES));
-                const idx: usize = (@as(usize, @intCast(iy)) * w + @as(usize, @intCast(ix))) * 4;
-                fbBlendPixelAA(rgba, idx, r, g, b, a, mode, coverage);
             }
         }
     }
