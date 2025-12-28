@@ -168,7 +168,6 @@ pub fn createBackend(allocator: std.mem.Allocator, backend_type: BackendType) !B
             const vulkan = @import("vulkan");
             return vulkan.create(allocator);
         },
-        else => return error.NotSupported,
     }
 }
 
