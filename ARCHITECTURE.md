@@ -143,17 +143,23 @@ VT100-compatible terminal emulator for SemaDraw console environments.
 
 Architecture:
 * `font.zig` - 8x16 VGA bitmap font with atlas generation
-* `screen.zig` - Cell-based screen buffer with attributes
-* `vt100.zig` - ANSI/VT100 escape sequence parser
+* `screen.zig` - Unicode cell buffer with width tracking (CJK double-width)
+* `vt100.zig` - ANSI/VT100 escape sequence parser with UTF-8 decoding
 * `pty.zig` - Linux PTY handling for shell communication
 * `renderer.zig` - Converts screen buffer to SDCS glyph runs
 
 Data flow:
-1. PTY receives shell output
-2. VT100 parser processes escape sequences
-3. Screen buffer updated with cells and attributes
+1. PTY receives shell output (raw bytes)
+2. VT100 parser decodes UTF-8 and processes escape sequences
+3. Screen buffer updated with Unicode codepoints and attributes
 4. Renderer batches cells by color into glyph runs
 5. SDCS data sent to daemon via client library
+
+UTF-8 support:
+* Full multi-byte decoding (2/3/4 byte sequences)
+* Wide character support (CJK takes 2 columns)
+* Zero-width character handling (combining marks)
+* Fallback glyph for characters not in VGA font
 
 ## Key property
 

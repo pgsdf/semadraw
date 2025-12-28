@@ -169,7 +169,8 @@ Options:
 
 Features:
 * VT100/ANSI escape sequence support
-* 8x16 VGA-style bitmap font
+* Full UTF-8 support with wide character handling (CJK double-width)
+* 8x16 VGA-style bitmap font (ASCII; fallback glyph for unsupported Unicode)
 * 256-color support with RGB extensions
 * PTY-based shell communication
 
