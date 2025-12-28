@@ -77,8 +77,8 @@ pub fn main() !void {
             }
             config.socket_path = args[i];
         } else if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
-            const stdout = std.io.getStdOut().writer();
-            try stdout.print(
+            const stdout_file = std.fs.File{ .handle = posix.STDOUT_FILENO };
+            try stdout_file.writer().print(
                 \\semadraw-term - Terminal emulator for SemaDraw
                 \\
                 \\Usage: semadraw-term [OPTIONS]
