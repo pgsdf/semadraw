@@ -98,6 +98,32 @@ The semadrawd compositor daemon is functional with:
 * Surface registry with z-ordering
 * Damage tracking and frame scheduling
 * Backend abstraction with process isolation
+* DRM/KMS backend for direct display output
+
+## semadrawd Usage
+
+Start the compositor daemon:
+
+```sh
+# Default (software backend)
+./zig-out/bin/semadrawd
+
+# With DRM/KMS backend for direct display
+./zig-out/bin/semadrawd --backend kms
+
+# Custom socket path
+./zig-out/bin/semadrawd --socket /tmp/mysocket.sock
+
+# Verbose logging
+./zig-out/bin/semadrawd --verbose
+```
+
+Available backends:
+* `software` - CPU-based reference renderer (default)
+* `headless` - No output, for testing
+* `kms` - DRM/KMS direct framebuffer output (Linux/FreeBSD)
+
+The daemon listens on `/var/run/semadraw/semadraw.sock` by default.
 
 ## License
 
