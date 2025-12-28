@@ -87,10 +87,65 @@ pub const Encoder = struct {
         try appendCmdAlloc(&self.cmds, self.allocator, sdcs.Op.RESET, &[_]u8{});
     }
 
-    /// Return the encoded command stream as an owned byte slice.
+    /// Return the encoded command stream as an owned byte slice (raw commands only).
     /// Caller owns the returned memory.
+    /// Note: This returns raw commands without SDCS header. For inline buffer transmission
+    /// to the daemon, use finishBytesWithHeader() instead.
     pub fn finishBytes(self: *Encoder) ![]u8 {
         return try self.cmds.toOwnedSlice(self.allocator);
+    }
+
+    /// Return a complete SDCS buffer with header and chunk wrapper.
+    /// Suitable for inline buffer transmission to the daemon.
+    /// Caller owns the returned memory.
+    pub fn finishBytesWithHeader(self: *Encoder) ![]u8 {
+        const payload_len = self.cmds.items.len;
+        const payload_pad = sdcs.pad8Len(payload_len);
+        const padded_payload = payload_len + payload_pad;
+
+        // Total size: Header (64) + ChunkHeader (32) + padded payload
+        const total_size = @sizeOf(sdcs.Header) + @sizeOf(sdcs.ChunkHeader) + padded_payload;
+        const buffer = try self.allocator.alloc(u8, total_size);
+        errdefer self.allocator.free(buffer);
+
+        // Write header
+        var header: sdcs.Header = .{
+            .magic = undefined,
+            .version_major = sdcs.version_major,
+            .version_minor = sdcs.version_minor,
+            .header_bytes = @sizeOf(sdcs.Header),
+            .flags = 0,
+            .chunk_count = 1,
+            .stream_bytes = total_size,
+            .chunk_dir_offset = @sizeOf(sdcs.Header),
+            .reserved0 = 0,
+            .reserved1 = 0,
+            .reserved2 = 0,
+        };
+        @memcpy(header.magic[0..], sdcs.Magic);
+        @memcpy(buffer[0..@sizeOf(sdcs.Header)], std.mem.asBytes(&header));
+
+        // Write chunk header
+        const chunk_offset = @sizeOf(sdcs.Header);
+        var chunk: sdcs.ChunkHeader = .{
+            .type = sdcs.ChunkType.CMDS,
+            .flags = 0,
+            .offset = chunk_offset,
+            .bytes = @sizeOf(sdcs.ChunkHeader) + padded_payload,
+            .payload_bytes = payload_len,
+        };
+        @memcpy(buffer[chunk_offset..][0..@sizeOf(sdcs.ChunkHeader)], std.mem.asBytes(&chunk));
+
+        // Write payload
+        const payload_offset = chunk_offset + @sizeOf(sdcs.ChunkHeader);
+        @memcpy(buffer[payload_offset..][0..payload_len], self.cmds.items);
+
+        // Zero padding
+        if (payload_pad > 0) {
+            @memset(buffer[payload_offset + payload_len ..][0..payload_pad], 0);
+        }
+
+        return buffer;
     }
 
     pub fn setClipRects(self: *Encoder, rects: []const Rect) !void {

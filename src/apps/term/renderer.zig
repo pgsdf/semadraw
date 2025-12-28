@@ -59,8 +59,8 @@ pub const Renderer = struct {
 
         try self.encoder.end();
 
-        // Return the encoded data
-        return self.encoder.finishBytes();
+        // Return the encoded data with SDCS header for daemon validation
+        return self.encoder.finishBytesWithHeader();
     }
 
     fn renderCells(self: *Self) !void {
