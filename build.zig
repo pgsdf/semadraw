@@ -404,6 +404,21 @@ pub fn build(b: *std.Build) void {
     // Add drm import to backend module for createBackend
     backend_mod.addImport("drm", drm_backend_mod);
 
+    // X11 backend module
+    const x11_backend_mod = b.createModule(.{
+        .root_source_file = b.path("src/backend/x11.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "backend", .module = backend_mod },
+        },
+    });
+    x11_backend_mod.link_libc = true;
+    x11_backend_mod.linkSystemLibrary("X11", .{});
+
+    // Add x11 import to backend module for createBackend
+    backend_mod.addImport("x11", x11_backend_mod);
+
     const backend_process_mod = b.createModule(.{
         .root_source_file = b.path("src/backend/process.zig"),
         .target = target,
