@@ -433,8 +433,10 @@ pub fn main() !void {
                 config.backend_type = .x11;
             } else if (std.mem.eql(u8, backend_name, "vulkan")) {
                 config.backend_type = .vulkan;
+            } else if (std.mem.eql(u8, backend_name, "wayland")) {
+                config.backend_type = .wayland;
             } else {
-                log.err("unknown backend: {s} (valid: software, headless, kms, x11, vulkan)", .{backend_name});
+                log.err("unknown backend: {s} (valid: software, headless, kms, x11, vulkan, wayland)", .{backend_name});
                 return error.InvalidArgument;
             }
         } else if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
@@ -442,7 +444,7 @@ pub fn main() !void {
             log.info("Usage: semadrawd [OPTIONS]", .{});
             log.info("Options:", .{});
             log.info("  -s, --socket PATH     Socket path (default: {s})", .{protocol.DEFAULT_SOCKET_PATH});
-            log.info("  -b, --backend TYPE    Backend type: software, headless, kms, x11, vulkan (default: software)", .{});
+            log.info("  -b, --backend TYPE    Backend type: software, headless, kms, x11, vulkan, wayland (default: software)", .{});
             log.info("  -h, --help            Show this help", .{});
             return;
         } else {
