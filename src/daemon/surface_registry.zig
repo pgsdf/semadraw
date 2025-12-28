@@ -27,20 +27,28 @@ pub const Surface = struct {
     }
 };
 
-/// Attached shared memory buffer
+/// Attached buffer - supports both shared memory (local) and inline data (remote)
 pub const AttachedBuffer = struct {
-    /// Shared memory file descriptor
-    shm_fd: posix.fd_t,
+    /// Shared memory file descriptor (-1 for inline buffers)
+    shm_fd: posix.fd_t = -1,
     /// Size of the shared memory region
-    shm_size: usize,
+    shm_size: usize = 0,
     /// Mapped memory pointer (null if not yet mapped)
     mapped_ptr: ?*anyopaque = null,
     /// Offset into shm where SDCS data starts
     offset: usize = 0,
     /// Length of SDCS data
     length: usize,
+    /// Inline data pointer (for remote connections, not owned by this struct)
+    inline_data: ?[]const u8 = null,
 
-    pub fn map(self: *AttachedBuffer) ![]u8 {
+    pub fn getData(self: *AttachedBuffer) ![]const u8 {
+        // Return inline data if present (remote connections)
+        if (self.inline_data) |data| {
+            return data;
+        }
+
+        // Otherwise map shared memory (local connections)
         if (self.mapped_ptr) |p| {
             const byte_ptr: [*]u8 = @ptrCast(p);
             return byte_ptr[self.offset..][0..self.length];
@@ -59,6 +67,13 @@ pub const AttachedBuffer = struct {
         return byte_ptr[self.offset..][0..self.length];
     }
 
+    /// Legacy alias for getData
+    pub fn map(self: *AttachedBuffer) ![]u8 {
+        const data = try self.getData();
+        // Cast away const for backwards compatibility
+        return @constCast(data);
+    }
+
     pub fn unmap(self: *AttachedBuffer) void {
         if (self.mapped_ptr) |p| {
             const byte_ptr: [*]align(4096) u8 = @ptrCast(@alignCast(p));
@@ -69,7 +84,10 @@ pub const AttachedBuffer = struct {
 
     pub fn deinit(self: *AttachedBuffer) void {
         self.unmap();
-        posix.close(self.shm_fd);
+        if (self.shm_fd >= 0) {
+            posix.close(self.shm_fd);
+        }
+        // Note: inline_data is not owned, don't free it here
     }
 };
 
@@ -175,6 +193,25 @@ pub const SurfaceRegistry = struct {
             .shm_size = shm_size,
             .offset = offset,
             .length = length,
+        };
+    }
+
+    /// Attach inline buffer data to a surface (for remote connections)
+    pub fn attachInlineBuffer(
+        self: *SurfaceRegistry,
+        surface_id: protocol.SurfaceId,
+        data: []const u8,
+    ) !void {
+        const surface = self.getSurface(surface_id) orelse return error.SurfaceNotFound;
+
+        // Clean up old buffer if present
+        if (surface.buffer) |*old_buf| {
+            old_buf.deinit();
+        }
+
+        surface.buffer = .{
+            .length = data.len,
+            .inline_data = data,
         };
     }
 
