@@ -440,6 +440,45 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(semadrawd);
 
+    // Client library modules
+    const client_connection_mod = b.createModule(.{
+        .root_source_file = b.path("src/client/connection.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "protocol", .module = ipc_protocol_mod },
+        },
+    });
+
+    const client_surface_mod = b.createModule(.{
+        .root_source_file = b.path("src/client/surface.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "protocol", .module = ipc_protocol_mod },
+            .{ .name = "connection", .module = client_connection_mod },
+        },
+    });
+
+    const client_mod = b.createModule(.{
+        .root_source_file = b.path("src/client/client.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "protocol", .module = ipc_protocol_mod },
+            .{ .name = "connection", .module = client_connection_mod },
+            .{ .name = "surface", .module = client_surface_mod },
+        },
+    });
+
+    // Client library (static)
+    const client_lib = b.addLibrary(.{
+        .name = "semadraw_client",
+        .root_module = client_mod,
+        .linkage = .static,
+    });
+    b.installArtifact(client_lib);
+
     // Unit tests
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
