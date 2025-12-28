@@ -44,14 +44,14 @@ zig build
 zig build test
 ```
 
-Tools produced:
+Tools and libraries produced:
 
-1. semadrawd - Compositor daemon
-2. sdcs_dump - SDCS file inspector
-3. sdcs_replay - Software renderer
-4. sdcs_make_test - Test file generator
+1. libsemadraw_client.a - Client library for connecting to semadrawd
+2. semadrawd - Compositor daemon
+3. sdcs_dump - SDCS file inspector
+4. sdcs_replay - Software renderer
 5. sdcs_make_demo - Demo showcase generator
-6. sdcs_make_* - Various test generators (transform, clip, blend, stroke, etc.)
+6. sdcs_make_* - Various test generators
 
 Rendering options supported by the encoder and replay tool:
 
