@@ -60,7 +60,7 @@ pub const Renderer = struct {
         try self.encoder.end();
 
         // Return the encoded data
-        return self.encoder.toOwnedSlice();
+        return self.encoder.finishBytes();
     }
 
     fn renderCells(self: *Self) !void {

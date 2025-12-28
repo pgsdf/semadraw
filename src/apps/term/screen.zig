@@ -394,7 +394,7 @@ pub const Color = union(enum) {
     /// Convert indexed color to RGB (standard VGA palette)
     pub fn toRgb(self: Color) struct { r: u8, g: u8, b: u8 } {
         switch (self) {
-            .rgb => |c| return c,
+            .rgb => |c| return .{ .r = c.r, .g = c.g, .b = c.b },
             .indexed => |idx| {
                 if (idx < 16) {
                     // Standard 16 colors (VGA palette)
