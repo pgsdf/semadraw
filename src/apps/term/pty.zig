@@ -27,13 +27,13 @@ pub const Pty = struct {
         try unlockpt(master_fd);
 
         // Set window size
-        var ws = std.c.winsize{
-            .ws_row = rows,
-            .ws_col = cols,
-            .ws_xpixel = 0,
-            .ws_ypixel = 0,
+        var ws = std.posix.winsize{
+            .row = rows,
+            .col = cols,
+            .xpixel = 0,
+            .ypixel = 0,
         };
-        _ = std.c.ioctl(master_fd, std.c.T.IOCSWINSZ, &ws);
+        _ = std.c.ioctl(master_fd, std.posix.T.IOCSWINSZ, &ws);
 
         // Fork
         const pid = try posix.fork();
@@ -52,7 +52,7 @@ pub const Pty = struct {
             };
 
             // Set as controlling terminal
-            _ = std.c.ioctl(slave_fd, std.c.T.IOCSCTTY, @as(c_ulong, 0));
+            _ = std.c.ioctl(slave_fd, std.posix.T.IOCSCTTY, @as(c_ulong, 0));
 
             // Duplicate to stdin/stdout/stderr
             posix.dup2(slave_fd, 0) catch posix.exit(1);
@@ -64,7 +64,7 @@ pub const Pty = struct {
             }
 
             // Set window size on slave
-            _ = std.c.ioctl(0, std.c.T.IOCSWINSZ, &ws);
+            _ = std.c.ioctl(0, std.posix.T.IOCSWINSZ, &ws);
 
             // Execute shell
             const shell_path = shell orelse getDefaultShell();
@@ -134,13 +134,13 @@ pub const Pty = struct {
 
     /// Resize the pty
     pub fn resize(self: *Self, cols: u16, rows: u16) void {
-        var ws = std.c.winsize{
-            .ws_row = rows,
-            .ws_col = cols,
-            .ws_xpixel = 0,
-            .ws_ypixel = 0,
+        var ws = std.posix.winsize{
+            .row = rows,
+            .col = cols,
+            .xpixel = 0,
+            .ypixel = 0,
         };
-        _ = std.c.ioctl(self.master_fd, std.c.T.IOCSWINSZ, &ws);
+        _ = std.c.ioctl(self.master_fd, std.posix.T.IOCSWINSZ, &ws);
     }
 
     /// Check if child is still running
