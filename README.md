@@ -123,6 +123,7 @@ Available backends:
 * `headless` - No output, for testing
 * `kms` - DRM/KMS direct framebuffer output (Linux/FreeBSD)
 * `x11` - X11 windowed output
+* `vulkan` - GPU-accelerated Vulkan renderer with X11 presentation
 
 The daemon listens on `/var/run/semadraw/semadraw.sock` by default.
 

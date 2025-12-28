@@ -46,11 +46,11 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 * DRM/KMS presentation backend (direct framebuffer output)
 * SIMD vectorization for rasterization (SSE/AVX, NEON)
 * X11 backend for windowed display
+* Vulkan backend (GPU-accelerated rendering with X11 presentation)
 
 ## Next
 
 ### Backends
-* Vulkan backend (GPU-accelerated rendering)
 * Wayland backend for windowed display
 
 ### Integration
