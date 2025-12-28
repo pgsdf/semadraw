@@ -5,8 +5,11 @@ const c = @cImport({
     @cDefine("VK_USE_PLATFORM_XLIB_KHR", "1");
     @cInclude("vulkan/vulkan.h");
     @cInclude("X11/Xlib.h");
-    @cInclude("X11/keysymdef.h");
 });
+
+// X11 keysym constants (from X11/keysymdef.h)
+const XK_q: c_ulong = 0x0071;
+const XK_Q: c_ulong = 0x0051;
 
 const log = std.log.scoped(.vulkan_backend);
 
@@ -1062,7 +1065,7 @@ pub const VulkanBackend = struct {
                     const key_event = event.xkey;
                     const keysym = c.XLookupKeysym(@constCast(&key_event), 0);
                     const ctrl_held = (key_event.state & c.ControlMask) != 0;
-                    if (ctrl_held and (keysym == c.XK_q or keysym == c.XK_Q)) {
+                    if (ctrl_held and (keysym == XK_q or keysym == XK_Q)) {
                         log.info("Ctrl+Q pressed, closing window", .{});
                         self.closed = true;
                         return false;
