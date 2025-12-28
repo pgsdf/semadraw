@@ -135,6 +135,26 @@ Suitable for:
 * Wayland-native environments
 * Development and testing without X11
 
+## Applications
+
+### semadraw-term
+
+VT100-compatible terminal emulator for SemaDraw console environments.
+
+Architecture:
+* `font.zig` - 8x16 VGA bitmap font with atlas generation
+* `screen.zig` - Cell-based screen buffer with attributes
+* `vt100.zig` - ANSI/VT100 escape sequence parser
+* `pty.zig` - Linux PTY handling for shell communication
+* `renderer.zig` - Converts screen buffer to SDCS glyph runs
+
+Data flow:
+1. PTY receives shell output
+2. VT100 parser processes escape sequences
+3. Screen buffer updated with cells and attributes
+4. Renderer batches cells by color into glyph runs
+5. SDCS data sent to daemon via client library
+
 ## Key property
 
 No backend specific concept appears in the public API.
