@@ -2,8 +2,9 @@ const std = @import("std");
 const posix = std.posix;
 
 // Linux-specific PTY ioctl constants (not in std.c.T)
-const TIOCGPTN: c_ulong = 0x80045430; // Get PTY number
-const TIOCSPTLCK: c_ulong = 0x40045431; // Lock/unlock PTY
+// These need @bitCast because the values exceed c_int max when interpreted as unsigned
+const TIOCGPTN: c_int = @bitCast(@as(c_uint, 0x80045430)); // Get PTY number
+const TIOCSPTLCK: c_int = @bitCast(@as(c_uint, 0x40045431)); // Lock/unlock PTY
 
 /// Pseudo-terminal handler for shell communication
 pub const Pty = struct {
