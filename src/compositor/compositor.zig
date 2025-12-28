@@ -16,6 +16,8 @@ pub const OutputConfig = struct {
     refresh_hz: u32 = 60,
     /// Background color (RGBA, 0.0-1.0)
     background_color: [4]f32 = .{ 0.0, 0.0, 0.0, 1.0 },
+    /// Backend type to use
+    backend_type: backend_mod.BackendType = .software,
 };
 
 /// Composition state for a single output
@@ -75,7 +77,7 @@ pub const Compositor = struct {
     /// Initialize output with given configuration
     pub fn initOutput(self: *Self, id: u32, config: OutputConfig) !void {
         // Create backend
-        var be = try backend_mod.createBackend(self.allocator, .software);
+        var be = try backend_mod.createBackend(self.allocator, config.backend_type);
         errdefer be.deinit();
 
         // Initialize framebuffer
