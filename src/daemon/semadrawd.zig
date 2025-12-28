@@ -33,7 +33,7 @@ pub const Config = struct {
 const RemoteSession = struct {
     client: tcp_server.RemoteClient,
     id: protocol.ClientId,
-    state: client_session.ClientState,
+    state: client_session.SessionState,
     sdcs_buffer: ?[]u8, // Inline SDCS data for current surface
 
     pub fn getFd(self: *RemoteSession) posix.fd_t {
@@ -55,7 +55,7 @@ pub const Daemon = struct {
     running: bool,
 
     pub fn init(allocator: std.mem.Allocator, config: Config) !Daemon {
-        const server = try socket_server.SocketServer.bind(config.socket_path);
+        var server = try socket_server.SocketServer.bind(config.socket_path);
         errdefer server.deinit();
 
         // Initialize TCP server if port is configured
@@ -477,11 +477,9 @@ pub const Daemon = struct {
         };
     }
 
-    fn handleRemoteSync(self: *Daemon, session: *RemoteSession, payload: ?[]u8) !void {
-        _ = self;
+    fn handleRemoteSync(_: *Daemon, session: *RemoteSession, payload: ?[]u8) !void {
         if (payload == null or payload.?.len < protocol.SyncMsg.SIZE) {
-            try self.sendRemoteError(session, .protocol_error, 0);
-            return;
+            return error.InvalidPayload;
         }
 
         const msg = try protocol.SyncMsg.deserialize(payload.?);
