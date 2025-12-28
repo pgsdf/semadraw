@@ -1,5 +1,5 @@
 const std = @import("std");
-const backend = @import("backend.zig");
+const backend = @import("backend");
 
 /// Software renderer backend - CPU-based SDCS rendering
 pub const SoftwareBackend = struct {
