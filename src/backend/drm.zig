@@ -608,6 +608,11 @@ pub const DrmBackend = struct {
         _ = self;
     }
 
+    fn pollEventsImpl(_: *anyopaque) bool {
+        // DRM backend has no user events to process
+        return true;
+    }
+
     fn deinitImpl(ctx: *anyopaque) void {
         const self: *Self = @ptrCast(@alignCast(ctx));
         self.deinit();
@@ -619,6 +624,7 @@ pub const DrmBackend = struct {
         .render = renderImpl,
         .getPixels = getPixelsImpl,
         .resize = resizeImpl,
+        .pollEvents = pollEventsImpl,
         .deinit = deinitImpl,
     };
 

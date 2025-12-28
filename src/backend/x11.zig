@@ -373,6 +373,11 @@ pub const X11Backend = struct {
         try self.handleResize(width, height);
     }
 
+    fn pollEventsImpl(ctx: *anyopaque) bool {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        return self.processEvents();
+    }
+
     fn deinitImpl(ctx: *anyopaque) void {
         const self: *Self = @ptrCast(@alignCast(ctx));
         self.deinit();
@@ -384,6 +389,7 @@ pub const X11Backend = struct {
         .render = renderImpl,
         .getPixels = getPixelsImpl,
         .resize = resizeImpl,
+        .pollEvents = pollEventsImpl,
         .deinit = deinitImpl,
     };
 

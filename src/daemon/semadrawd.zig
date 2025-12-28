@@ -110,7 +110,14 @@ pub const Daemon = struct {
                 continue;
             };
 
-            if (n == 0) continue; // Timeout, no events
+            // Poll backend events (keyboard, window close, etc.)
+            if (!self.comp.pollEvents()) {
+                log.info("backend requested shutdown", .{});
+                self.running = false;
+                break;
+            }
+
+            if (n == 0) continue; // Timeout, no socket events
 
             // Process events
             for (poll_fds.items) |*pfd| {

@@ -92,6 +92,9 @@ pub const Backend = struct {
         getPixels: *const fn (ctx: *anyopaque) ?[]u8,
         /// Resize framebuffer
         resize: *const fn (ctx: *anyopaque, width: u32, height: u32) anyerror!void,
+        /// Process pending events (keyboard, window, etc.)
+        /// Returns false if backend should stop (e.g., window closed)
+        pollEvents: *const fn (ctx: *anyopaque) bool,
         /// Cleanup and free resources
         deinit: *const fn (ctx: *anyopaque) void,
     };
@@ -114,6 +117,12 @@ pub const Backend = struct {
 
     pub fn resize(self: Backend, width: u32, height: u32) !void {
         return self.vtable.resize(self.ptr, width, height);
+    }
+
+    /// Process pending events (keyboard, window, etc.)
+    /// Returns false if backend should stop (e.g., window closed)
+    pub fn pollEvents(self: Backend) bool {
+        return self.vtable.pollEvents(self.ptr);
     }
 
     pub fn deinit(self: Backend) void {
