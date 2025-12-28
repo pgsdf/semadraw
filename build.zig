@@ -393,6 +393,31 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    // Compositor modules
+    const damage_mod = b.createModule(.{
+        .root_source_file = b.path("src/compositor/damage.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const frame_scheduler_mod = b.createModule(.{
+        .root_source_file = b.path("src/compositor/frame_scheduler.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const compositor_mod = b.createModule(.{
+        .root_source_file = b.path("src/compositor/compositor.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "damage", .module = damage_mod },
+            .{ .name = "frame_scheduler", .module = frame_scheduler_mod },
+            .{ .name = "backend", .module = backend_mod },
+            .{ .name = "surface_registry", .module = surface_registry_mod },
+        },
+    });
+
     // semadrawd daemon
     const semadrawd = b.addExecutable(.{
         .name = "semadrawd",
@@ -409,6 +434,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "sdcs_validator", .module = sdcs_validator_mod },
                 .{ .name = "backend", .module = backend_mod },
                 .{ .name = "backend_process", .module = backend_process_mod },
+                .{ .name = "compositor", .module = compositor_mod },
             },
         }),
     });

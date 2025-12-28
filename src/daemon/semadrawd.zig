@@ -6,6 +6,7 @@ const client_session = @import("client_session");
 const surface_registry = @import("surface_registry");
 const shm = @import("shm");
 const sdcs_validator = @import("sdcs_validator");
+const compositor = @import("compositor");
 
 const log = std.log.scoped(.semadrawd);
 
@@ -30,6 +31,7 @@ pub const Daemon = struct {
     server: socket_server.SocketServer,
     clients: client_session.ClientManager,
     surfaces: surface_registry.SurfaceRegistry,
+    comp: compositor.Compositor,
     running: bool,
 
     pub fn init(allocator: std.mem.Allocator, config: Config) !Daemon {
@@ -42,11 +44,26 @@ pub const Daemon = struct {
             .server = server,
             .clients = client_session.ClientManager.init(allocator),
             .surfaces = surface_registry.SurfaceRegistry.init(allocator),
+            .comp = undefined, // Initialized in initCompositor
             .running = false,
         };
     }
 
+    /// Initialize compositor (must be called after init, before run)
+    pub fn initCompositor(self: *Daemon) !void {
+        self.comp = compositor.Compositor.init(self.allocator, &self.surfaces);
+
+        // Initialize output with default 1920x1080
+        try self.comp.initOutput(0, .{
+            .width = 1920,
+            .height = 1080,
+            .format = .rgba8,
+            .refresh_hz = 60,
+        });
+    }
+
     pub fn deinit(self: *Daemon) void {
+        self.comp.deinit();
         self.surfaces.deinit();
         self.clients.deinit();
         self.server.deinit();
@@ -224,6 +241,9 @@ pub const Daemon = struct {
         };
         try session.addSurface(surface.id, msg.logical_width, msg.logical_height);
 
+        // Notify compositor
+        self.comp.onSurfaceCreated(surface.id) catch {};
+
         // Send reply
         var reply_buf: [protocol.SurfaceCreatedMsg.SIZE]u8 = undefined;
         const reply = protocol.SurfaceCreatedMsg{ .surface_id = surface.id };
@@ -252,6 +272,9 @@ pub const Daemon = struct {
             session.removeSurface(msg.surface_id, surface.logical_width, surface.logical_height);
         }
 
+        // Notify compositor
+        self.comp.onSurfaceDestroyed(msg.surface_id);
+
         self.surfaces.destroySurface(msg.surface_id);
         log.debug("client {} destroyed surface {}", .{ session.id, msg.surface_id });
     }
@@ -275,6 +298,9 @@ pub const Daemon = struct {
             try session.sendError(.invalid_surface, msg.surface_id);
             return;
         };
+
+        // Notify compositor of surface damage
+        self.comp.onSurfaceCommit(msg.surface_id) catch {};
 
         // Send frame_complete
         var reply_buf: [protocol.FrameCompleteMsg.SIZE]u8 = undefined;
@@ -395,6 +421,8 @@ pub fn main() !void {
 
     var daemon = try Daemon.init(allocator, config);
     defer daemon.deinit();
+
+    try daemon.initCompositor();
 
     try daemon.run();
 }
