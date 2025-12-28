@@ -466,8 +466,8 @@ pub const X11Backend = struct {
         while (cy < cell_h) : (cy += 1) {
             var cx: u32 = 0;
             while (cx < cell_w) : (cx += 1) {
-                const px: i32 = @intFromFloat(dst_x) + @as(i32, @intCast(cx));
-                const py: i32 = @intFromFloat(dst_y) + @as(i32, @intCast(cy));
+                const px: i32 = @as(i32, @intFromFloat(dst_x)) + @as(i32, @intCast(cx));
+                const py: i32 = @as(i32, @intFromFloat(dst_y)) + @as(i32, @intCast(cy));
 
                 if (px < 0 or py < 0) continue;
                 if (px >= @as(i32, @intCast(fb_w)) or py >= @as(i32, @intCast(fb_h))) continue;
