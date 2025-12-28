@@ -1,6 +1,10 @@
 const std = @import("std");
 const posix = std.posix;
 
+// Linux-specific PTY ioctl constants (not in std.c.T)
+const TIOCGPTN: c_ulong = 0x80045430; // Get PTY number
+const TIOCSPTLCK: c_ulong = 0x40045431; // Lock/unlock PTY
+
 /// Pseudo-terminal handler for shell communication
 pub const Pty = struct {
     master_fd: posix.fd_t,
@@ -155,7 +159,7 @@ fn openPtyMaster() !posix.fd_t {
 fn ptsname(fd: posix.fd_t, buf: []u8) !void {
     // Use ioctl to get slave name
     var n: c_uint = 0;
-    const rc = std.c.ioctl(fd, std.c.T.IOCGPTN, &n);
+    const rc = std.c.ioctl(fd, TIOCGPTN, &n);
     if (rc != 0) return error.PtsnameFailed;
 
     _ = std.fmt.bufPrint(buf, "/dev/pts/{d}", .{n}) catch return error.PtsnameFailed;
@@ -168,7 +172,7 @@ fn grantpt(fd: posix.fd_t) !void {
 
 fn unlockpt(fd: posix.fd_t) !void {
     var unlock: c_int = 0;
-    const rc = std.c.ioctl(fd, std.c.T.IOCSPTLCK, &unlock);
+    const rc = std.c.ioctl(fd, TIOCSPTLCK, &unlock);
     if (rc != 0) return error.UnlockptFailed;
 }
 
