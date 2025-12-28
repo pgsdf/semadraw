@@ -25,8 +25,14 @@ The daemon is the central authority for surface management and composition.
 
 ### IPC layer
 * Unix domain socket at `/var/run/semadraw/semadraw.sock`
-* Binary message protocol with 16-byte headers
-* FD passing for shared memory buffers
+* Binary message protocol with 8-byte headers
+* FD passing for shared memory buffers (local connections)
+
+### Remote transport
+* TCP server for network connections (optional, port 7234 default)
+* Same binary protocol as local connections
+* Inline buffer transfer for SDCS data (no FD passing over network)
+* Remote clients identified by high client IDs (0x80000000+)
 
 ### Client sessions
 * Per-client resource tracking and limits

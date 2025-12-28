@@ -128,6 +128,20 @@ Available backends:
 
 The daemon listens on `/var/run/semadraw/semadraw.sock` by default.
 
+### Remote Connections
+
+semadrawd supports TCP connections for remote SDCS streaming:
+
+```sh
+# Enable TCP on port 7234
+./zig-out/bin/semadrawd --backend x11 --tcp 7234
+
+# Bind to specific address
+./zig-out/bin/semadrawd --tcp 7234 --tcp-addr 192.168.1.100
+```
+
+Remote clients use inline buffer transfer instead of shared memory.
+
 ## License
 
 BSD 2-Clause License

@@ -339,6 +339,15 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    const ipc_tcp_mod = b.createModule(.{
+        .root_source_file = b.path("src/ipc/tcp_server.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "protocol", .module = ipc_protocol_mod },
+        },
+    });
+
     const ipc_shm_mod = b.createModule(.{
         .root_source_file = b.path("src/ipc/shm.zig"),
         .target = target,
@@ -494,6 +503,7 @@ pub fn build(b: *std.Build) void {
             .imports = &.{
                 .{ .name = "protocol", .module = ipc_protocol_mod },
                 .{ .name = "socket_server", .module = ipc_socket_mod },
+                .{ .name = "tcp_server", .module = ipc_tcp_mod },
                 .{ .name = "client_session", .module = client_session_mod },
                 .{ .name = "surface_registry", .module = surface_registry_mod },
                 .{ .name = "shm", .module = ipc_shm_mod },
@@ -509,6 +519,15 @@ pub fn build(b: *std.Build) void {
     // Client library modules
     const client_connection_mod = b.createModule(.{
         .root_source_file = b.path("src/client/connection.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "protocol", .module = ipc_protocol_mod },
+        },
+    });
+
+    const client_remote_mod = b.createModule(.{
+        .root_source_file = b.path("src/client/remote_connection.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -533,6 +552,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "protocol", .module = ipc_protocol_mod },
             .{ .name = "connection", .module = client_connection_mod },
+            .{ .name = "remote_connection", .module = client_remote_mod },
             .{ .name = "surface", .module = client_surface_mod },
         },
     });

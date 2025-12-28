@@ -11,6 +11,9 @@ pub const PROTOCOL_VERSION_MINOR: u16 = 1;
 /// Default socket path
 pub const DEFAULT_SOCKET_PATH = "/var/run/semadraw.sock";
 
+/// Default TCP port for remote connections
+pub const DEFAULT_TCP_PORT: u16 = 7234;
+
 /// Surface identifier (opaque handle)
 pub const SurfaceId = u32;
 
@@ -29,6 +32,9 @@ pub const MsgType = enum(u16) {
     set_z_order = 0x0031,
     sync = 0x0040,
     disconnect = 0x00F0,
+
+    // Remote transport messages (for network connections without FD passing)
+    attach_buffer_inline = 0x0022, // SDCS data sent inline in message payload
 
     // Daemon -> Client responses (0x8xxx)
     hello_reply = 0x8001,
@@ -174,6 +180,32 @@ pub const AttachBufferMsg = extern struct {
             .shm_size = std.mem.readInt(u64, buf[4..12], .little),
             .sdcs_offset = std.mem.readInt(u64, buf[12..20], .little),
             .sdcs_length = std.mem.readInt(u64, buf[20..28], .little),
+        };
+    }
+};
+
+/// Attach buffer inline request (for remote connections without FD passing)
+/// The SDCS data follows immediately after the header in the payload
+pub const AttachBufferInlineMsg = extern struct {
+    surface_id: SurfaceId,
+    sdcs_length: u64, // Length of SDCS data that follows this header
+    flags: u32, // Reserved
+
+    pub const HEADER_SIZE: usize = 16;
+
+    pub fn serialize(self: AttachBufferInlineMsg, buf: []u8) void {
+        std.debug.assert(buf.len >= HEADER_SIZE);
+        std.mem.writeInt(u32, buf[0..4], self.surface_id, .little);
+        std.mem.writeInt(u64, buf[4..12], self.sdcs_length, .little);
+        std.mem.writeInt(u32, buf[12..16], self.flags, .little);
+    }
+
+    pub fn deserialize(buf: []const u8) !AttachBufferInlineMsg {
+        if (buf.len < HEADER_SIZE) return error.BufferTooSmall;
+        return .{
+            .surface_id = std.mem.readInt(u32, buf[0..4], .little),
+            .sdcs_length = std.mem.readInt(u64, buf[4..12], .little),
+            .flags = std.mem.readInt(u32, buf[12..16], .little),
         };
     }
 };

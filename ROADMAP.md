@@ -47,13 +47,14 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 * SIMD vectorization for rasterization (SSE/AVX, NEON)
 * X11 backend for windowed display
 * Vulkan backend (GPU-accelerated rendering with X11 presentation)
-* Wayland backend for windowed display
+* Remote transport (TCP server, inline buffer transfer, remote client library)
 
 ## Next
 
-### Integration
-* Remote transport (SDCS streaming over network)
+### Backends
+* Wayland backend for windowed display (implemented, pending testing)
 
 ## Later
 
-* (items move here as new features are identified)
+### Applications
+* Terminal emulator (semadraw-term) for console environment
