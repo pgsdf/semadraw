@@ -576,6 +576,7 @@ pub const Daemon = struct {
         switch (msg_type) {
             .create_surface => try self.handleCreateSurface(session, payload),
             .destroy_surface => try self.handleDestroySurface(session, payload),
+            .attach_buffer_inline => try self.handleAttachBufferInline(session, payload),
             .commit => try self.handleCommit(session, payload),
             .set_visible => try self.handleSetVisible(session, payload),
             .set_z_order => try self.handleSetZOrder(session, payload),
@@ -647,6 +648,46 @@ pub const Daemon = struct {
 
         self.surfaces.destroySurface(msg.surface_id);
         log.debug("client {} destroyed surface {}", .{ session.id, msg.surface_id });
+    }
+
+    fn handleAttachBufferInline(self: *Daemon, session: *client_session.ClientSession, payload: ?[]u8) !void {
+        if (payload == null or payload.?.len < protocol.AttachBufferInlineMsg.HEADER_SIZE) {
+            try session.sendError(.protocol_error, 0);
+            return;
+        }
+
+        const msg = try protocol.AttachBufferInlineMsg.deserialize(payload.?);
+        const expected_len = protocol.AttachBufferInlineMsg.HEADER_SIZE + msg.sdcs_length;
+
+        if (payload.?.len < expected_len) {
+            try session.sendError(.protocol_error, 0);
+            return;
+        }
+
+        if (!self.surfaces.isOwner(msg.surface_id, session.id)) {
+            try session.sendError(.permission_denied, msg.surface_id);
+            return;
+        }
+
+        // Store SDCS data for this session
+        if (session.sdcs_buffer) |buf| session.allocator.free(buf);
+        session.sdcs_buffer = try session.allocator.alloc(u8, msg.sdcs_length);
+        @memcpy(session.sdcs_buffer.?, payload.?[protocol.AttachBufferInlineMsg.HEADER_SIZE..expected_len]);
+
+        // Validate SDCS
+        const validation = sdcs_validator.SdcsValidator.validateBuffer(session.sdcs_buffer.?);
+        if (!validation.valid) {
+            try session.sendError(.validation_failed, msg.surface_id);
+            session.allocator.free(session.sdcs_buffer.?);
+            session.sdcs_buffer = null;
+            return;
+        }
+
+        // Attach to surface
+        self.surfaces.attachInlineBuffer(msg.surface_id, session.sdcs_buffer.?) catch {
+            try session.sendError(.invalid_surface, msg.surface_id);
+            return;
+        };
     }
 
     fn handleCommit(self: *Daemon, session: *client_session.ClientSession, payload: ?[]u8) !void {
