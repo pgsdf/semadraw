@@ -58,4 +58,5 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 
 ## Later
 
-* (items move here as new features are identified)
+### Applications
+* Terminal emulator (semadraw-term) for console environment
