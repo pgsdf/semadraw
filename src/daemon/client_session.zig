@@ -60,6 +60,7 @@ pub const ClientSession = struct {
     usage: ResourceUsage,
     surfaces: std.ArrayListUnmanaged(protocol.SurfaceId),
     allocator: std.mem.Allocator,
+    sdcs_buffer: ?[]u8, // Inline SDCS data for current surface
 
     pub fn init(allocator: std.mem.Allocator, id: protocol.ClientId, fd: posix.socket_t) ClientSession {
         return .{
@@ -70,10 +71,12 @@ pub const ClientSession = struct {
             .usage = .{},
             .surfaces = .{},
             .allocator = allocator,
+            .sdcs_buffer = null,
         };
     }
 
     pub fn deinit(self: *ClientSession) void {
+        if (self.sdcs_buffer) |buf| self.allocator.free(buf);
         self.socket.close();
         self.surfaces.deinit(self.allocator);
     }
