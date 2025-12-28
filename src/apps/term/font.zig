@@ -2,6 +2,7 @@ const std = @import("std");
 
 /// 8x16 VGA-style bitmap font for terminal rendering
 /// Covers ASCII printable characters (32-126)
+/// For unsupported Unicode characters, returns a fallback glyph
 pub const Font = struct {
     pub const GLYPH_WIDTH: u32 = 8;
     pub const GLYPH_HEIGHT: u32 = 16;
@@ -13,12 +14,22 @@ pub const Font = struct {
     pub const ATLAS_WIDTH: u32 = GLYPH_WIDTH * ATLAS_COLS; // 128
     pub const ATLAS_HEIGHT: u32 = GLYPH_HEIGHT * ATLAS_ROWS; // 96
 
+    /// Fallback glyph index (question mark) for unsupported characters
+    pub const FALLBACK_INDEX: u32 = '?' - FIRST_CHAR;
+
     /// Get atlas index for a character (or null for unsupported)
-    pub fn charToIndex(c: u8) ?u32 {
+    /// Accepts Unicode codepoint (u21)
+    pub fn charToIndex(c: u21) ?u32 {
         if (c >= FIRST_CHAR and c <= LAST_CHAR) {
-            return c - FIRST_CHAR;
+            return @intCast(c - FIRST_CHAR);
         }
         return null;
+    }
+
+    /// Get atlas index with fallback for unsupported characters
+    /// Returns the fallback glyph (?) for characters outside ASCII range
+    pub fn charToIndexWithFallback(c: u21) u32 {
+        return charToIndex(c) orelse FALLBACK_INDEX;
     }
 
     /// Get atlas coordinates for a glyph index
@@ -278,4 +289,15 @@ test "Font char to index" {
     try std.testing.expectEqual(@as(?u32, 16), Font.charToIndex('0'));
     try std.testing.expectEqual(@as(?u32, null), Font.charToIndex(0));
     try std.testing.expectEqual(@as(?u32, null), Font.charToIndex(127));
+    // Unicode outside ASCII range returns null
+    try std.testing.expectEqual(@as(?u32, null), Font.charToIndex(0x00E9)); // é
+    try std.testing.expectEqual(@as(?u32, null), Font.charToIndex(0x4E2D)); // 中
+}
+
+test "Font char to index with fallback" {
+    // ASCII still works
+    try std.testing.expectEqual(@as(u32, 33), Font.charToIndexWithFallback('A'));
+    // Non-ASCII returns fallback (?)
+    try std.testing.expectEqual(Font.FALLBACK_INDEX, Font.charToIndexWithFallback(0x00E9)); // é
+    try std.testing.expectEqual(Font.FALLBACK_INDEX, Font.charToIndexWithFallback(0x4E2D)); // 中
 }

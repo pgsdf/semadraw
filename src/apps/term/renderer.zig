@@ -79,6 +79,13 @@ pub const Renderer = struct {
         while (col < self.scr.cols) {
             const start_col = col;
             const start_cell = self.scr.getCell(col, row);
+
+            // Skip continuation cells (part of wide character)
+            if (start_cell.width == 0) {
+                col += 1;
+                continue;
+            }
+
             const start_fg = start_cell.attr.effectiveFg();
             const start_bg = start_cell.attr.effectiveBg();
 
@@ -88,6 +95,13 @@ pub const Renderer = struct {
 
             while (col < self.scr.cols) {
                 const cell = self.scr.getCell(col, row);
+
+                // Skip continuation cells
+                if (cell.width == 0) {
+                    col += 1;
+                    continue;
+                }
+
                 const fg = cell.attr.effectiveFg();
                 const bg = cell.attr.effectiveBg();
 
@@ -98,13 +112,13 @@ pub const Renderer = struct {
 
                 // Skip spaces with default background (optimization)
                 if (cell.char != ' ' or !colorEqual(bg, screen.Color.default_bg)) {
-                    if (font.Font.charToIndex(cell.char)) |glyph_idx| {
-                        try glyphs.append(self.allocator, .{
-                            .index = glyph_idx,
-                            .x_offset = @floatFromInt((col - start_col) * font.Font.GLYPH_WIDTH),
-                            .y_offset = 0,
-                        });
-                    }
+                    // Use fallback for unsupported Unicode characters
+                    const glyph_idx = font.Font.charToIndexWithFallback(cell.char);
+                    try glyphs.append(self.allocator, .{
+                        .index = glyph_idx,
+                        .x_offset = @floatFromInt((col - start_col) * font.Font.GLYPH_WIDTH),
+                        .y_offset = 0,
+                    });
                 }
 
                 col += 1;
