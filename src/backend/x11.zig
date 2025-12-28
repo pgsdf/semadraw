@@ -294,6 +294,131 @@ pub const X11Backend = struct {
         return self.framebuffer;
     }
 
+    // ========================================================================
+    // SDCS Command Execution
+    // ========================================================================
+
+    fn executeSdcs(self: *Self, fb: []u8, data: []const u8) !void {
+        if (data.len < 64) return error.InvalidSdcs; // Header too small
+
+        // Skip header (64 bytes)
+        var offset: usize = 64;
+
+        // Process chunks
+        while (offset + 32 <= data.len) {
+            // ChunkHeader is 32 bytes
+            const chunk_payload_bytes = std.mem.readInt(u64, data[offset + 24 ..][0..8], .little);
+            offset += 32;
+
+            if (offset + chunk_payload_bytes > data.len) break;
+
+            // Process commands in chunk
+            const chunk_end = offset + @as(usize, @intCast(chunk_payload_bytes));
+            try self.executeChunkCommands(fb, data[offset..chunk_end]);
+
+            // Align to 8 bytes for next chunk
+            offset = chunk_end;
+            offset = std.mem.alignForward(usize, offset, 8);
+        }
+    }
+
+    fn executeChunkCommands(self: *Self, fb: []u8, commands: []const u8) !void {
+        var offset: usize = 0;
+
+        while (offset + 8 <= commands.len) {
+            const opcode = std.mem.readInt(u16, commands[offset..][0..2], .little);
+            const payload_len = std.mem.readInt(u32, commands[offset + 4 ..][0..4], .little);
+            offset += 8;
+
+            if (offset + payload_len > commands.len) break;
+
+            const payload = commands[offset..][0..payload_len];
+
+            // Execute command
+            try self.executeCommand(fb, opcode, payload);
+
+            // Align to 8 bytes
+            offset += payload_len;
+            const record_bytes = 8 + payload_len;
+            const pad = (8 - (record_bytes % 8)) % 8;
+            offset += pad;
+
+            // Check for END
+            if (opcode == 0x00F0) break;
+        }
+    }
+
+    fn executeCommand(self: *Self, fb: []u8, opcode: u16, payload: []const u8) !void {
+        switch (opcode) {
+            0x0001 => {}, // RESET - no-op for now
+            0x0010 => { // FILL_RECT
+                if (payload.len >= 32) {
+                    const x = readF32(payload[0..4]);
+                    const y = readF32(payload[4..8]);
+                    const w = readF32(payload[8..12]);
+                    const h = readF32(payload[12..16]);
+                    const r = readF32(payload[16..20]);
+                    const g = readF32(payload[20..24]);
+                    const b_col = readF32(payload[24..28]);
+                    const a = readF32(payload[28..32]);
+
+                    self.fillRect(fb, x, y, w, h, r, g, b_col, a);
+                }
+            },
+            0x00F0 => {}, // END
+            else => {}, // Ignore unknown opcodes for now
+        }
+    }
+
+    fn fillRect(self: *Self, fb: []u8, x: f32, y: f32, w: f32, h: f32, r: f32, g: f32, b_col: f32, a: f32) void {
+        const fb_w = self.width;
+        const fb_h = self.height;
+
+        // Clamp to framebuffer bounds
+        const x0: i32 = @intFromFloat(@max(0, x));
+        const y0: i32 = @intFromFloat(@max(0, y));
+        const x1: i32 = @intFromFloat(@min(@as(f32, @floatFromInt(fb_w)), x + w));
+        const y1: i32 = @intFromFloat(@min(@as(f32, @floatFromInt(fb_h)), y + h));
+
+        if (x0 >= x1 or y0 >= y1) return;
+
+        // X11 uses BGRA format
+        const cb: u8 = clampU8(b_col);
+        const cg: u8 = clampU8(g);
+        const cr: u8 = clampU8(r);
+        const ca: u8 = clampU8(a);
+
+        const bytes_per_pixel: usize = 4; // BGRA
+
+        var py: i32 = y0;
+        while (py < y1) : (py += 1) {
+            var px: i32 = x0;
+            while (px < x1) : (px += 1) {
+                const idx = (@as(usize, @intCast(py)) * @as(usize, fb_w) + @as(usize, @intCast(px))) * bytes_per_pixel;
+                if (idx + 3 < fb.len) {
+                    // Simple SRC_OVER blend (BGRA order for X11)
+                    if (ca == 255) {
+                        fb[idx + 0] = cb;
+                        fb[idx + 1] = cg;
+                        fb[idx + 2] = cr;
+                        fb[idx + 3] = ca;
+                    } else if (ca > 0) {
+                        const sa: f32 = @as(f32, @floatFromInt(ca)) / 255.0;
+                        const da: f32 = @as(f32, @floatFromInt(fb[idx + 3])) / 255.0;
+                        const out_a = sa + da * (1.0 - sa);
+
+                        if (out_a > 0) {
+                            fb[idx + 0] = blendChannel(cb, fb[idx + 0], sa, da, out_a);
+                            fb[idx + 1] = blendChannel(cg, fb[idx + 1], sa, da, out_a);
+                            fb[idx + 2] = blendChannel(cr, fb[idx + 2], sa, da, out_a);
+                            fb[idx + 3] = @intFromFloat(@min(255.0, out_a * 255.0));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Check if window is still open
     pub fn isOpen(self: *Self) bool {
         return !self.closed;
@@ -352,8 +477,10 @@ pub const X11Backend = struct {
             }
         }
 
-        // TODO: Execute SDCS commands
-        _ = request.sdcs_data;
+        // Execute SDCS commands
+        self.executeSdcs(buffer, request.sdcs_data) catch |err| {
+            log.warn("SDCS execution failed: {}", .{err});
+        };
 
         // Present to screen
         self.present();
@@ -414,6 +541,29 @@ pub fn create(allocator: std.mem.Allocator) !backend.Backend {
 pub fn createWithSize(allocator: std.mem.Allocator, width: u32, height: u32, title: []const u8) !backend.Backend {
     const x11 = try X11Backend.init(allocator, width, height, title);
     return x11.toBackend();
+}
+
+// ============================================================================
+// Helper functions
+// ============================================================================
+
+fn clampU8(v: f32) u8 {
+    var x = v;
+    if (x < 0.0) x = 0.0;
+    if (x > 1.0) x = 1.0;
+    return @intFromFloat(@round(x * 255.0));
+}
+
+fn readF32(bytes: *const [4]u8) f32 {
+    const u = std.mem.readInt(u32, bytes, .little);
+    return @bitCast(u);
+}
+
+fn blendChannel(src: u8, dst: u8, sa: f32, da: f32, out_a: f32) u8 {
+    const s: f32 = @floatFromInt(src);
+    const d: f32 = @floatFromInt(dst);
+    const result = (s * sa + d * da * (1.0 - sa)) / out_a;
+    return @intFromFloat(@min(255.0, @max(0.0, result)));
 }
 
 // ============================================================================

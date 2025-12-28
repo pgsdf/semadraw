@@ -4,6 +4,8 @@ const frame_scheduler = @import("frame_scheduler");
 const backend_mod = @import("backend");
 const surface_registry = @import("surface_registry");
 
+const log = std.log.scoped(.compositor);
+
 /// Compositor output configuration
 pub const OutputConfig = struct {
     /// Output width in pixels
@@ -115,7 +117,12 @@ pub const Compositor = struct {
         if (!self.composing) return false;
         if (self.output == null) return false;
 
-        return self.damage_tracker.hasDamage() and self.scheduler.shouldComposite();
+        const has_damage = self.damage_tracker.hasDamage();
+        const should_composite = self.scheduler.shouldComposite();
+        if (has_damage and should_composite) {
+            log.debug("needsComposite: damage={} scheduler={}", .{ has_damage, should_composite });
+        }
+        return has_damage and should_composite;
     }
 
     /// Perform composition
@@ -130,6 +137,11 @@ pub const Compositor = struct {
         // Get surfaces in composition order
         const composition_order = try self.surfaces.getCompositionOrder();
 
+        log.debug("composite: {} surfaces in composition order, full_repaint={}", .{
+            composition_order.len,
+            self.damage_tracker.needs_full_repaint,
+        });
+
         var surfaces_rendered: u32 = 0;
         var total_render_time: u64 = 0;
 
@@ -141,18 +153,32 @@ pub const Compositor = struct {
 
         // Render each visible surface
         for (composition_order) |surface| {
-            if (!surface.visible) continue;
+            if (!surface.visible) {
+                log.debug("  surface {}: skipped (not visible)", .{surface.id});
+                continue;
+            }
 
             // Check if surface has damage
             const surface_damaged = self.damage_tracker.needs_full_repaint or
                 (self.damage_tracker.getSurfaceDamage(surface.id) != null and
                 self.damage_tracker.getSurfaceDamage(surface.id).?.hasDamage());
 
-            if (!surface_damaged) continue;
+            if (!surface_damaged) {
+                log.debug("  surface {}: skipped (no damage)", .{surface.id});
+                continue;
+            }
 
             // Get SDCS data from attached buffer
-            const sdcs_data = if (surface.buffer) |*buf| buf.map() catch null else null;
+            const sdcs_data = if (surface.buffer) |*buf| buf.map() catch |err| blk: {
+                log.warn("  surface {}: buffer map failed: {}", .{ surface.id, err });
+                break :blk null;
+            } else blk: {
+                log.debug("  surface {}: no buffer attached", .{surface.id});
+                break :blk null;
+            };
             if (sdcs_data == null) continue;
+
+            log.debug("  surface {}: rendering {} bytes SDCS data", .{ surface.id, sdcs_data.?.len });
 
             // Render surface
             const result = try output.be.render(.{
@@ -170,6 +196,9 @@ pub const Compositor = struct {
                 surfaces_rendered += 1;
                 total_render_time += result.render_time_ns;
                 self.damage_tracker.clearSurfaceDamage(surface.id);
+                log.debug("  surface {}: rendered successfully in {}ns", .{ surface.id, result.render_time_ns });
+            } else {
+                log.warn("  surface {}: render failed: {s}", .{ surface.id, result.error_msg.? });
             }
         }
 
