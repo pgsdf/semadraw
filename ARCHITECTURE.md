@@ -57,6 +57,27 @@ Examples include a reference software renderer, a Vulkan accelerated renderer, a
 Backends must not alter semantics.
 They are interchangeable implementations.
 
+### Software backend
+
+The reference implementation renders to a memory buffer using CPU rasterization.
+Supports anti-aliasing, all blend modes, and deterministic output.
+Used for golden image testing and headless rendering.
+
+### DRM/KMS backend
+
+Direct display output without a window system.
+Uses kernel mode setting for display configuration:
+* Automatic device enumeration (`/dev/dri/card0`, etc.)
+* Connector and CRTC discovery
+* Mode setting with preferred resolution
+* Double-buffered dumb buffers
+* Page flipping with VSync
+
+Suitable for:
+* Dedicated display systems (kiosks, embedded)
+* FreeBSD console graphics
+* Testing without X11/Wayland
+
 ## Key property
 
 No backend specific concept appears in the public API.
