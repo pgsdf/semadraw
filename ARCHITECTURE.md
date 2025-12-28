@@ -19,6 +19,35 @@ Responsibilities include validation of command streams, surface lifetime managem
 
 This layer defines behavior. It does not optimize.
 
+## semadrawd daemon
+
+The daemon is the central authority for surface management and composition.
+
+### IPC layer
+* Unix domain socket at `/var/run/semadraw/semadraw.sock`
+* Binary message protocol with 16-byte headers
+* FD passing for shared memory buffers
+
+### Client sessions
+* Per-client resource tracking and limits
+* Surface ownership enforcement
+* Automatic cleanup on disconnect
+
+### Surface registry
+* Unique surface IDs across all clients
+* Z-order management for composition
+* Visibility and position tracking
+
+### Compositor
+* Damage tracking with region accumulation
+* Frame scheduling with vsync alignment
+* Adaptive refresh rate based on performance
+
+### Backend abstraction
+* Vtable-based interface for backend implementations
+* Process isolation via fork for untrusted backends
+* Software renderer as reference implementation
+
 ## Backend layer
 
 Backends translate semantic intent into execution.
