@@ -91,6 +91,9 @@ pub const Daemon = struct {
             .refresh_hz = 60,
             .backend_type = self.config.backend_type,
         });
+
+        // Start compositor for composition loop
+        self.comp.start();
     }
 
     pub fn deinit(self: *Daemon) void {
@@ -219,6 +222,13 @@ pub const Daemon = struct {
                         self.disconnectRemoteClient(session.id);
                     }
                 }
+            }
+
+            // Perform composition if needed
+            if (self.comp.needsComposite()) {
+                _ = self.comp.composite() catch |err| {
+                    log.warn("composite failed: {}", .{err});
+                };
             }
         }
 
