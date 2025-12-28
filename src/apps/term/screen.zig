@@ -53,16 +53,55 @@ pub const Screen = struct {
     }
 
     /// Write a character at cursor position and advance cursor
-    pub fn putChar(self: *Self, c: u8) void {
-        if (self.cursor_col >= self.cols) {
+    pub fn putChar(self: *Self, c: u21) void {
+        self.putCharWithWidth(c, charWidth(c));
+    }
+
+    /// Write a character with explicit width
+    pub fn putCharWithWidth(self: *Self, c: u21, width: u2) void {
+        // Handle line wrap
+        if (self.cursor_col + width > self.cols) {
             self.newline();
         }
 
         const cell = self.getCellMut(self.cursor_col, self.cursor_row);
         cell.char = c;
         cell.attr = self.current_attr;
+        cell.width = width;
         self.cursor_col += 1;
+
+        // For wide characters, add continuation cell
+        if (width == 2 and self.cursor_col < self.cols) {
+            const cont = self.getCellMut(self.cursor_col, self.cursor_row);
+            cont.* = Cell.wideContinuation();
+            cont.attr = self.current_attr;
+            self.cursor_col += 1;
+        }
+
         self.dirty = true;
+    }
+
+    /// Determine display width of a Unicode codepoint
+    /// Returns 0 for combining chars, 2 for wide chars (CJK), 1 otherwise
+    pub fn charWidth(c: u21) u2 {
+        // Zero-width characters
+        if (c < 0x20) return 0; // Control chars
+        if (c >= 0x0300 and c <= 0x036F) return 0; // Combining diacriticals
+        if (c >= 0x200B and c <= 0x200F) return 0; // Zero-width spaces/joiners
+        if (c >= 0xFE00 and c <= 0xFE0F) return 0; // Variation selectors
+
+        // Wide characters (CJK, fullwidth, etc.)
+        if (c >= 0x1100 and c <= 0x115F) return 2; // Hangul Jamo
+        if (c >= 0x2E80 and c <= 0x9FFF) return 2; // CJK
+        if (c >= 0xAC00 and c <= 0xD7A3) return 2; // Hangul Syllables
+        if (c >= 0xF900 and c <= 0xFAFF) return 2; // CJK Compatibility
+        if (c >= 0xFE10 and c <= 0xFE1F) return 2; // Vertical forms
+        if (c >= 0xFE30 and c <= 0xFE6F) return 2; // CJK Compatibility Forms
+        if (c >= 0xFF00 and c <= 0xFF60) return 2; // Fullwidth forms
+        if (c >= 0xFFE0 and c <= 0xFFE6) return 2; // Fullwidth symbols
+        if (c >= 0x20000 and c <= 0x2FFFF) return 2; // CJK Extension B+
+
+        return 1;
     }
 
     /// Move cursor to next line
@@ -317,13 +356,25 @@ pub const Screen = struct {
 
 /// Character cell
 pub const Cell = struct {
-    char: u8,
+    char: u21, // Unicode codepoint
     attr: Attr,
+    /// Width of this character (1 for most, 2 for wide chars, 0 for continuation)
+    width: u2,
 
     pub fn blank() Cell {
         return .{
             .char = ' ',
             .attr = Attr.default(),
+            .width = 1,
+        };
+    }
+
+    /// Create a cell for a wide character's continuation
+    pub fn wideContinuation() Cell {
+        return .{
+            .char = 0,
+            .attr = Attr.default(),
+            .width = 0,
         };
     }
 };
@@ -441,33 +492,56 @@ pub const Color = union(enum) {
 
 test "Screen basic operations" {
     const allocator = std.testing.allocator;
-    var screen = try Screen.init(allocator, 80, 24);
-    defer screen.deinit();
+    var scr = try Screen.init(allocator, 80, 24);
+    defer scr.deinit();
 
-    try std.testing.expectEqual(@as(u32, 0), screen.cursor_col);
-    try std.testing.expectEqual(@as(u32, 0), screen.cursor_row);
+    try std.testing.expectEqual(@as(u32, 0), scr.cursor_col);
+    try std.testing.expectEqual(@as(u32, 0), scr.cursor_row);
 
-    screen.putChar('H');
-    screen.putChar('i');
+    scr.putChar('H');
+    scr.putChar('i');
 
-    try std.testing.expectEqual(@as(u32, 2), screen.cursor_col);
-    try std.testing.expectEqual(@as(u8, 'H'), screen.getCell(0, 0).char);
-    try std.testing.expectEqual(@as(u8, 'i'), screen.getCell(1, 0).char);
+    try std.testing.expectEqual(@as(u32, 2), scr.cursor_col);
+    try std.testing.expectEqual(@as(u21, 'H'), scr.getCell(0, 0).char);
+    try std.testing.expectEqual(@as(u21, 'i'), scr.getCell(1, 0).char);
+}
+
+test "Screen Unicode support" {
+    const allocator = std.testing.allocator;
+    var scr = try Screen.init(allocator, 80, 24);
+    defer scr.deinit();
+
+    // Test ASCII
+    scr.putChar('A');
+    try std.testing.expectEqual(@as(u21, 'A'), scr.getCell(0, 0).char);
+    try std.testing.expectEqual(@as(u2, 1), scr.getCell(0, 0).width);
+
+    // Test accented character (single-width)
+    scr.putChar(0x00E9); // é
+    try std.testing.expectEqual(@as(u21, 0x00E9), scr.getCell(1, 0).char);
+    try std.testing.expectEqual(@as(u2, 1), scr.getCell(1, 0).width);
+
+    // Test CJK character (double-width)
+    scr.putChar(0x4E2D); // 中
+    try std.testing.expectEqual(@as(u21, 0x4E2D), scr.getCell(2, 0).char);
+    try std.testing.expectEqual(@as(u2, 2), scr.getCell(2, 0).width);
+    try std.testing.expectEqual(@as(u2, 0), scr.getCell(3, 0).width); // continuation
+    try std.testing.expectEqual(@as(u32, 4), scr.cursor_col);
 }
 
 test "Screen newline and scroll" {
     const allocator = std.testing.allocator;
-    var screen = try Screen.init(allocator, 80, 3);
-    defer screen.deinit();
+    var scr = try Screen.init(allocator, 80, 3);
+    defer scr.deinit();
 
-    screen.setCursor(0, 2);
-    screen.putChar('A');
-    screen.newline();
-    screen.putChar('B');
+    scr.setCursor(0, 2);
+    scr.putChar('A');
+    scr.newline();
+    scr.putChar('B');
 
     // A should have scrolled up
-    try std.testing.expectEqual(@as(u8, 'A'), screen.getCell(0, 1).char);
-    try std.testing.expectEqual(@as(u8, 'B'), screen.getCell(0, 2).char);
+    try std.testing.expectEqual(@as(u21, 'A'), scr.getCell(0, 1).char);
+    try std.testing.expectEqual(@as(u21, 'B'), scr.getCell(0, 2).char);
 }
 
 test "Color RGB conversion" {

@@ -1,7 +1,7 @@
 const std = @import("std");
 const screen = @import("screen");
 
-/// VT100/ANSI escape sequence parser
+/// VT100/ANSI escape sequence parser with UTF-8 support
 /// Processes input bytes and performs terminal operations on a Screen
 pub const Parser = struct {
     state: State,
@@ -10,6 +10,11 @@ pub const Parser = struct {
     intermediate: [4]u8,
     intermediate_count: u8,
     scr: *screen.Screen,
+
+    // UTF-8 decoding state
+    utf8_buf: [4]u8,
+    utf8_len: u3, // bytes collected so far
+    utf8_expected: u3, // total bytes expected
 
     const Self = @This();
 
@@ -23,6 +28,7 @@ pub const Parser = struct {
         osc_string,
         dcs_entry,
         ignore,
+        utf8, // Collecting UTF-8 continuation bytes
     };
 
     pub fn init(scr: *screen.Screen) Self {
@@ -33,6 +39,9 @@ pub const Parser = struct {
             .intermediate = [_]u8{0} ** 4,
             .intermediate_count = 0,
             .scr = scr,
+            .utf8_buf = undefined,
+            .utf8_len = 0,
+            .utf8_expected = 0,
         };
     }
 
@@ -48,6 +57,7 @@ pub const Parser = struct {
             .osc_string => self.handleOscString(c),
             .dcs_entry => self.handleDcsEntry(c),
             .ignore => self.handleIgnore(c),
+            .utf8 => self.handleUtf8(c),
         }
     }
 
@@ -74,10 +84,86 @@ pub const Parser = struct {
             // Control character
             self.handleControl(c);
         } else if (c >= 0x20 and c < 0x7F) {
-            // Printable
+            // ASCII printable
             self.scr.putChar(c);
+        } else if (c == 0x7F) {
+            // DEL - ignore
+        } else if (c >= 0xC0 and c < 0xE0) {
+            // UTF-8 2-byte sequence start
+            self.utf8_buf[0] = c;
+            self.utf8_len = 1;
+            self.utf8_expected = 2;
+            self.state = .utf8;
+        } else if (c >= 0xE0 and c < 0xF0) {
+            // UTF-8 3-byte sequence start
+            self.utf8_buf[0] = c;
+            self.utf8_len = 1;
+            self.utf8_expected = 3;
+            self.state = .utf8;
+        } else if (c >= 0xF0 and c < 0xF8) {
+            // UTF-8 4-byte sequence start
+            self.utf8_buf[0] = c;
+            self.utf8_len = 1;
+            self.utf8_expected = 4;
+            self.state = .utf8;
         }
-        // Ignore 0x7F (DEL) and high bytes for now
+        // Ignore invalid UTF-8 lead bytes (0x80-0xBF, 0xF8-0xFF)
+    }
+
+    fn handleUtf8(self: *Self, c: u8) void {
+        // Check for valid continuation byte
+        if (c >= 0x80 and c < 0xC0) {
+            self.utf8_buf[self.utf8_len] = c;
+            self.utf8_len += 1;
+
+            if (self.utf8_len == self.utf8_expected) {
+                // Complete UTF-8 sequence - decode to codepoint
+                if (self.decodeUtf8()) |codepoint| {
+                    self.scr.putChar(codepoint);
+                }
+                self.state = .ground;
+                self.utf8_len = 0;
+            }
+        } else {
+            // Invalid continuation byte - abort and re-process
+            self.state = .ground;
+            self.utf8_len = 0;
+            self.feed(c); // Re-process this byte
+        }
+    }
+
+    fn decodeUtf8(self: *Self) ?u21 {
+        const buf = self.utf8_buf[0..self.utf8_len];
+        return switch (self.utf8_expected) {
+            2 => blk: {
+                // 110xxxxx 10xxxxxx
+                const b0: u21 = buf[0] & 0x1F;
+                const b1: u21 = buf[1] & 0x3F;
+                const cp = (b0 << 6) | b1;
+                // Check for overlong encoding
+                break :blk if (cp >= 0x80) cp else null;
+            },
+            3 => blk: {
+                // 1110xxxx 10xxxxxx 10xxxxxx
+                const b0: u21 = buf[0] & 0x0F;
+                const b1: u21 = buf[1] & 0x3F;
+                const b2: u21 = buf[2] & 0x3F;
+                const cp = (b0 << 12) | (b1 << 6) | b2;
+                // Check for overlong encoding and surrogate range
+                break :blk if (cp >= 0x800 and (cp < 0xD800 or cp > 0xDFFF)) cp else null;
+            },
+            4 => blk: {
+                // 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+                const b0: u21 = buf[0] & 0x07;
+                const b1: u21 = buf[1] & 0x3F;
+                const b2: u21 = buf[2] & 0x3F;
+                const b3: u21 = buf[3] & 0x3F;
+                const cp = (b0 << 18) | (b1 << 12) | (b2 << 6) | b3;
+                // Check for overlong encoding and valid range
+                break :blk if (cp >= 0x10000 and cp <= 0x10FFFF) cp else null;
+            },
+            else => null,
+        };
     }
 
     fn handleControl(self: *Self, c: u8) void {
@@ -461,8 +547,8 @@ test "Parser basic text" {
     parser.feedSlice("Hello");
 
     try std.testing.expectEqual(@as(u32, 5), scr.cursor_col);
-    try std.testing.expectEqual(@as(u8, 'H'), scr.getCell(0, 0).char);
-    try std.testing.expectEqual(@as(u8, 'o'), scr.getCell(4, 0).char);
+    try std.testing.expectEqual(@as(u21, 'H'), scr.getCell(0, 0).char);
+    try std.testing.expectEqual(@as(u21, 'o'), scr.getCell(4, 0).char);
 }
 
 test "Parser cursor movement" {
@@ -499,7 +585,7 @@ test "Parser clear screen" {
     // Clear screen
     parser.feedSlice("\x1b[2J");
 
-    try std.testing.expectEqual(@as(u8, ' '), scr.getCell(0, 0).char);
+    try std.testing.expectEqual(@as(u21, ' '), scr.getCell(0, 0).char);
 }
 
 test "Parser colors" {
@@ -512,11 +598,73 @@ test "Parser colors" {
     // Set red foreground
     parser.feedSlice("\x1b[31mR");
     const cell = scr.getCell(0, 0);
-    try std.testing.expectEqual(@as(u8, 'R'), cell.char);
+    try std.testing.expectEqual(@as(u21, 'R'), cell.char);
     try std.testing.expectEqual(screen.Color{ .indexed = 1 }, cell.attr.fg);
 
     // Reset
     parser.feedSlice("\x1b[0mN");
     const cell2 = scr.getCell(1, 0);
     try std.testing.expectEqual(screen.Color.default_fg, cell2.attr.fg);
+}
+
+test "Parser UTF-8 2-byte" {
+    const allocator = std.testing.allocator;
+    var scr = try screen.Screen.init(allocator, 80, 24);
+    defer scr.deinit();
+
+    var parser = Parser.init(&scr);
+
+    // é = U+00E9 = 0xC3 0xA9 in UTF-8
+    parser.feedSlice("\xC3\xA9");
+
+    try std.testing.expectEqual(@as(u32, 1), scr.cursor_col);
+    try std.testing.expectEqual(@as(u21, 0x00E9), scr.getCell(0, 0).char);
+}
+
+test "Parser UTF-8 3-byte" {
+    const allocator = std.testing.allocator;
+    var scr = try screen.Screen.init(allocator, 80, 24);
+    defer scr.deinit();
+
+    var parser = Parser.init(&scr);
+
+    // 中 = U+4E2D = 0xE4 0xB8 0xAD in UTF-8
+    parser.feedSlice("\xE4\xB8\xAD");
+
+    // Wide character takes 2 columns
+    try std.testing.expectEqual(@as(u32, 2), scr.cursor_col);
+    try std.testing.expectEqual(@as(u21, 0x4E2D), scr.getCell(0, 0).char);
+    try std.testing.expectEqual(@as(u2, 2), scr.getCell(0, 0).width);
+}
+
+test "Parser UTF-8 4-byte" {
+    const allocator = std.testing.allocator;
+    var scr = try screen.Screen.init(allocator, 80, 24);
+    defer scr.deinit();
+
+    var parser = Parser.init(&scr);
+
+    // 😀 = U+1F600 = 0xF0 0x9F 0x98 0x80 in UTF-8
+    parser.feedSlice("\xF0\x9F\x98\x80");
+
+    try std.testing.expectEqual(@as(u32, 1), scr.cursor_col);
+    try std.testing.expectEqual(@as(u21, 0x1F600), scr.getCell(0, 0).char);
+}
+
+test "Parser UTF-8 mixed" {
+    const allocator = std.testing.allocator;
+    var scr = try screen.Screen.init(allocator, 80, 24);
+    defer scr.deinit();
+
+    var parser = Parser.init(&scr);
+
+    // Mix of ASCII and UTF-8: "Héllo"
+    parser.feedSlice("H\xC3\xA9llo");
+
+    try std.testing.expectEqual(@as(u32, 5), scr.cursor_col);
+    try std.testing.expectEqual(@as(u21, 'H'), scr.getCell(0, 0).char);
+    try std.testing.expectEqual(@as(u21, 0x00E9), scr.getCell(1, 0).char); // é
+    try std.testing.expectEqual(@as(u21, 'l'), scr.getCell(2, 0).char);
+    try std.testing.expectEqual(@as(u21, 'l'), scr.getCell(3, 0).char);
+    try std.testing.expectEqual(@as(u21, 'o'), scr.getCell(4, 0).char);
 }
