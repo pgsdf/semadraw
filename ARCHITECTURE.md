@@ -63,6 +63,12 @@ The reference implementation renders to a memory buffer using CPU rasterization.
 Supports anti-aliasing, all blend modes, and deterministic output.
 Used for golden image testing and headless rendering.
 
+Performance optimizations:
+* SIMD vectorization (SSE2/AVX on x86, NEON on ARM)
+* 4-pixel parallel blending operations
+* Vectorized 4x4 sub-pixel AA sampling
+* Interior/edge separation for rectangle fills
+
 ### DRM/KMS backend
 
 Direct display output without a window system.
