@@ -324,6 +324,11 @@ pub const X11Backend = struct {
         const self: *Self = @ptrCast(@alignCast(ctx));
         const start = std.time.nanoTimestamp();
 
+        // Process X11 events (keyboard, window close, etc.)
+        if (!self.processEvents()) {
+            return backend.RenderResult.failure(request.surface_id, "window closed");
+        }
+
         const buffer = self.getFramebuffer() orelse {
             return backend.RenderResult.failure(request.surface_id, "no framebuffer");
         };
