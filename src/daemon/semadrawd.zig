@@ -7,6 +7,7 @@ const surface_registry = @import("surface_registry");
 const shm = @import("shm");
 const sdcs_validator = @import("sdcs_validator");
 const compositor = @import("compositor");
+const backend = @import("backend");
 
 const log = std.log.scoped(.semadrawd);
 
@@ -22,6 +23,7 @@ pub const Config = struct {
     socket_path: []const u8 = protocol.DEFAULT_SOCKET_PATH,
     max_clients: u32 = 256,
     log_level: std.log.Level = .info,
+    backend_type: backend.BackendType = .software,
 };
 
 /// Daemon state
@@ -59,6 +61,7 @@ pub const Daemon = struct {
             .height = 1080,
             .format = .rgba8,
             .refresh_hz = 60,
+            .backend_type = self.config.backend_type,
         });
     }
 
@@ -406,12 +409,30 @@ pub fn main() !void {
                 return error.InvalidArgument;
             }
             config.socket_path = args[i];
+        } else if (std.mem.eql(u8, arg, "-b") or std.mem.eql(u8, arg, "--backend")) {
+            i += 1;
+            if (i >= args.len) {
+                log.err("missing argument for {s}", .{arg});
+                return error.InvalidArgument;
+            }
+            const backend_name = args[i];
+            if (std.mem.eql(u8, backend_name, "software")) {
+                config.backend_type = .software;
+            } else if (std.mem.eql(u8, backend_name, "headless")) {
+                config.backend_type = .headless;
+            } else if (std.mem.eql(u8, backend_name, "kms")) {
+                config.backend_type = .kms;
+            } else {
+                log.err("unknown backend: {s} (valid: software, headless, kms)", .{backend_name});
+                return error.InvalidArgument;
+            }
         } else if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
             log.info("semadrawd - SemaDraw compositor daemon", .{});
             log.info("Usage: semadrawd [OPTIONS]", .{});
             log.info("Options:", .{});
-            log.info("  -s, --socket PATH   Socket path (default: {s})", .{protocol.DEFAULT_SOCKET_PATH});
-            log.info("  -h, --help          Show this help", .{});
+            log.info("  -s, --socket PATH     Socket path (default: {s})", .{protocol.DEFAULT_SOCKET_PATH});
+            log.info("  -b, --backend TYPE    Backend type: software, headless, kms (default: software)", .{});
+            log.info("  -h, --help            Show this help", .{});
             return;
         } else {
             log.err("unknown argument: {s}", .{arg});
