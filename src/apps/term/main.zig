@@ -78,7 +78,7 @@ pub fn main() !void {
             config.socket_path = args[i];
         } else if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
             const stdout_file = std.fs.File{ .handle = posix.STDOUT_FILENO };
-            try stdout_file.writer().print(
+            stdout_file.writeAll(
                 \\semadraw-term - Terminal emulator for SemaDraw
                 \\
                 \\Usage: semadraw-term [OPTIONS]
@@ -90,7 +90,7 @@ pub fn main() !void {
                 \\  -s, --socket PATH Socket path (default: /var/run/semadraw.sock)
                 \\  -h, --help        Show this help
                 \\
-            , .{});
+            ) catch {};
             return;
         } else {
             log.err("unknown argument: {s}", .{arg});
