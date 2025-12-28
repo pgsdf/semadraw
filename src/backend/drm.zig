@@ -5,7 +5,7 @@ const backend = @import("backend");
 const log = std.log.scoped(.drm_backend);
 
 /// DRM ioctl commands
-const DRM_IOCTL_BASE = 'd';
+const DRM_IOCTL_BASE: u32 = 'd';
 
 fn DRM_IO(nr: u8) u32 {
     return @as(u32, nr) << 8 | DRM_IOCTL_BASE;
@@ -13,6 +13,17 @@ fn DRM_IO(nr: u8) u32 {
 
 fn DRM_IOWR(nr: u8, comptime T: type) u32 {
     return 0xC0000000 | (@as(u32, @sizeOf(T)) << 16) | (@as(u32, nr) << 8) | DRM_IOCTL_BASE;
+}
+
+/// Wrapper for DRM ioctl calls that handles the type conversion
+fn drm_ioctl(fd: posix.fd_t, request: u32, arg: usize) c_int {
+    // Use raw syscall to avoid c_int limitations
+    const result = std.os.linux.syscall(.ioctl, .{
+        @as(usize, @bitCast(@as(isize, fd))),
+        @as(usize, request),
+        arg,
+    });
+    return @intCast(@as(isize, @bitCast(result)));
 }
 
 const DRM_IOCTL_SET_MASTER = DRM_IO(0x1e);
@@ -176,7 +187,7 @@ const DumbBuffer = struct {
             .size = 0,
         };
 
-        const create_result = posix.system.ioctl(fd, DRM_IOCTL_MODE_CREATE_DUMB, @intFromPtr(&create_req));
+        const create_result = drm_ioctl(fd, DRM_IOCTL_MODE_CREATE_DUMB, @intFromPtr(&create_req));
         if (create_result != 0) {
             return error.CreateDumbFailed;
         }
@@ -192,11 +203,11 @@ const DumbBuffer = struct {
             .handle = create_req.handle,
         };
 
-        const fb_result = posix.system.ioctl(fd, DRM_IOCTL_MODE_ADDFB, @intFromPtr(&fb_cmd));
+        const fb_result = drm_ioctl(fd, DRM_IOCTL_MODE_ADDFB, @intFromPtr(&fb_cmd));
         if (fb_result != 0) {
             // Clean up handle
             var destroy_dumb = drm_mode_destroy_dumb{ .handle = create_req.handle };
-            _ = posix.system.ioctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, @intFromPtr(&destroy_dumb));
+            _ = drm_ioctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, @intFromPtr(&destroy_dumb));
             return error.AddFbFailed;
         }
 
@@ -207,11 +218,11 @@ const DumbBuffer = struct {
             .offset = 0,
         };
 
-        const map_result = posix.system.ioctl(fd, DRM_IOCTL_MODE_MAP_DUMB, @intFromPtr(&map_req));
+        const map_result = drm_ioctl(fd, DRM_IOCTL_MODE_MAP_DUMB, @intFromPtr(&map_req));
         if (map_result != 0) {
-            _ = posix.system.ioctl(fd, DRM_IOCTL_MODE_RMFB, @intFromPtr(&fb_cmd.fb_id));
+            _ = drm_ioctl(fd, DRM_IOCTL_MODE_RMFB, @intFromPtr(&fb_cmd.fb_id));
             var destroy_dumb = drm_mode_destroy_dumb{ .handle = create_req.handle };
-            _ = posix.system.ioctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, @intFromPtr(&destroy_dumb));
+            _ = drm_ioctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, @intFromPtr(&destroy_dumb));
             return error.MapDumbFailed;
         }
 
@@ -223,9 +234,9 @@ const DumbBuffer = struct {
             fd,
             @intCast(map_req.offset),
         ) catch {
-            _ = posix.system.ioctl(fd, DRM_IOCTL_MODE_RMFB, @intFromPtr(&fb_cmd.fb_id));
+            _ = drm_ioctl(fd, DRM_IOCTL_MODE_RMFB, @intFromPtr(&fb_cmd.fb_id));
             var destroy_dumb = drm_mode_destroy_dumb{ .handle = create_req.handle };
-            _ = posix.system.ioctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, @intFromPtr(&destroy_dumb));
+            _ = drm_ioctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, @intFromPtr(&destroy_dumb));
             return error.MmapFailed;
         };
 
@@ -243,9 +254,9 @@ const DumbBuffer = struct {
             posix.munmap(m);
             self.map = null;
         }
-        _ = posix.system.ioctl(fd, DRM_IOCTL_MODE_RMFB, @intFromPtr(&self.fb_id));
+        _ = drm_ioctl(fd, DRM_IOCTL_MODE_RMFB, @intFromPtr(&self.fb_id));
         var destroy_req = drm_mode_destroy_dumb{ .handle = self.handle };
-        _ = posix.system.ioctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, @intFromPtr(&destroy_req));
+        _ = drm_ioctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, @intFromPtr(&destroy_req));
     }
 };
 
@@ -291,7 +302,7 @@ pub const DrmBackend = struct {
         errdefer posix.close(self.fd);
 
         // Try to become master
-        _ = posix.system.ioctl(self.fd, DRM_IOCTL_SET_MASTER, @as(usize, 0));
+        _ = drm_ioctl(self.fd, DRM_IOCTL_SET_MASTER, @as(usize, 0));
 
         // Get resources and find connector
         try self.findConnector();
@@ -321,7 +332,7 @@ pub const DrmBackend = struct {
     fn findConnector(self: *Self) !void {
         // Get resource counts first
         var res = std.mem.zeroes(drm_mode_card_res);
-        var result = posix.system.ioctl(self.fd, DRM_IOCTL_MODE_GETRESOURCES, @intFromPtr(&res));
+        var result = drm_ioctl(self.fd, DRM_IOCTL_MODE_GETRESOURCES, @intFromPtr(&res));
         if (result != 0) {
             return error.GetResourcesFailed;
         }
@@ -342,7 +353,7 @@ pub const DrmBackend = struct {
         res.crtc_id_ptr = @intFromPtr(crtc_ids.ptr);
         res.encoder_id_ptr = @intFromPtr(encoder_ids.ptr);
 
-        result = posix.system.ioctl(self.fd, DRM_IOCTL_MODE_GETRESOURCES, @intFromPtr(&res));
+        result = drm_ioctl(self.fd, DRM_IOCTL_MODE_GETRESOURCES, @intFromPtr(&res));
         if (result != 0) {
             return error.GetResourcesFailed;
         }
@@ -352,7 +363,7 @@ pub const DrmBackend = struct {
             var conn = std.mem.zeroes(drm_mode_get_connector);
             conn.connector_id = conn_id;
 
-            result = posix.system.ioctl(self.fd, DRM_IOCTL_MODE_GETCONNECTOR, @intFromPtr(&conn));
+            result = drm_ioctl(self.fd, DRM_IOCTL_MODE_GETCONNECTOR, @intFromPtr(&conn));
             if (result != 0) continue;
 
             if (conn.connection != DRM_MODE_CONNECTED or conn.count_modes == 0) {
@@ -364,13 +375,13 @@ pub const DrmBackend = struct {
             defer self.allocator.free(modes);
             conn.modes_ptr = @intFromPtr(modes.ptr);
 
-            result = posix.system.ioctl(self.fd, DRM_IOCTL_MODE_GETCONNECTOR, @intFromPtr(&conn));
+            result = drm_ioctl(self.fd, DRM_IOCTL_MODE_GETCONNECTOR, @intFromPtr(&conn));
             if (result != 0) continue;
 
             // Get encoder
             var encoder = std.mem.zeroes(drm_mode_get_encoder);
             encoder.encoder_id = conn.encoder_id;
-            result = posix.system.ioctl(self.fd, DRM_IOCTL_MODE_GETENCODER, @intFromPtr(&encoder));
+            result = drm_ioctl(self.fd, DRM_IOCTL_MODE_GETENCODER, @intFromPtr(&encoder));
             if (result != 0) continue;
 
             // Found a valid connector
@@ -383,7 +394,7 @@ pub const DrmBackend = struct {
             // Save current CRTC
             var saved = std.mem.zeroes(drm_mode_crtc);
             saved.crtc_id = self.crtc_id;
-            if (posix.system.ioctl(self.fd, DRM_IOCTL_MODE_GETCRTC, @intFromPtr(&saved)) == 0) {
+            if (drm_ioctl(self.fd, DRM_IOCTL_MODE_GETCRTC, @intFromPtr(&saved)) == 0) {
                 self.saved_crtc = saved;
             }
 
@@ -403,7 +414,7 @@ pub const DrmBackend = struct {
     pub fn deinit(self: *Self) void {
         // Restore saved CRTC
         if (self.saved_crtc) |*saved| {
-            _ = posix.system.ioctl(self.fd, DRM_IOCTL_MODE_SETCRTC, @intFromPtr(saved));
+            _ = drm_ioctl(self.fd, DRM_IOCTL_MODE_SETCRTC, @intFromPtr(saved));
         }
 
         // Destroy buffers
@@ -415,7 +426,7 @@ pub const DrmBackend = struct {
         }
 
         // Drop master and close
-        _ = posix.system.ioctl(self.fd, DRM_IOCTL_DROP_MASTER, 0);
+        _ = drm_ioctl(self.fd, DRM_IOCTL_DROP_MASTER, @as(usize, 0));
         if (self.fd >= 0) {
             posix.close(self.fd);
         }
@@ -452,7 +463,7 @@ pub const DrmBackend = struct {
             .mode = self.mode,
         };
 
-        const result = posix.system.ioctl(self.fd, DRM_IOCTL_MODE_SETCRTC, @intFromPtr(&crtc));
+        const result = drm_ioctl(self.fd, DRM_IOCTL_MODE_SETCRTC, @intFromPtr(&crtc));
         if (result != 0) {
             return error.SetCrtcFailed;
         }
@@ -482,7 +493,7 @@ pub const DrmBackend = struct {
             .user_data = self.frame_count,
         };
 
-        const result = posix.system.ioctl(self.fd, DRM_IOCTL_MODE_PAGE_FLIP, @intFromPtr(&flip_req));
+        const result = drm_ioctl(self.fd, DRM_IOCTL_MODE_PAGE_FLIP, @intFromPtr(&flip_req));
         if (result != 0) {
             return error.PageFlipFailed;
         }
