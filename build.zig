@@ -419,6 +419,22 @@ pub fn build(b: *std.Build) void {
     // Add x11 import to backend module for createBackend
     backend_mod.addImport("x11", x11_backend_mod);
 
+    // Vulkan backend module
+    const vulkan_backend_mod = b.createModule(.{
+        .root_source_file = b.path("src/backend/vulkan.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "backend", .module = backend_mod },
+        },
+    });
+    vulkan_backend_mod.link_libc = true;
+    vulkan_backend_mod.linkSystemLibrary("vulkan", .{});
+    vulkan_backend_mod.linkSystemLibrary("X11", .{});
+
+    // Add vulkan import to backend module for createBackend
+    backend_mod.addImport("vulkan", vulkan_backend_mod);
+
     const backend_process_mod = b.createModule(.{
         .root_source_file = b.path("src/backend/process.zig"),
         .target = target,
