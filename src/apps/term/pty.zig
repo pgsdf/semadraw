@@ -2,11 +2,22 @@ const std = @import("std");
 const posix = std.posix;
 
 // Linux-specific ioctl constants for PTY operations
-// Use c_ulong since ioctl request parameter is unsigned long on Linux
 const TIOCGPTN: c_ulong = 0x80045430; // Get PTY number
 const TIOCSPTLCK: c_ulong = 0x40045431; // Lock/unlock PTY
 const TIOCSWINSZ: c_ulong = 0x5414; // Set window size
 const TIOCSCTTY: c_ulong = 0x540E; // Set controlling terminal
+
+// Import Linux ioctl syscall
+const linux = std.os.linux;
+
+/// Linux ioctl wrapper using raw syscall
+fn ioctl(fd: i32, request: c_ulong, arg: usize) isize {
+    return @bitCast(linux.syscall(.ioctl, .{
+        @as(usize, @bitCast(@as(isize, fd))),
+        request,
+        arg,
+    }));
+}
 
 /// Pseudo-terminal handler for shell communication
 pub const Pty = struct {
@@ -35,7 +46,7 @@ pub const Pty = struct {
             .xpixel = 0,
             .ypixel = 0,
         };
-        _ = linuxIoctl(master_fd, TIOCSWINSZ, @intFromPtr(&ws));
+        _ = ioctl(master_fd, TIOCSWINSZ, @intFromPtr(&ws));
 
         // Fork
         const pid = try posix.fork();
@@ -54,7 +65,7 @@ pub const Pty = struct {
             };
 
             // Set as controlling terminal
-            _ = linuxIoctl(slave_fd, TIOCSCTTY, 0);
+            _ = ioctl(slave_fd, TIOCSCTTY, 0);
 
             // Duplicate to stdin/stdout/stderr
             posix.dup2(slave_fd, 0) catch posix.exit(1);
@@ -66,7 +77,7 @@ pub const Pty = struct {
             }
 
             // Set window size on slave
-            _ = linuxIoctl(0, TIOCSWINSZ, @intFromPtr(&ws));
+            _ = ioctl(0, TIOCSWINSZ, @intFromPtr(&ws));
 
             // Execute shell
             const shell_path = shell orelse getDefaultShell();
@@ -142,7 +153,7 @@ pub const Pty = struct {
             .xpixel = 0,
             .ypixel = 0,
         };
-        _ = linuxIoctl(self.master_fd, TIOCSWINSZ, @intFromPtr(&ws));
+        _ = ioctl(self.master_fd, TIOCSWINSZ, @intFromPtr(&ws));
     }
 
     /// Check if child is still running
@@ -162,24 +173,10 @@ fn openPtyMaster() !posix.fd_t {
 fn ptsname(fd: posix.fd_t, buf: []u8) !void {
     // Use ioctl to get slave PTY number
     var n: c_uint = 0;
-    const rc = linuxIoctl(fd, TIOCGPTN, @intFromPtr(&n));
+    const rc = ioctl(fd, TIOCGPTN, @intFromPtr(&n));
     if (rc < 0) return error.PtsnameFailed;
 
     _ = std.fmt.bufPrint(buf, "/dev/pts/{d}\x00", .{n}) catch return error.PtsnameFailed;
-}
-
-// Linux ioctl syscall wrapper
-fn linuxIoctl(fd: posix.fd_t, request: c_ulong, arg: usize) c_int {
-    const result = std.os.linux.syscall(.ioctl, .{
-        @as(usize, @intCast(fd)),
-        request,
-        arg,
-    });
-    // Convert to signed for error checking
-    if (result > @as(usize, @bitCast(@as(isize, -4096)))) {
-        return -1;
-    }
-    return @intCast(result);
 }
 
 fn grantpt(fd: posix.fd_t) !void {
@@ -189,7 +186,7 @@ fn grantpt(fd: posix.fd_t) !void {
 
 fn unlockpt(fd: posix.fd_t) !void {
     var unlock: c_int = 0;
-    const rc = linuxIoctl(fd, TIOCSPTLCK, @intFromPtr(&unlock));
+    const rc = ioctl(fd, TIOCSPTLCK, @intFromPtr(&unlock));
     if (rc < 0) return error.UnlockptFailed;
 }
 
