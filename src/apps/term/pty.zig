@@ -1,14 +1,26 @@
 const std = @import("std");
 const posix = std.posix;
+const builtin = @import("builtin");
 
-// Linux-specific ioctl constants for PTY operations
-const TIOCGPTN: c_ulong = 0x80045430; // Get PTY number
-const TIOCSPTLCK: c_ulong = 0x40045431; // Lock/unlock PTY
-const TIOCSWINSZ: c_ulong = 0x5414; // Set window size
-const TIOCSCTTY: c_ulong = 0x540E; // Set controlling terminal
+// Platform-specific ioctl constants
+const TIOCSWINSZ: c_ulong = switch (builtin.os.tag) {
+    .freebsd => 0x80087467,
+    .linux => 0x5414,
+    else => 0x5414, // Default to Linux
+};
 
-// Direct ioctl declaration from libc
+const TIOCSCTTY: c_ulong = switch (builtin.os.tag) {
+    .freebsd => 0x20007461,
+    .linux => 0x540E,
+    else => 0x540E, // Default to Linux
+};
+
+// Libc function declarations
 extern "c" fn ioctl(fd: c_int, request: c_ulong, ...) c_int;
+extern "c" fn posix_openpt(flags: c_int) c_int;
+extern "c" fn grantpt(fd: c_int) c_int;
+extern "c" fn unlockpt(fd: c_int) c_int;
+extern "c" fn ptsname(fd: c_int) ?[*:0]const u8;
 
 /// Pseudo-terminal handler for shell communication
 pub const Pty = struct {
@@ -20,15 +32,14 @@ pub const Pty = struct {
 
     /// Spawn a shell with a pty
     pub fn spawn(shell: ?[]const u8, cols: u16, rows: u16) !Self {
-        // Open pty master
+        // Open pty master using posix_openpt
         const master_fd = try openPtyMaster();
         errdefer posix.close(master_fd);
 
-        // Get slave name and unlock
-        var slave_name_buf: [256]u8 = undefined;
-        try ptsname(master_fd, &slave_name_buf);
-        try grantpt(master_fd);
-        try unlockpt(master_fd);
+        // Get slave name and unlock using libc functions
+        const slave_name = ptsname(master_fd) orelse return error.PtsnameFailed;
+        if (grantpt(master_fd) < 0) return error.GrantptFailed;
+        if (unlockpt(master_fd) < 0) return error.UnlockptFailed;
 
         // Set window size
         var ws = std.posix.winsize{
@@ -50,7 +61,6 @@ pub const Pty = struct {
             _ = std.c.setsid();
 
             // Open slave pty
-            const slave_name = std.mem.sliceTo(&slave_name_buf, 0);
             const slave_fd = posix.open(slave_name, .{ .ACCMODE = .RDWR }, 0) catch {
                 posix.exit(1);
             };
@@ -155,30 +165,19 @@ pub const Pty = struct {
 };
 
 fn openPtyMaster() !posix.fd_t {
-    const fd = posix.open("/dev/ptmx", .{ .ACCMODE = .RDWR, .NOCTTY = true, .CLOEXEC = true }, 0) catch {
-        return error.OpenPtyFailed;
+    // Use posix_openpt for portability
+    const O_RDWR = 0x0002;
+    const O_NOCTTY = switch (builtin.os.tag) {
+        .freebsd => 0x8000,
+        .linux => 0x100,
+        else => 0x100,
     };
+
+    const fd = posix_openpt(O_RDWR | O_NOCTTY);
+    if (fd < 0) {
+        return error.OpenPtyFailed;
+    }
     return fd;
-}
-
-fn ptsname(fd: posix.fd_t, buf: []u8) !void {
-    // Use ioctl to get slave PTY number
-    var n: c_uint = 0;
-    const rc = ioctl(fd, TIOCGPTN, @intFromPtr(&n));
-    if (rc < 0) return error.PtsnameFailed;
-
-    _ = std.fmt.bufPrint(buf, "/dev/pts/{d}\x00", .{n}) catch return error.PtsnameFailed;
-}
-
-fn grantpt(fd: posix.fd_t) !void {
-    // On Linux, grantpt is typically a no-op with devpts
-    _ = fd;
-}
-
-fn unlockpt(fd: posix.fd_t) !void {
-    var unlock: c_int = 0;
-    const rc = ioctl(fd, TIOCSPTLCK, @intFromPtr(&unlock));
-    if (rc < 0) return error.UnlockptFailed;
 }
 
 fn getDefaultShell() []const u8 {
