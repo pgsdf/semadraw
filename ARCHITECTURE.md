@@ -98,6 +98,22 @@ Suitable for:
 * Desktop integration
 * Existing X11 environments
 
+### Vulkan backend
+
+GPU-accelerated rendering with Vulkan API.
+Uses X11 surface for presentation:
+* Vulkan instance with VK_KHR_xlib_surface extension
+* Physical device selection (prefers discrete GPUs)
+* Swapchain with mailbox present mode (low latency)
+* Command buffer recording and submission
+* Fence and semaphore synchronization
+* Keyboard and window close event handling
+
+Suitable for:
+* High-performance rendering
+* GPU-accelerated compositing
+* Systems with Vulkan-capable GPUs
+
 ## Key property
 
 No backend specific concept appears in the public API.
