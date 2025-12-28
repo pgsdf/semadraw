@@ -74,3 +74,74 @@ pub const VTable = struct {
 Current backends:
 * `software` - CPU-based reference renderer
 * `headless` - No output, for testing
+
+## Client Library
+
+The `semadraw_client` library provides a high-level API for applications.
+
+### Connection
+
+```zig
+const client = @import("semadraw_client");
+
+// Connect to daemon
+var conn = try client.Connection.connect(allocator);
+defer conn.disconnect();
+
+// Create a surface
+const surface_id = try conn.createSurface(800, 600);
+
+// Set visibility and commit
+try conn.setVisible(surface_id, true);
+try conn.commit(surface_id);
+
+// Poll for events
+while (try conn.poll()) |event| {
+    switch (event) {
+        .frame_complete => |fc| {
+            // Frame was presented
+        },
+        .disconnected => break,
+        else => {},
+    }
+}
+```
+
+### Surface Wrapper
+
+```zig
+const client = @import("semadraw_client");
+
+var conn = try client.Connection.connect(allocator);
+defer conn.disconnect();
+
+// Create surface with wrapper
+var surface = try client.Surface.create(conn, 800, 600);
+defer surface.destroy();
+
+// Set frame callback for animation
+surface.setFrameCallback(struct {
+    fn callback(s: *client.Surface, frame: u64, ts: u64) void {
+        // Render next frame
+        _ = s;
+        _ = frame;
+        _ = ts;
+    }
+}.callback);
+
+try surface.show();
+try surface.commit();
+```
+
+### Surface Manager
+
+```zig
+var manager = client.SurfaceManager.init(conn);
+defer manager.deinit();
+
+var surface1 = try manager.createSurface(400, 300);
+var surface2 = try manager.createSurface(400, 300);
+
+// Process events and dispatch to surfaces
+try manager.processEvents();
+```

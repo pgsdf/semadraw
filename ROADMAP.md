@@ -31,20 +31,18 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 * Deterministic anti-aliasing (SET_ANTIALIAS opcode, 4x4 sub-pixel coverage sampling)
 * AA test suite (sdcs_make_aa test generator with golden hash verification)
 
-## In Progress
-
 ### semadrawd daemon
-* IPC protocol (Unix domain socket with message framing) ✓
-* Client session management with resource limits ✓
-* Surface registry (creation, ownership, z-ordering) ✓
-* Shared memory buffer attachment ✓
-* SDCS validation before execution ✓
-* Backend abstraction layer (vtable-based interface) ✓
-* Software renderer backend ✓
-* Process isolation for backends (fork-based) ✓
-* Compositor with damage tracking ✓
-* Frame scheduler with vsync timing ✓
-* Client library (Connection wrapper) - pending
+* IPC protocol (Unix domain socket with message framing)
+* Client session management with resource limits
+* Surface registry (creation, ownership, z-ordering)
+* Shared memory buffer attachment
+* SDCS validation before execution
+* Backend abstraction layer (vtable-based interface)
+* Software renderer backend
+* Process isolation for backends (fork-based)
+* Compositor with damage tracking
+* Frame scheduler with vsync timing
+* Client library (Connection and Surface wrappers)
 
 ## Next
 
