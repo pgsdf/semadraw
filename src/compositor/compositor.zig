@@ -248,6 +248,15 @@ pub const Compositor = struct {
     pub fn getTimeUntilVsync(self: *const Self) i64 {
         return self.scheduler.getTimeUntilDeadline();
     }
+
+    /// Poll backend for events (keyboard, window close, etc.)
+    /// Returns false if backend should stop (e.g., X11 window closed)
+    pub fn pollEvents(self: *Self) bool {
+        if (self.output) |*out| {
+            return out.be.pollEvents();
+        }
+        return true;
+    }
 };
 
 /// Result of a composite operation

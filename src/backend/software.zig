@@ -114,6 +114,11 @@ pub const SoftwareBackend = struct {
         });
     }
 
+    fn pollEventsImpl(_: *anyopaque) bool {
+        // Software backend has no events to process
+        return true;
+    }
+
     fn deinitImpl(ctx: *anyopaque) void {
         const self: *Self = @ptrCast(@alignCast(ctx));
         self.deinit();
@@ -289,6 +294,7 @@ pub const SoftwareBackend = struct {
         .render = renderImpl,
         .getPixels = getPixelsImpl,
         .resize = resizeImpl,
+        .pollEvents = pollEventsImpl,
         .deinit = deinitImpl,
     };
 
