@@ -74,6 +74,7 @@ pub const VTable = struct {
 Current backends:
 * `software` - CPU-based reference renderer
 * `headless` - No output, for testing
+* `kms` - DRM/KMS direct display output (Linux/FreeBSD)
 
 ## Client Library
 

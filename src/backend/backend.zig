@@ -137,13 +137,17 @@ pub const BackendType = enum(u8) {
 pub fn createBackend(allocator: std.mem.Allocator, backend_type: BackendType) !Backend {
     switch (backend_type) {
         .software => {
-            const software = @import("software.zig");
+            const software = @import("software");
             return software.create(allocator);
         },
         .headless => {
             // Headless is just software without display
-            const software = @import("software.zig");
+            const software = @import("software");
             return software.create(allocator);
+        },
+        .kms => {
+            const drm = @import("drm");
+            return drm.create(allocator);
         },
         else => return error.NotSupported,
     }

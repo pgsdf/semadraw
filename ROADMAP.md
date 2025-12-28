@@ -43,11 +43,11 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 * Compositor with damage tracking
 * Frame scheduler with vsync timing
 * Client library (Connection and Surface wrappers)
+* DRM/KMS presentation backend (direct framebuffer output)
 
 ## Next
 
 ### Backends
-* DRM KMS presentation backend (direct framebuffer output)
 * Vulkan backend (GPU-accelerated rendering)
 
 ### Performance
