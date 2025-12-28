@@ -47,11 +47,9 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 * SIMD vectorization for rasterization (SSE/AVX, NEON)
 * X11 backend for windowed display
 * Vulkan backend (GPU-accelerated rendering with X11 presentation)
+* Wayland backend for windowed display
 
 ## Next
-
-### Backends
-* Wayland backend for windowed display
 
 ### Integration
 * Remote transport (SDCS streaming over network)

@@ -124,6 +124,7 @@ Available backends:
 * `kms` - DRM/KMS direct framebuffer output (Linux/FreeBSD)
 * `x11` - X11 windowed output
 * `vulkan` - GPU-accelerated Vulkan renderer with X11 presentation
+* `wayland` - Wayland windowed output with shared memory
 
 The daemon listens on `/var/run/semadraw/semadraw.sock` by default.
 
