@@ -565,6 +565,66 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(client_lib);
 
+    // Terminal emulator modules
+    const term_font_mod = b.createModule(.{
+        .root_source_file = b.path("src/apps/term/font.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const term_screen_mod = b.createModule(.{
+        .root_source_file = b.path("src/apps/term/screen.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const term_vt100_mod = b.createModule(.{
+        .root_source_file = b.path("src/apps/term/vt100.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "screen", .module = term_screen_mod },
+        },
+    });
+
+    const term_pty_mod = b.createModule(.{
+        .root_source_file = b.path("src/apps/term/pty.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const term_renderer_mod = b.createModule(.{
+        .root_source_file = b.path("src/apps/term/renderer.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "semadraw", .module = semadraw_mod },
+            .{ .name = "screen", .module = term_screen_mod },
+            .{ .name = "font", .module = term_font_mod },
+        },
+    });
+
+    // semadraw-term terminal emulator
+    const semadraw_term = b.addExecutable(.{
+        .name = "semadraw-term",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/apps/term/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "semadraw_client", .module = client_mod },
+                .{ .name = "semadraw", .module = semadraw_mod },
+                .{ .name = "screen", .module = term_screen_mod },
+                .{ .name = "vt100", .module = term_vt100_mod },
+                .{ .name = "pty", .module = term_pty_mod },
+                .{ .name = "renderer", .module = term_renderer_mod },
+                .{ .name = "font", .module = term_font_mod },
+            },
+        }),
+    });
+    semadraw_term.root_module.link_libc = true;
+    b.installArtifact(semadraw_term);
+
     // Unit tests
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
