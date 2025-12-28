@@ -199,6 +199,23 @@ pub const Connection = struct {
         try self.sendMessage(.commit, &payload);
     }
 
+    /// Attach buffer data inline (SDCS data sent in message payload)
+    pub fn attachBufferInline(self: *Self, surface_id: protocol.SurfaceId, sdcs_data: []const u8) !void {
+        if (self.state != .connected) return error.NotConnected;
+
+        // Create message with header + surface_id + data
+        const header_size = 4; // surface_id
+        const msg_buf = try self.allocator.alloc(u8, header_size + sdcs_data.len);
+        defer self.allocator.free(msg_buf);
+
+        // Write surface_id
+        std.mem.writeInt(u32, msg_buf[0..4], surface_id, .little);
+        // Copy SDCS data
+        @memcpy(msg_buf[4..], sdcs_data);
+
+        try self.sendMessage(.attach_buffer_inline, msg_buf);
+    }
+
     /// Set surface visibility
     pub fn setVisible(self: *Self, surface_id: protocol.SurfaceId, visible: bool) !void {
         if (self.state != .connected) return error.NotConnected;
