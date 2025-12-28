@@ -400,7 +400,7 @@ pub const Daemon = struct {
         }
 
         // Attach to surface
-        self.surfaces.attachBuffer(msg.surface_id, session.sdcs_buffer.?) catch {
+        self.surfaces.attachInlineBuffer(msg.surface_id, session.sdcs_buffer.?) catch {
             try self.sendRemoteError(session, .invalid_surface, msg.surface_id);
             return;
         };
