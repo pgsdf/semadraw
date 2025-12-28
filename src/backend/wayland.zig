@@ -478,8 +478,8 @@ pub const WaylandBackend = struct {
     // ========================================================================
 
     const RegistryListener = extern struct {
-        global: *const fn (?*anyopaque, ?*anyopaque, u32, [*:0]const u8, u32) callconv(.C) void,
-        global_remove: *const fn (?*anyopaque, ?*anyopaque, u32) callconv(.C) void,
+        global: *const fn (?*anyopaque, ?*anyopaque, u32, [*:0]const u8, u32) callconv(.c) void,
+        global_remove: *const fn (?*anyopaque, ?*anyopaque, u32) callconv(.c) void,
     };
 
     const registry_listener = RegistryListener{
@@ -487,7 +487,7 @@ pub const WaylandBackend = struct {
         .global_remove = registryGlobalRemove,
     };
 
-    fn registryGlobal(data: ?*anyopaque, registry: ?*anyopaque, name: u32, interface: [*:0]const u8, version: u32) callconv(.C) void {
+    fn registryGlobal(data: ?*anyopaque, registry: ?*anyopaque, name: u32, interface: [*:0]const u8, version: u32) callconv(.c) void {
         const self: *Self = @ptrCast(@alignCast(data));
         _ = version;
 
@@ -510,17 +510,17 @@ pub const WaylandBackend = struct {
         }
     }
 
-    fn registryGlobalRemove(_: ?*anyopaque, _: ?*anyopaque, _: u32) callconv(.C) void {}
+    fn registryGlobalRemove(_: ?*anyopaque, _: ?*anyopaque, _: u32) callconv(.c) void {}
 
     const ShmListener = extern struct {
-        format: *const fn (?*anyopaque, ?*anyopaque, u32) callconv(.C) void,
+        format: *const fn (?*anyopaque, ?*anyopaque, u32) callconv(.c) void,
     };
 
     const shm_listener = ShmListener{
         .format = shmFormat,
     };
 
-    fn shmFormat(data: ?*anyopaque, _: ?*anyopaque, format: u32) callconv(.C) void {
+    fn shmFormat(data: ?*anyopaque, _: ?*anyopaque, format: u32) callconv(.c) void {
         const self: *Self = @ptrCast(@alignCast(data));
         if (format == WL_SHM_FORMAT_ARGB8888 or format == WL_SHM_FORMAT_XRGB8888) {
             self.shm_format = format;
@@ -529,27 +529,27 @@ pub const WaylandBackend = struct {
     }
 
     const XdgWmBaseListener = extern struct {
-        ping: *const fn (?*anyopaque, ?*anyopaque, u32) callconv(.C) void,
+        ping: *const fn (?*anyopaque, ?*anyopaque, u32) callconv(.c) void,
     };
 
     const xdg_wm_base_listener = XdgWmBaseListener{
         .ping = xdgWmBasePing,
     };
 
-    fn xdgWmBasePing(_: ?*anyopaque, wm_base: ?*anyopaque, serial: u32) callconv(.C) void {
+    fn xdgWmBasePing(_: ?*anyopaque, wm_base: ?*anyopaque, serial: u32) callconv(.c) void {
         // xdg_wm_base.pong (opcode 0)
         _ = wl_proxy_marshal_flags(wm_base.?, 0, null, 1, 0, serial);
     }
 
     const XdgSurfaceListener = extern struct {
-        configure: *const fn (?*anyopaque, ?*anyopaque, u32) callconv(.C) void,
+        configure: *const fn (?*anyopaque, ?*anyopaque, u32) callconv(.c) void,
     };
 
     const xdg_surface_listener = XdgSurfaceListener{
         .configure = xdgSurfaceConfigure,
     };
 
-    fn xdgSurfaceConfigure(data: ?*anyopaque, xdg_surface: ?*anyopaque, serial: u32) callconv(.C) void {
+    fn xdgSurfaceConfigure(data: ?*anyopaque, xdg_surface: ?*anyopaque, serial: u32) callconv(.c) void {
         const self: *Self = @ptrCast(@alignCast(data));
         // xdg_surface.ack_configure (opcode 4)
         _ = wl_proxy_marshal_flags(xdg_surface.?, 4, null, 1, 0, serial);
@@ -557,8 +557,8 @@ pub const WaylandBackend = struct {
     }
 
     const XdgToplevelListener = extern struct {
-        configure: *const fn (?*anyopaque, ?*anyopaque, i32, i32, ?*anyopaque) callconv(.C) void,
-        close: *const fn (?*anyopaque, ?*anyopaque) callconv(.C) void,
+        configure: *const fn (?*anyopaque, ?*anyopaque, i32, i32, ?*anyopaque) callconv(.c) void,
+        close: *const fn (?*anyopaque, ?*anyopaque) callconv(.c) void,
     };
 
     const xdg_toplevel_listener = XdgToplevelListener{
@@ -566,7 +566,7 @@ pub const WaylandBackend = struct {
         .close = xdgToplevelClose,
     };
 
-    fn xdgToplevelConfigure(data: ?*anyopaque, _: ?*anyopaque, width: i32, height: i32, _: ?*anyopaque) callconv(.C) void {
+    fn xdgToplevelConfigure(data: ?*anyopaque, _: ?*anyopaque, width: i32, height: i32, _: ?*anyopaque) callconv(.c) void {
         const self: *Self = @ptrCast(@alignCast(data));
         if (width > 0 and height > 0) {
             if (@as(u32, @intCast(width)) != self.width or @as(u32, @intCast(height)) != self.height) {
@@ -578,15 +578,15 @@ pub const WaylandBackend = struct {
         }
     }
 
-    fn xdgToplevelClose(data: ?*anyopaque, _: ?*anyopaque) callconv(.C) void {
+    fn xdgToplevelClose(data: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
         const self: *Self = @ptrCast(@alignCast(data));
         log.info("window close requested", .{});
         self.closed = true;
     }
 
     const SeatListener = extern struct {
-        capabilities: *const fn (?*anyopaque, ?*anyopaque, u32) callconv(.C) void,
-        name: ?*const fn (?*anyopaque, ?*anyopaque, [*:0]const u8) callconv(.C) void,
+        capabilities: *const fn (?*anyopaque, ?*anyopaque, u32) callconv(.c) void,
+        name: ?*const fn (?*anyopaque, ?*anyopaque, [*:0]const u8) callconv(.c) void,
     };
 
     const seat_listener = SeatListener{
@@ -594,7 +594,7 @@ pub const WaylandBackend = struct {
         .name = null,
     };
 
-    fn seatCapabilities(data: ?*anyopaque, seat: ?*anyopaque, caps: u32) callconv(.C) void {
+    fn seatCapabilities(data: ?*anyopaque, seat: ?*anyopaque, caps: u32) callconv(.c) void {
         const self: *Self = @ptrCast(@alignCast(data));
 
         if (caps & WL_SEAT_CAPABILITY_KEYBOARD != 0) {
@@ -614,12 +614,12 @@ pub const WaylandBackend = struct {
     }
 
     const KeyboardListener = extern struct {
-        keymap: *const fn (?*anyopaque, ?*anyopaque, u32, i32, u32) callconv(.C) void,
-        enter: *const fn (?*anyopaque, ?*anyopaque, u32, ?*anyopaque, ?*anyopaque) callconv(.C) void,
-        leave: *const fn (?*anyopaque, ?*anyopaque, u32, ?*anyopaque) callconv(.C) void,
-        key: *const fn (?*anyopaque, ?*anyopaque, u32, u32, u32, u32) callconv(.C) void,
-        modifiers: *const fn (?*anyopaque, ?*anyopaque, u32, u32, u32, u32, u32) callconv(.C) void,
-        repeat_info: ?*const fn (?*anyopaque, ?*anyopaque, i32, i32) callconv(.C) void,
+        keymap: *const fn (?*anyopaque, ?*anyopaque, u32, i32, u32) callconv(.c) void,
+        enter: *const fn (?*anyopaque, ?*anyopaque, u32, ?*anyopaque, ?*anyopaque) callconv(.c) void,
+        leave: *const fn (?*anyopaque, ?*anyopaque, u32, ?*anyopaque) callconv(.c) void,
+        key: *const fn (?*anyopaque, ?*anyopaque, u32, u32, u32, u32) callconv(.c) void,
+        modifiers: *const fn (?*anyopaque, ?*anyopaque, u32, u32, u32, u32, u32) callconv(.c) void,
+        repeat_info: ?*const fn (?*anyopaque, ?*anyopaque, i32, i32) callconv(.c) void,
     };
 
     const keyboard_listener = KeyboardListener{
@@ -631,11 +631,11 @@ pub const WaylandBackend = struct {
         .repeat_info = null,
     };
 
-    fn keyboardKeymap(_: ?*anyopaque, _: ?*anyopaque, _: u32, _: i32, _: u32) callconv(.C) void {}
-    fn keyboardEnter(_: ?*anyopaque, _: ?*anyopaque, _: u32, _: ?*anyopaque, _: ?*anyopaque) callconv(.C) void {}
-    fn keyboardLeave(_: ?*anyopaque, _: ?*anyopaque, _: u32, _: ?*anyopaque) callconv(.C) void {}
+    fn keyboardKeymap(_: ?*anyopaque, _: ?*anyopaque, _: u32, _: i32, _: u32) callconv(.c) void {}
+    fn keyboardEnter(_: ?*anyopaque, _: ?*anyopaque, _: u32, _: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {}
+    fn keyboardLeave(_: ?*anyopaque, _: ?*anyopaque, _: u32, _: ?*anyopaque) callconv(.c) void {}
 
-    fn keyboardKey(data: ?*anyopaque, _: ?*anyopaque, _: u32, _: u32, key: u32, state: u32) callconv(.C) void {
+    fn keyboardKey(data: ?*anyopaque, _: ?*anyopaque, _: u32, _: u32, key: u32, state: u32) callconv(.c) void {
         const self: *Self = @ptrCast(@alignCast(data));
 
         // Key pressed
@@ -648,7 +648,7 @@ pub const WaylandBackend = struct {
         }
     }
 
-    fn keyboardModifiers(data: ?*anyopaque, _: ?*anyopaque, _: u32, mods_depressed: u32, _: u32, _: u32, _: u32) callconv(.C) void {
+    fn keyboardModifiers(data: ?*anyopaque, _: ?*anyopaque, _: u32, mods_depressed: u32, _: u32, _: u32, _: u32) callconv(.c) void {
         const self: *Self = @ptrCast(@alignCast(data));
         // Check for Ctrl (bit 2 in typical xkb layouts)
         self.ctrl_held = (mods_depressed & 4) != 0;
