@@ -391,7 +391,8 @@ pub const Daemon = struct {
         @memcpy(session.sdcs_buffer.?, payload.?[protocol.AttachBufferInlineMsg.HEADER_SIZE..expected_len]);
 
         // Validate SDCS
-        if (!sdcs_validator.validate(session.sdcs_buffer.?)) {
+        const validation = sdcs_validator.SdcsValidator.validateBuffer(session.sdcs_buffer.?);
+        if (!validation.valid) {
             try self.sendRemoteError(session, .validation_failed, msg.surface_id);
             self.allocator.free(session.sdcs_buffer.?);
             session.sdcs_buffer = null;
