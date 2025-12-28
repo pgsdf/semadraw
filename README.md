@@ -46,20 +46,12 @@ zig build test
 
 Tools produced:
 
-1. sdcs_make_test
-2. sdcs_make_transform
-3. sdcs_make_clip
-4. sdcs_make_blend
-5. sdcs_make_overlap
-6. sdcs_make_fractional
-7. sdcs_make_stroke
-8. sdcs_make_line
-9. sdcs_make_join
-10. sdcs_make_join_round
-11. sdcs_make_cap
-12. sdcs_make_cap_round
-13. sdcs_dump
-14. sdcs_replay
+1. semadrawd - Compositor daemon
+2. sdcs_dump - SDCS file inspector
+3. sdcs_replay - Software renderer
+4. sdcs_make_test - Test file generator
+5. sdcs_make_demo - Demo showcase generator
+6. sdcs_make_* - Various test generators (transform, clip, blend, stroke, etc.)
 
 Rendering options supported by the encoder and replay tool:
 
@@ -95,9 +87,17 @@ This runs unit tests, malformed input validation, golden image tests, and determ
 
 ## Status
 
-Early implementation.
+Active development.
+
 The SDCS format is executable and replayable.
 The software backend provides deterministic reference behavior.
+
+The semadrawd compositor daemon is functional with:
+* Unix socket IPC with binary protocol
+* Client session management with resource limits
+* Surface registry with z-ordering
+* Damage tracking and frame scheduling
+* Backend abstraction with process isolation
 
 ## License
 
