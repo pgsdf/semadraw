@@ -217,7 +217,10 @@ pub const SurfaceRegistry = struct {
     /// Set surface visibility
     pub fn setVisible(self: *SurfaceRegistry, id: protocol.SurfaceId, visible: bool) !void {
         const surface = self.getSurface(id) orelse return error.SurfaceNotFound;
-        surface.visible = visible;
+        if (surface.visible != visible) {
+            surface.visible = visible;
+            self.order_dirty = true; // Visibility affects composition order
+        }
     }
 
     /// Set surface z-order
