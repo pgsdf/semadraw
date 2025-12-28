@@ -231,7 +231,10 @@ pub const X11Backend = struct {
                 c.KeyPress => {
                     const key_event = event.xkey;
                     const keysym = c.XLookupKeysym(@constCast(&key_event), 0);
-                    if (keysym == c.XK_Escape or keysym == c.XK_q) {
+                    // Ctrl+Q to quit (less likely to conflict with applications)
+                    const ctrl_held = (key_event.state & c.ControlMask) != 0;
+                    if (ctrl_held and (keysym == c.XK_q or keysym == c.XK_Q)) {
+                        log.info("Ctrl+Q pressed, closing window", .{});
                         self.closed = true;
                         return false;
                     }
