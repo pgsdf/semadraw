@@ -61,7 +61,8 @@ pub const Pty = struct {
             _ = std.c.setsid();
 
             // Open slave pty
-            const slave_fd = posix.open(slave_name, .{ .ACCMODE = .RDWR }, 0) catch {
+            const slave_name_slice = std.mem.sliceTo(slave_name, 0);
+            const slave_fd = posix.open(slave_name_slice, .{ .ACCMODE = .RDWR }, 0) catch {
                 posix.exit(1);
             };
 
