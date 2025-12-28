@@ -195,8 +195,8 @@ const DumbBuffer = struct {
         const fb_result = posix.system.ioctl(fd, DRM_IOCTL_MODE_ADDFB, @intFromPtr(&fb_cmd));
         if (fb_result != 0) {
             // Clean up handle
-            var destroy = drm_mode_destroy_dumb{ .handle = create_req.handle };
-            _ = posix.system.ioctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, @intFromPtr(&destroy));
+            var destroy_dumb = drm_mode_destroy_dumb{ .handle = create_req.handle };
+            _ = posix.system.ioctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, @intFromPtr(&destroy_dumb));
             return error.AddFbFailed;
         }
 
@@ -210,8 +210,8 @@ const DumbBuffer = struct {
         const map_result = posix.system.ioctl(fd, DRM_IOCTL_MODE_MAP_DUMB, @intFromPtr(&map_req));
         if (map_result != 0) {
             _ = posix.system.ioctl(fd, DRM_IOCTL_MODE_RMFB, @intFromPtr(&fb_cmd.fb_id));
-            var destroy = drm_mode_destroy_dumb{ .handle = create_req.handle };
-            _ = posix.system.ioctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, @intFromPtr(&destroy));
+            var destroy_dumb = drm_mode_destroy_dumb{ .handle = create_req.handle };
+            _ = posix.system.ioctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, @intFromPtr(&destroy_dumb));
             return error.MapDumbFailed;
         }
 
@@ -224,8 +224,8 @@ const DumbBuffer = struct {
             @intCast(map_req.offset),
         ) catch {
             _ = posix.system.ioctl(fd, DRM_IOCTL_MODE_RMFB, @intFromPtr(&fb_cmd.fb_id));
-            var destroy = drm_mode_destroy_dumb{ .handle = create_req.handle };
-            _ = posix.system.ioctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, @intFromPtr(&destroy));
+            var destroy_dumb = drm_mode_destroy_dumb{ .handle = create_req.handle };
+            _ = posix.system.ioctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, @intFromPtr(&destroy_dumb));
             return error.MmapFailed;
         };
 
@@ -291,7 +291,7 @@ pub const DrmBackend = struct {
         errdefer posix.close(self.fd);
 
         // Try to become master
-        _ = posix.system.ioctl(self.fd, DRM_IOCTL_SET_MASTER, 0);
+        _ = posix.system.ioctl(self.fd, DRM_IOCTL_SET_MASTER, @as(usize, 0));
 
         // Get resources and find connector
         try self.findConnector();
@@ -331,11 +331,11 @@ pub const DrmBackend = struct {
         }
 
         // Allocate arrays
-        var connector_ids = try self.allocator.alloc(u32, res.count_connectors);
+        const connector_ids = try self.allocator.alloc(u32, res.count_connectors);
         defer self.allocator.free(connector_ids);
-        var crtc_ids = try self.allocator.alloc(u32, res.count_crtcs);
+        const crtc_ids = try self.allocator.alloc(u32, res.count_crtcs);
         defer self.allocator.free(crtc_ids);
-        var encoder_ids = try self.allocator.alloc(u32, res.count_encoders);
+        const encoder_ids = try self.allocator.alloc(u32, res.count_encoders);
         defer self.allocator.free(encoder_ids);
 
         res.connector_id_ptr = @intFromPtr(connector_ids.ptr);
@@ -360,7 +360,7 @@ pub const DrmBackend = struct {
             }
 
             // Get modes
-            var modes = try self.allocator.alloc(drm_mode_modeinfo, conn.count_modes);
+            const modes = try self.allocator.alloc(drm_mode_modeinfo, conn.count_modes);
             defer self.allocator.free(modes);
             conn.modes_ptr = @intFromPtr(modes.ptr);
 
