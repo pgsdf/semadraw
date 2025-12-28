@@ -331,6 +331,12 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    const ipc_shm_mod = b.createModule(.{
+        .root_source_file = b.path("src/ipc/shm.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const client_session_mod = b.createModule(.{
         .root_source_file = b.path("src/daemon/client_session.zig"),
         .target = target,
@@ -338,6 +344,24 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "protocol", .module = ipc_protocol_mod },
             .{ .name = "socket_server", .module = ipc_socket_mod },
+        },
+    });
+
+    const surface_registry_mod = b.createModule(.{
+        .root_source_file = b.path("src/daemon/surface_registry.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "protocol", .module = ipc_protocol_mod },
+        },
+    });
+
+    const sdcs_validator_mod = b.createModule(.{
+        .root_source_file = b.path("src/daemon/sdcs_validator.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "sdcs", .module = sdcs_mod },
         },
     });
 
@@ -352,6 +376,9 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "protocol", .module = ipc_protocol_mod },
                 .{ .name = "socket_server", .module = ipc_socket_mod },
                 .{ .name = "client_session", .module = client_session_mod },
+                .{ .name = "surface_registry", .module = surface_registry_mod },
+                .{ .name = "shm", .module = ipc_shm_mod },
+                .{ .name = "sdcs_validator", .module = sdcs_validator_mod },
             },
         }),
     });

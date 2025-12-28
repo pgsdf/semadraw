@@ -3,6 +3,9 @@ const posix = std.posix;
 const protocol = @import("protocol");
 const socket_server = @import("socket_server");
 const client_session = @import("client_session");
+const surface_registry = @import("surface_registry");
+const shm = @import("shm");
+const sdcs_validator = @import("sdcs_validator");
 
 const log = std.log.scoped(.semadrawd);
 
@@ -26,6 +29,7 @@ pub const Daemon = struct {
     config: Config,
     server: socket_server.SocketServer,
     clients: client_session.ClientManager,
+    surfaces: surface_registry.SurfaceRegistry,
     running: bool,
 
     pub fn init(allocator: std.mem.Allocator, config: Config) !Daemon {
@@ -37,11 +41,13 @@ pub const Daemon = struct {
             .config = config,
             .server = server,
             .clients = client_session.ClientManager.init(allocator),
+            .surfaces = surface_registry.SurfaceRegistry.init(allocator),
             .running = false,
         };
     }
 
     pub fn deinit(self: *Daemon) void {
+        self.surfaces.deinit();
         self.clients.deinit();
         self.server.deinit();
     }
@@ -198,8 +204,6 @@ pub const Daemon = struct {
     }
 
     fn handleCreateSurface(self: *Daemon, session: *client_session.ClientSession, payload: ?[]u8) !void {
-        _ = self;
-
         if (payload == null or payload.?.len < protocol.CreateSurfaceMsg.SIZE) {
             try session.sendError(.protocol_error, 0);
             return;
@@ -213,23 +217,23 @@ pub const Daemon = struct {
             return;
         }
 
-        // TODO: Actually create surface in surface registry
-        // For now, just assign an ID
-        const surface_id: protocol.SurfaceId = @intCast(session.surfaces.items.len + 1);
-        try session.addSurface(surface_id, msg.logical_width, msg.logical_height);
+        // Create surface in registry
+        const surface = self.surfaces.createSurface(session.id, msg.logical_width, msg.logical_height) catch {
+            try session.sendError(.resource_limit, 0);
+            return;
+        };
+        try session.addSurface(surface.id, msg.logical_width, msg.logical_height);
 
         // Send reply
         var reply_buf: [protocol.SurfaceCreatedMsg.SIZE]u8 = undefined;
-        const reply = protocol.SurfaceCreatedMsg{ .surface_id = surface_id };
+        const reply = protocol.SurfaceCreatedMsg{ .surface_id = surface.id };
         reply.serialize(&reply_buf);
         try session.send(.surface_created, &reply_buf);
 
-        log.debug("client {} created surface {}", .{ session.id, surface_id });
+        log.debug("client {} created surface {}", .{ session.id, surface.id });
     }
 
     fn handleDestroySurface(self: *Daemon, session: *client_session.ClientSession, payload: ?[]u8) !void {
-        _ = self;
-
         if (payload == null or payload.?.len < protocol.DestroySurfaceMsg.SIZE) {
             try session.sendError(.protocol_error, 0);
             return;
@@ -237,20 +241,22 @@ pub const Daemon = struct {
 
         const msg = try protocol.DestroySurfaceMsg.deserialize(payload.?);
 
-        if (!session.ownsSurface(msg.surface_id)) {
+        // Verify ownership via registry
+        if (!self.surfaces.isOwner(msg.surface_id, session.id)) {
             try session.sendError(.permission_denied, msg.surface_id);
             return;
         }
 
-        // TODO: Get actual surface dimensions from registry
-        session.removeSurface(msg.surface_id, 0, 0);
+        // Get dimensions for usage tracking before destroying
+        if (self.surfaces.getSurface(msg.surface_id)) |surface| {
+            session.removeSurface(msg.surface_id, surface.logical_width, surface.logical_height);
+        }
 
+        self.surfaces.destroySurface(msg.surface_id);
         log.debug("client {} destroyed surface {}", .{ session.id, msg.surface_id });
     }
 
     fn handleCommit(self: *Daemon, session: *client_session.ClientSession, payload: ?[]u8) !void {
-        _ = self;
-
         if (payload == null or payload.?.len < protocol.CommitMsg.SIZE) {
             try session.sendError(.protocol_error, 0);
             return;
@@ -258,28 +264,32 @@ pub const Daemon = struct {
 
         const msg = try protocol.CommitMsg.deserialize(payload.?);
 
-        if (!session.ownsSurface(msg.surface_id)) {
+        // Verify ownership via registry
+        if (!self.surfaces.isOwner(msg.surface_id, session.id)) {
             try session.sendError(.permission_denied, msg.surface_id);
             return;
         }
 
-        // TODO: Queue frame for composition
-        // For now, immediately send frame_complete
+        // Mark surface as committed in registry
+        const frame_number = self.surfaces.commit(msg.surface_id) catch {
+            try session.sendError(.invalid_surface, msg.surface_id);
+            return;
+        };
+
+        // Send frame_complete
         var reply_buf: [protocol.FrameCompleteMsg.SIZE]u8 = undefined;
         const reply = protocol.FrameCompleteMsg{
             .surface_id = msg.surface_id,
-            .frame_number = 0,
+            .frame_number = frame_number,
             .timestamp_ns = @intCast(std.time.nanoTimestamp()),
         };
         reply.serialize(&reply_buf);
         try session.send(.frame_complete, &reply_buf);
 
-        log.debug("client {} committed surface {}", .{ session.id, msg.surface_id });
+        log.debug("client {} committed surface {} frame {}", .{ session.id, msg.surface_id, frame_number });
     }
 
     fn handleSetVisible(self: *Daemon, session: *client_session.ClientSession, payload: ?[]u8) !void {
-        _ = self;
-
         if (payload == null or payload.?.len < protocol.SetVisibleMsg.SIZE) {
             try session.sendError(.protocol_error, 0);
             return;
@@ -287,18 +297,20 @@ pub const Daemon = struct {
 
         const msg = try protocol.SetVisibleMsg.deserialize(payload.?);
 
-        if (!session.ownsSurface(msg.surface_id)) {
+        // Verify ownership via registry
+        if (!self.surfaces.isOwner(msg.surface_id, session.id)) {
             try session.sendError(.permission_denied, msg.surface_id);
             return;
         }
 
-        // TODO: Update surface visibility in registry
+        self.surfaces.setVisible(msg.surface_id, msg.visible != 0) catch {
+            try session.sendError(.invalid_surface, msg.surface_id);
+            return;
+        };
         log.debug("client {} set surface {} visible={}", .{ session.id, msg.surface_id, msg.visible != 0 });
     }
 
     fn handleSetZOrder(self: *Daemon, session: *client_session.ClientSession, payload: ?[]u8) !void {
-        _ = self;
-
         if (payload == null or payload.?.len < protocol.SetZOrderMsg.SIZE) {
             try session.sendError(.protocol_error, 0);
             return;
@@ -306,12 +318,16 @@ pub const Daemon = struct {
 
         const msg = try protocol.SetZOrderMsg.deserialize(payload.?);
 
-        if (!session.ownsSurface(msg.surface_id)) {
+        // Verify ownership via registry
+        if (!self.surfaces.isOwner(msg.surface_id, session.id)) {
             try session.sendError(.permission_denied, msg.surface_id);
             return;
         }
 
-        // TODO: Update surface z-order in registry
+        self.surfaces.setZOrder(msg.surface_id, msg.z_order) catch {
+            try session.sendError(.invalid_surface, msg.surface_id);
+            return;
+        };
         log.debug("client {} set surface {} z_order={}", .{ session.id, msg.surface_id, msg.z_order });
     }
 
@@ -333,7 +349,8 @@ pub const Daemon = struct {
     }
 
     fn disconnectClient(self: *Daemon, client_id: protocol.ClientId) void {
-        // TODO: Clean up surfaces owned by this client
+        // Clean up surfaces owned by this client
+        self.surfaces.removeClientSurfaces(client_id);
         self.clients.destroySession(client_id);
     }
 
