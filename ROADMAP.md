@@ -45,14 +45,15 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 * Client library (Connection and Surface wrappers)
 * DRM/KMS presentation backend (direct framebuffer output)
 * SIMD vectorization for rasterization (SSE/AVX, NEON)
+* X11 backend for windowed display
 
 ## Next
 
 ### Backends
 * Vulkan backend (GPU-accelerated rendering)
+* Wayland backend for windowed display
 
 ### Integration
-* Toolkit bridges (X11, Wayland host integration)
 * Remote transport (SDCS streaming over network)
 
 ## Later

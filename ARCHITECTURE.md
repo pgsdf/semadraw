@@ -84,6 +84,20 @@ Suitable for:
 * FreeBSD console graphics
 * Testing without X11/Wayland
 
+### X11 backend
+
+Windowed output for X11 desktop environments.
+Uses Xlib for window management:
+* XImage for framebuffer display
+* Window resize handling
+* Keyboard and close event handling
+* BGRA pixel format for X11 compatibility
+
+Suitable for:
+* Development and testing
+* Desktop integration
+* Existing X11 environments
+
 ## Key property
 
 No backend specific concept appears in the public API.

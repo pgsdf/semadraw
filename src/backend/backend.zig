@@ -129,8 +129,10 @@ pub const BackendType = enum(u8) {
     headless = 1,
     /// Vulkan GPU renderer (future)
     vulkan = 2,
-    /// KMS/DRM direct output (future)
+    /// KMS/DRM direct output
     kms = 3,
+    /// X11 windowed output
+    x11 = 4,
 };
 
 /// Create a backend of the specified type
@@ -148,6 +150,10 @@ pub fn createBackend(allocator: std.mem.Allocator, backend_type: BackendType) !B
         .kms => {
             const drm = @import("drm");
             return drm.create(allocator);
+        },
+        .x11 => {
+            const x11 = @import("x11");
+            return x11.create(allocator);
         },
         else => return error.NotSupported,
     }

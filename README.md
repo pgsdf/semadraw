@@ -122,6 +122,7 @@ Available backends:
 * `software` - CPU-based reference renderer (default)
 * `headless` - No output, for testing
 * `kms` - DRM/KMS direct framebuffer output (Linux/FreeBSD)
+* `x11` - X11 windowed output
 
 The daemon listens on `/var/run/semadraw/semadraw.sock` by default.
 
