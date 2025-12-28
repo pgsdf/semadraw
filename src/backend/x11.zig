@@ -351,6 +351,7 @@ pub const X11Backend = struct {
     fn executeCommand(self: *Self, fb: []u8, opcode: u16, payload: []const u8) !void {
         switch (opcode) {
             0x0001 => {}, // RESET - no-op for now
+            0x0004 => {}, // SET_BLEND - ignored for now (always SRC_OVER)
             0x0010 => { // FILL_RECT
                 if (payload.len >= 32) {
                     const x = readF32(payload[0..4]);
@@ -365,8 +366,149 @@ pub const X11Backend = struct {
                     self.fillRect(fb, x, y, w, h, r, g, b_col, a);
                 }
             },
+            0x0030 => { // DRAW_GLYPH_RUN
+                if (payload.len >= 48) {
+                    self.drawGlyphRun(fb, payload);
+                }
+            },
             0x00F0 => {}, // END
             else => {}, // Ignore unknown opcodes for now
+        }
+    }
+
+    fn drawGlyphRun(self: *Self, fb: []u8, payload: []const u8) void {
+        // Parse header (48 bytes)
+        const base_x = readF32(payload[0..4]);
+        const base_y = readF32(payload[4..8]);
+        const r = readF32(payload[8..12]);
+        const g = readF32(payload[12..16]);
+        const b_col = readF32(payload[16..20]);
+        const a = readF32(payload[20..24]);
+        const cell_width = std.mem.readInt(u32, payload[24..28], .little);
+        const cell_height = std.mem.readInt(u32, payload[28..32], .little);
+        const atlas_cols = std.mem.readInt(u32, payload[32..36], .little);
+        const atlas_width = std.mem.readInt(u32, payload[36..40], .little);
+        const atlas_height = std.mem.readInt(u32, payload[40..44], .little);
+        const glyph_count = std.mem.readInt(u32, payload[44..48], .little);
+
+        if (cell_width == 0 or cell_height == 0 or atlas_cols == 0) return;
+
+        // Calculate offsets
+        const glyphs_offset: usize = 48;
+        const glyphs_size = glyph_count * 12; // 12 bytes per glyph
+        const atlas_offset = glyphs_offset + glyphs_size;
+        const atlas_size = @as(usize, atlas_width) * @as(usize, atlas_height);
+
+        if (payload.len < atlas_offset + atlas_size) return;
+
+        const atlas_data = payload[atlas_offset..][0..atlas_size];
+
+        // Color components (X11 BGRA format)
+        const cr: u8 = clampU8(r);
+        const cg: u8 = clampU8(g);
+        const cb: u8 = clampU8(b_col);
+
+        // Render each glyph
+        var i: u32 = 0;
+        while (i < glyph_count) : (i += 1) {
+            const glyph_off = glyphs_offset + i * 12;
+            if (glyph_off + 12 > payload.len) break;
+
+            const glyph_index = std.mem.readInt(u32, payload[glyph_off..][0..4], .little);
+            const x_offset = readF32(payload[glyph_off + 4 ..][0..4]);
+            const y_offset = readF32(payload[glyph_off + 8 ..][0..4]);
+
+            // Calculate atlas position for this glyph
+            const atlas_col = glyph_index % atlas_cols;
+            const atlas_row = glyph_index / atlas_cols;
+            const atlas_x = atlas_col * cell_width;
+            const atlas_y = atlas_row * cell_height;
+
+            // Render glyph pixels
+            self.blitGlyph(
+                fb,
+                base_x + x_offset,
+                base_y + y_offset,
+                cell_width,
+                cell_height,
+                atlas_data,
+                atlas_width,
+                atlas_x,
+                atlas_y,
+                cr,
+                cg,
+                cb,
+                a,
+            );
+        }
+    }
+
+    fn blitGlyph(
+        self: *Self,
+        fb: []u8,
+        dst_x: f32,
+        dst_y: f32,
+        cell_w: u32,
+        cell_h: u32,
+        atlas: []const u8,
+        atlas_w: u32,
+        atlas_x: u32,
+        atlas_y: u32,
+        r: u8,
+        g: u8,
+        b: u8,
+        base_alpha: f32,
+    ) void {
+        const fb_w = self.width;
+        const fb_h = self.height;
+
+        var cy: u32 = 0;
+        while (cy < cell_h) : (cy += 1) {
+            var cx: u32 = 0;
+            while (cx < cell_w) : (cx += 1) {
+                const px: i32 = @intFromFloat(dst_x) + @as(i32, @intCast(cx));
+                const py: i32 = @intFromFloat(dst_y) + @as(i32, @intCast(cy));
+
+                if (px < 0 or py < 0) continue;
+                if (px >= @as(i32, @intCast(fb_w)) or py >= @as(i32, @intCast(fb_h))) continue;
+
+                // Get alpha from atlas
+                const ax = atlas_x + cx;
+                const ay = atlas_y + cy;
+                if (ax >= atlas_w or ay * atlas_w + ax >= atlas.len) continue;
+
+                const atlas_alpha = atlas[ay * atlas_w + ax];
+                if (atlas_alpha == 0) continue;
+
+                // Calculate final alpha
+                const glyph_a: f32 = @as(f32, @floatFromInt(atlas_alpha)) / 255.0;
+                const final_a: f32 = glyph_a * base_alpha;
+                const ca: u8 = @intFromFloat(final_a * 255.0);
+
+                if (ca == 0) continue;
+
+                const fb_idx = (@as(usize, @intCast(py)) * @as(usize, fb_w) + @as(usize, @intCast(px))) * 4;
+                if (fb_idx + 3 >= fb.len) continue;
+
+                // BGRA blend
+                if (ca == 255) {
+                    fb[fb_idx + 0] = b;
+                    fb[fb_idx + 1] = g;
+                    fb[fb_idx + 2] = r;
+                    fb[fb_idx + 3] = 255;
+                } else {
+                    const sa: f32 = final_a;
+                    const da: f32 = @as(f32, @floatFromInt(fb[fb_idx + 3])) / 255.0;
+                    const out_a = sa + da * (1.0 - sa);
+
+                    if (out_a > 0) {
+                        fb[fb_idx + 0] = blendChannel(b, fb[fb_idx + 0], sa, da, out_a);
+                        fb[fb_idx + 1] = blendChannel(g, fb[fb_idx + 1], sa, da, out_a);
+                        fb[fb_idx + 2] = blendChannel(r, fb[fb_idx + 2], sa, da, out_a);
+                        fb[fb_idx + 3] = @intFromFloat(@min(255.0, out_a * 255.0));
+                    }
+                }
+            }
         }
     }
 
