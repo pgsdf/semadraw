@@ -34,15 +34,16 @@ pub const AttachedBuffer = struct {
     /// Size of the shared memory region
     shm_size: usize,
     /// Mapped memory pointer (null if not yet mapped)
-    mapped: ?[*]align(std.mem.page_size) u8 = null,
+    mapped_ptr: ?*anyopaque = null,
     /// Offset into shm where SDCS data starts
     offset: usize = 0,
     /// Length of SDCS data
     length: usize,
 
     pub fn map(self: *AttachedBuffer) ![]u8 {
-        if (self.mapped) |ptr| {
-            return ptr[self.offset..][0..self.length];
+        if (self.mapped_ptr) |p| {
+            const byte_ptr: [*]u8 = @ptrCast(p);
+            return byte_ptr[self.offset..][0..self.length];
         }
 
         const ptr = try posix.mmap(
@@ -53,14 +54,16 @@ pub const AttachedBuffer = struct {
             self.shm_fd,
             0,
         );
-        self.mapped = @alignCast(ptr);
-        return self.mapped.?[self.offset..][0..self.length];
+        self.mapped_ptr = ptr;
+        const byte_ptr: [*]u8 = @ptrCast(ptr);
+        return byte_ptr[self.offset..][0..self.length];
     }
 
     pub fn unmap(self: *AttachedBuffer) void {
-        if (self.mapped) |ptr| {
-            posix.munmap(ptr[0..self.shm_size]);
-            self.mapped = null;
+        if (self.mapped_ptr) |p| {
+            const byte_ptr: [*]align(4096) u8 = @ptrCast(@alignCast(p));
+            posix.munmap(byte_ptr[0..self.shm_size]);
+            self.mapped_ptr = null;
         }
     }
 

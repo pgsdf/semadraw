@@ -9,7 +9,8 @@ const c = @cImport({
 pub const ShmBuffer = struct {
     fd: posix.fd_t,
     size: usize,
-    ptr: ?[*]align(std.mem.page_size) u8,
+    /// Mapped memory - stores the raw mmap result for proper munmap
+    mapped_ptr: ?*anyopaque,
     name: ?[]const u8,
     allocator: ?std.mem.Allocator,
 
@@ -32,7 +33,7 @@ pub const ShmBuffer = struct {
         return .{
             .fd = fd,
             .size = size,
-            .ptr = @alignCast(ptr),
+            .mapped_ptr = ptr,
             .name = null,
             .allocator = null,
         };
@@ -58,7 +59,7 @@ pub const ShmBuffer = struct {
         return .{
             .fd = fd,
             .size = size,
-            .ptr = @alignCast(ptr),
+            .mapped_ptr = ptr,
             .name = name_z,
             .allocator = allocator,
         };
@@ -83,7 +84,7 @@ pub const ShmBuffer = struct {
         return .{
             .fd = fd,
             .size = size,
-            .ptr = @alignCast(ptr),
+            .mapped_ptr = ptr,
             .name = null,
             .allocator = null,
         };
@@ -91,24 +92,27 @@ pub const ShmBuffer = struct {
 
     /// Get the buffer contents as a slice
     pub fn getSlice(self: *ShmBuffer) ?[]u8 {
-        if (self.ptr) |p| {
-            return p[0..self.size];
+        if (self.mapped_ptr) |p| {
+            const byte_ptr: [*]u8 = @ptrCast(p);
+            return byte_ptr[0..self.size];
         }
         return null;
     }
 
     /// Get read-only slice
     pub fn getConstSlice(self: *const ShmBuffer) ?[]const u8 {
-        if (self.ptr) |p| {
-            return p[0..self.size];
+        if (self.mapped_ptr) |p| {
+            const byte_ptr: [*]const u8 = @ptrCast(p);
+            return byte_ptr[0..self.size];
         }
         return null;
     }
 
     pub fn deinit(self: *ShmBuffer) void {
-        if (self.ptr) |p| {
-            posix.munmap(p[0..self.size]);
-            self.ptr = null;
+        if (self.mapped_ptr) |p| {
+            const byte_ptr: [*]align(4096) u8 = @ptrCast(@alignCast(p));
+            posix.munmap(byte_ptr[0..self.size]);
+            self.mapped_ptr = null;
         }
         posix.close(self.fd);
 
