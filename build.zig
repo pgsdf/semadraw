@@ -384,6 +384,18 @@ pub fn build(b: *std.Build) void {
     // Add software import to backend module for createBackend
     backend_mod.addImport("software", software_backend_mod);
 
+    const drm_backend_mod = b.createModule(.{
+        .root_source_file = b.path("src/backend/drm.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "backend", .module = backend_mod },
+        },
+    });
+
+    // Add drm import to backend module for createBackend
+    backend_mod.addImport("drm", drm_backend_mod);
+
     const backend_process_mod = b.createModule(.{
         .root_source_file = b.path("src/backend/process.zig"),
         .target = target,
