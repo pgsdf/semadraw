@@ -61,13 +61,13 @@ pub const BlendMode = enum(u32) {
 /// Blend a single pixel using SrcOver compositing.
 /// out = src * alpha + dst * (1 - alpha)
 pub inline fn blendPixelSrcOver(dst: U8x4, src: U8x4, alpha: u8) U8x4 {
-    const a: u16 = alpha;
-    const inv_a: u16 = 255 - alpha;
+    _ = alpha; // Use source alpha from pixel
+    const a: u16 = src[3];
+    const inv_a: u16 = 255 - a;
 
     const sr: u16 = src[0];
     const sg: u16 = src[1];
     const sb: u16 = src[2];
-    const sa: u16 = src[3];
 
     const dr: u16 = dst[0];
     const dg: u16 = dst[1];
@@ -304,29 +304,32 @@ pub const F32x16 = @Vector(16, f32);
 /// Compute coverage for a rectangular region using vectorized AA sampling.
 /// Returns coverage value from 0.0 to 1.0.
 pub fn computeRectCoverageAA(px: f32, py: f32, x1: f32, y1: f32, x2: f32, y2: f32) f32 {
-    // Compute sample positions
-    const px_vec: F32x16 = @splat(px);
-    const py_vec: F32x16 = @splat(py);
-    const sample_x = px_vec + AA_SAMPLE_X;
-    const sample_y = py_vec + AA_SAMPLE_Y;
+    // Use scalar loop - Zig will auto-vectorize if beneficial
+    var count: u32 = 0;
 
-    // Test each sample against rectangle bounds
-    const x1_vec: F32x16 = @splat(x1);
-    const y1_vec: F32x16 = @splat(y1);
-    const x2_vec: F32x16 = @splat(x2);
-    const y2_vec: F32x16 = @splat(y2);
+    // Inline array for sample offsets
+    const offsets_x = [16]f32{
+        0.0625, 0.3125, 0.5625, 0.8125,
+        0.0625, 0.3125, 0.5625, 0.8125,
+        0.0625, 0.3125, 0.5625, 0.8125,
+        0.0625, 0.3125, 0.5625, 0.8125,
+    };
+    const offsets_y = [16]f32{
+        0.0625, 0.0625, 0.0625, 0.0625,
+        0.3125, 0.3125, 0.3125, 0.3125,
+        0.5625, 0.5625, 0.5625, 0.5625,
+        0.8125, 0.8125, 0.8125, 0.8125,
+    };
 
-    const in_x = (sample_x >= x1_vec) and (sample_x < x2_vec);
-    const in_y = (sample_y >= y1_vec) and (sample_y < y2_vec);
-    const inside = in_x and in_y;
+    inline for (0..16) |i| {
+        const sx = px + offsets_x[i];
+        const sy = py + offsets_y[i];
+        if (sx >= x1 and sx < x2 and sy >= y1 and sy < y2) {
+            count += 1;
+        }
+    }
 
-    // Count samples inside using reduction
-    const ones: F32x16 = @splat(1.0);
-    const zeros: F32x16 = @splat(0.0);
-    const count_vec = @select(f32, inside, ones, zeros);
-    const count = @reduce(.Add, count_vec);
-
-    return count / 16.0;
+    return @as(f32, @floatFromInt(count)) / 16.0;
 }
 
 // ============================================================================
