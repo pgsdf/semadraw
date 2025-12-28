@@ -83,6 +83,16 @@ pub const Surface = struct {
         self.frame_count += 1;
     }
 
+    /// Attach SDCS buffer data and commit in one operation
+    pub fn attachAndCommit(self: *Self, sdcs_data: []const u8) !void {
+        if (self.state == .destroyed) return error.SurfaceDestroyed;
+
+        try self.connection.attachBufferInline(self.id, sdcs_data);
+        try self.connection.commit(self.id);
+        self.state = .presenting;
+        self.frame_count += 1;
+    }
+
     /// Set visibility
     pub fn setVisible(self: *Self, visible: bool) !void {
         if (self.state == .destroyed) return error.SurfaceDestroyed;
