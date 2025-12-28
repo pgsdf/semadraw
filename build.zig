@@ -435,6 +435,21 @@ pub fn build(b: *std.Build) void {
     // Add vulkan import to backend module for createBackend
     backend_mod.addImport("vulkan", vulkan_backend_mod);
 
+    // Wayland backend module
+    const wayland_backend_mod = b.createModule(.{
+        .root_source_file = b.path("src/backend/wayland.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "backend", .module = backend_mod },
+        },
+    });
+    wayland_backend_mod.link_libc = true;
+    wayland_backend_mod.linkSystemLibrary("wayland-client", .{});
+
+    // Add wayland import to backend module for createBackend
+    backend_mod.addImport("wayland", wayland_backend_mod);
+
     const backend_process_mod = b.createModule(.{
         .root_source_file = b.path("src/backend/process.zig"),
         .target = target,
