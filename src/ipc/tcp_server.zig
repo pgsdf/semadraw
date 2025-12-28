@@ -56,7 +56,7 @@ pub const TcpServer = struct {
     }
 
     /// Get the file descriptor for use with poll/kqueue
-    pub fn getFd(self: *TcpServer) posix.socket_t {
+    pub fn getFd(self: *const TcpServer) posix.socket_t {
         return self.fd;
     }
 
