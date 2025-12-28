@@ -139,7 +139,7 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
     log.info("shell spawned", .{});
 
     // Initial render
-    try renderAndCommit(allocator, &rend, &surface);
+    try renderAndCommit(allocator, &rend, surface);
 
     // Main event loop
     var running = true;
@@ -156,7 +156,7 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
         if (n == 0) {
             // Timeout - check for render needs
             if (scr.dirty) {
-                try renderAndCommit(allocator, &rend, &surface);
+                try renderAndCommit(allocator, &rend, surface);
                 scr.dirty = false;
             }
             continue;
