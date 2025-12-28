@@ -365,6 +365,34 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    // Backend modules
+    const backend_mod = b.createModule(.{
+        .root_source_file = b.path("src/backend/backend.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const software_backend_mod = b.createModule(.{
+        .root_source_file = b.path("src/backend/software.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "backend", .module = backend_mod },
+        },
+    });
+
+    // Add software import to backend module for createBackend
+    backend_mod.addImport("software", software_backend_mod);
+
+    const backend_process_mod = b.createModule(.{
+        .root_source_file = b.path("src/backend/process.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "backend", .module = backend_mod },
+        },
+    });
+
     // semadrawd daemon
     const semadrawd = b.addExecutable(.{
         .name = "semadrawd",
@@ -379,6 +407,8 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "surface_registry", .module = surface_registry_mod },
                 .{ .name = "shm", .module = ipc_shm_mod },
                 .{ .name = "sdcs_validator", .module = sdcs_validator_mod },
+                .{ .name = "backend", .module = backend_mod },
+                .{ .name = "backend_process", .module = backend_process_mod },
             },
         }),
     });
