@@ -41,10 +41,10 @@ pub const Renderer = struct {
             0,
             @floatFromInt(self.width_px),
             @floatFromInt(self.height_px),
+            1.0, // RED for testing - change back to 0.0 later
             0.0,
             0.0,
-            0.0,
-            1.0, // Black background
+            1.0, // Red background for testing
         );
 
         try self.encoder.setBlend(semadraw.Encoder.BlendMode.SrcOver);
