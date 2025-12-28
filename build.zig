@@ -440,9 +440,6 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(semadrawd);
 
-    // Suppress unused variable warnings for modules used only via imports
-    _ = software_backend_mod;
-
     // Unit tests
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
