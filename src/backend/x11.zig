@@ -157,7 +157,10 @@ pub const X11Backend = struct {
         if (self.ximage) |img| {
             // Don't free the data - XImage doesn't own it
             img.*.data = null;
-            _ = c.XDestroyImage(img);
+            // Call the destroy function directly (XDestroyImage is a macro)
+            if (img.*.f.destroy_image) |destroy_fn| {
+                _ = destroy_fn(img);
+            }
         }
 
         if (self.framebuffer) |fb| {
@@ -248,7 +251,10 @@ pub const X11Backend = struct {
         // Destroy old XImage (but not the data)
         if (self.ximage) |img| {
             img.*.data = null;
-            _ = c.XDestroyImage(img);
+            // Call the destroy function directly (XDestroyImage is a macro)
+            if (img.*.f.destroy_image) |destroy_fn| {
+                _ = destroy_fn(img);
+            }
             self.ximage = null;
         }
 
