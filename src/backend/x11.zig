@@ -350,8 +350,12 @@ pub const X11Backend = struct {
 
     fn executeCommand(self: *Self, fb: []u8, opcode: u16, payload: []const u8) !void {
         switch (opcode) {
-            0x0001 => {}, // RESET - no-op for now
-            0x0004 => {}, // SET_BLEND - ignored for now (always SRC_OVER)
+            0x0001 => {
+                log.debug("SDCS: RESET", .{});
+            },
+            0x0004 => {
+                log.debug("SDCS: SET_BLEND", .{});
+            },
             0x0010 => { // FILL_RECT
                 if (payload.len >= 32) {
                     const x = readF32(payload[0..4]);
@@ -363,16 +367,23 @@ pub const X11Backend = struct {
                     const b_col = readF32(payload[24..28]);
                     const a = readF32(payload[28..32]);
 
+                    log.debug("SDCS: FILL_RECT x={d:.0} y={d:.0} w={d:.0} h={d:.0} rgba=({d:.2},{d:.2},{d:.2},{d:.2})", .{ x, y, w, h, r, g, b_col, a });
                     self.fillRect(fb, x, y, w, h, r, g, b_col, a);
                 }
             },
             0x0030 => { // DRAW_GLYPH_RUN
                 if (payload.len >= 48) {
+                    const glyph_count = std.mem.readInt(u32, payload[44..48], .little);
+                    log.debug("SDCS: DRAW_GLYPH_RUN glyphs={}", .{glyph_count});
                     self.drawGlyphRun(fb, payload);
                 }
             },
-            0x00F0 => {}, // END
-            else => {}, // Ignore unknown opcodes for now
+            0x00F0 => {
+                log.debug("SDCS: END", .{});
+            },
+            else => {
+                log.debug("SDCS: unknown opcode 0x{x:0>4}", .{opcode});
+            },
         }
     }
 
