@@ -114,6 +114,21 @@ Suitable for:
 * GPU-accelerated compositing
 * Systems with Vulkan-capable GPUs
 
+### Wayland backend
+
+Windowed output for Wayland desktop environments.
+Uses libwayland-client with XDG shell:
+* wl_shm shared memory buffers
+* XDG toplevel window management
+* Keyboard event handling with xkb modifiers
+* Window resize and close events
+* ARGB8888 pixel format
+
+Suitable for:
+* Modern Linux desktops (GNOME, KDE, Sway)
+* Wayland-native environments
+* Development and testing without X11
+
 ## Key property
 
 No backend specific concept appears in the public API.
