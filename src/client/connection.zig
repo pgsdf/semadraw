@@ -203,15 +203,20 @@ pub const Connection = struct {
     pub fn attachBufferInline(self: *Self, surface_id: protocol.SurfaceId, sdcs_data: []const u8) !void {
         if (self.state != .connected) return error.NotConnected;
 
-        // Create message with header + surface_id + data
-        const header_size = 4; // surface_id
-        const msg_buf = try self.allocator.alloc(u8, header_size + sdcs_data.len);
+        // Create message with AttachBufferInlineMsg header + SDCS data
+        const msg_buf = try self.allocator.alloc(u8, protocol.AttachBufferInlineMsg.HEADER_SIZE + sdcs_data.len);
         defer self.allocator.free(msg_buf);
 
-        // Write surface_id
-        std.mem.writeInt(u32, msg_buf[0..4], surface_id, .little);
+        // Serialize header
+        const msg = protocol.AttachBufferInlineMsg{
+            .surface_id = surface_id,
+            .sdcs_length = sdcs_data.len,
+            .flags = 0,
+        };
+        msg.serialize(msg_buf[0..protocol.AttachBufferInlineMsg.HEADER_SIZE]);
+
         // Copy SDCS data
-        @memcpy(msg_buf[4..], sdcs_data);
+        @memcpy(msg_buf[protocol.AttachBufferInlineMsg.HEADER_SIZE..], sdcs_data);
 
         try self.sendMessage(.attach_buffer_inline, msg_buf);
     }
