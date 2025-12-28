@@ -173,25 +173,18 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
             running = false;
         }
 
-        // Check daemon events (keyboard input)
+        // Check daemon events
         if (poll_fds[1].revents & std.posix.POLL.IN != 0) {
-            while (conn.pollEvent()) |event| {
-                switch (event) {
-                    .key_press => |key| {
-                        if (key.key_code) |code| {
-                            handleKeyPress(&shell, code, key.modifiers);
-                        }
-                    },
-                    .close => {
-                        log.info("window closed", .{});
+            while (true) {
+                const event = conn.poll() catch break;
+                if (event == null) break;
+                switch (event.?) {
+                    .disconnected => {
+                        log.info("daemon disconnected", .{});
                         running = false;
                     },
-                    .resize => |size| {
-                        // Handle resize
-                        const new_cols = size.width / font.Font.GLYPH_WIDTH;
-                        const new_rows = size.height / font.Font.GLYPH_HEIGHT;
-                        log.info("resize to {}x{}", .{ new_cols, new_rows });
-                        // TODO: Resize screen buffer
+                    .error_reply => |err| {
+                        log.err("daemon error: {}", .{err.code});
                     },
                     else => {},
                 }
@@ -200,7 +193,7 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
 
         // Render if dirty
         if (scr.dirty) {
-            try renderAndCommit(allocator, &rend, &surface);
+            try renderAndCommit(allocator, &rend, surface);
             scr.dirty = false;
         }
     }
