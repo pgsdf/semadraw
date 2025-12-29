@@ -59,6 +59,50 @@ Rendering options supported by the encoder and replay tool:
 * StrokeJoin: 0 = Miter, 1 = Bevel, 2 = Round
 * StrokeCap: 0 = Butt, 1 = Square, 2 = Round
 
+## Installation
+
+### Prerequisites
+
+**Required:**
+- Zig 0.15 or newer
+- POSIX-compatible OS (FreeBSD, Linux)
+- C library (libc)
+
+**Optional (for specific backends):**
+- X11: libX11, libXext (for X11 backend)
+- Vulkan: Vulkan SDK, libvulkan (for GPU-accelerated rendering)
+- Wayland: libwayland-client (for Wayland backend)
+- DRM/KMS: Linux kernel with DRM support (for console output)
+
+### Build from Source
+
+```sh
+# Clone the repository
+git clone https://github.com/pgsdf/semadraw.git
+cd semadraw
+
+# Build all components
+zig build
+
+# Run tests
+zig build test
+
+# Binaries are in ./zig-out/bin/
+ls ./zig-out/bin/
+```
+
+### Install System-wide (Optional)
+
+```sh
+# Copy binaries to /usr/local/bin
+sudo cp ./zig-out/bin/semadrawd /usr/local/bin/
+sudo cp ./zig-out/bin/semadraw-term /usr/local/bin/
+
+# Create socket directory
+sudo mkdir -p /var/run/semadraw
+sudo chmod 755 /var/run/semadraw
+```
+
 ## Demo
 
 Generate and view a 1280x1080 showcase of SemaDraw capabilities:
@@ -101,33 +145,134 @@ The semadrawd compositor daemon is functional with:
 * Backend abstraction with process isolation
 * DRM/KMS backend for direct display output
 
-## semadrawd Usage
+## Usage Guide
+
+### Console Use (DRM/KMS)
+
+For running SemaDraw directly on the console without X11 or Wayland (framebuffer output):
+
+```sh
+# Switch to a virtual console (Ctrl+Alt+F2) or boot without display manager
+
+# Start semadrawd with KMS backend (requires root or video group membership)
+sudo ./zig-out/bin/semadrawd --backend kms
+
+# In another terminal/session, run the terminal emulator
+./zig-out/bin/semadraw-term
+```
+
+**Requirements:**
+- Linux kernel with DRM support
+- Access to `/dev/dri/card0` (usually requires root or `video` group)
+- No active X11/Wayland session on the target display
+
+**Notes:**
+- The KMS backend takes exclusive control of the display
+- Use Ctrl+Alt+F1 to return to your previous console
+- For multi-monitor setups, the first available display is used
+
+### X11 Use
+
+For running SemaDraw as a window inside an X11 session:
+
+```sh
+# Start semadrawd with X11 backend
+./zig-out/bin/semadrawd --backend x11
+
+# Run the terminal emulator (in another terminal)
+./zig-out/bin/semadraw-term
+```
+
+**For GPU-accelerated rendering with Vulkan:**
+
+```sh
+# Start with Vulkan backend (requires Vulkan-capable GPU)
+./zig-out/bin/semadrawd --backend vulkan
+
+# Run the terminal emulator
+./zig-out/bin/semadraw-term
+```
+
+**Requirements:**
+- Running X11 session
+- DISPLAY environment variable set
+- For Vulkan: Vulkan SDK and compatible GPU drivers
+
+### Wayland Use
+
+For running SemaDraw as a window inside a Wayland session:
+
+```sh
+# Start semadrawd with Wayland backend
+./zig-out/bin/semadrawd --backend wayland
+
+# Run the terminal emulator (in another terminal)
+./zig-out/bin/semadraw-term
+```
+
+**Requirements:**
+- Running Wayland compositor (Sway, GNOME Wayland, KDE Wayland, etc.)
+- WAYLAND_DISPLAY environment variable set
+- libwayland-client
+
+### Quick Start Examples
+
+**Example 1: Terminal on X11**
+```sh
+# Terminal 1: Start daemon
+./zig-out/bin/semadrawd --backend x11 --verbose
+
+# Terminal 2: Run terminal emulator with custom size
+./zig-out/bin/semadraw-term --cols 120 --rows 40 --shell /bin/bash
+```
+
+**Example 2: Terminal on Wayland**
+```sh
+# Terminal 1: Start daemon
+./zig-out/bin/semadrawd --backend wayland
+
+# Terminal 2: Run terminal
+./zig-out/bin/semadraw-term
+```
+
+**Example 3: Headless testing**
+```sh
+# Start headless (no display output)
+./zig-out/bin/semadrawd --backend headless
+
+# Connect terminal for testing
+./zig-out/bin/semadraw-term
+```
+
+## semadrawd Reference
 
 Start the compositor daemon:
 
 ```sh
-# Default (software backend)
-./zig-out/bin/semadrawd
-
-# With DRM/KMS backend for direct display
-./zig-out/bin/semadrawd --backend kms
-
-# Custom socket path
-./zig-out/bin/semadrawd --socket /tmp/mysocket.sock
-
-# Verbose logging
-./zig-out/bin/semadrawd --verbose
+./zig-out/bin/semadrawd [OPTIONS]
 ```
 
-Available backends:
-* `software` - CPU-based reference renderer (default)
-* `headless` - No output, for testing
-* `kms` - DRM/KMS direct framebuffer output (Linux/FreeBSD)
-* `x11` - X11 windowed output
-* `vulkan` - GPU-accelerated Vulkan renderer with X11 presentation
-* `wayland` - Wayland windowed output with shared memory
+**Options:**
 
-The daemon listens on `/var/run/semadraw/semadraw.sock` by default.
+| Option | Description |
+|--------|-------------|
+| `-b, --backend TYPE` | Backend: software, headless, kms, x11, vulkan, wayland |
+| `-s, --socket PATH` | Unix socket path (default: /var/run/semadraw/semadraw.sock) |
+| `-v, --verbose` | Enable verbose logging |
+| `--tcp PORT` | Enable TCP server on PORT for remote connections |
+| `--tcp-addr ADDR` | Bind TCP to specific address (default: 0.0.0.0) |
+| `-h, --help` | Show help |
+
+**Backend Comparison:**
+
+| Backend | Acceleration | Display | Use Case |
+|---------|-------------|---------|----------|
+| software | CPU | Varies | Reference, debugging |
+| headless | CPU | None | Testing, CI/CD |
+| kms | CPU | Console | Framebuffer, embedded |
+| x11 | CPU | X11 Window | Desktop development |
+| vulkan | GPU | X11 Window | High performance |
+| wayland | CPU | Wayland Window | Wayland desktops |
 
 ### Remote Connections
 
@@ -143,36 +288,38 @@ semadrawd supports TCP connections for remote SDCS streaming:
 
 Remote clients use inline buffer transfer instead of shared memory.
 
-## semadraw-term Usage
+## semadraw-term Reference
 
-Terminal emulator for running shell sessions in the SemaDraw console environment:
+Terminal emulator for running shell sessions:
 
 ```sh
-# Basic usage (connects to local semadrawd)
-./zig-out/bin/semadraw-term
-
-# Custom terminal size
-./zig-out/bin/semadraw-term --cols 120 --rows 40
-
-# Specify shell
-./zig-out/bin/semadraw-term --shell /bin/zsh
-
-# Connect to custom socket
-./zig-out/bin/semadraw-term --socket /tmp/custom.sock
+./zig-out/bin/semadraw-term [OPTIONS]
 ```
 
-Options:
-* `-c, --cols N` - Terminal columns (default: 80)
-* `-r, --rows N` - Terminal rows (default: 24)
-* `-e, --shell PATH` - Shell to execute (default: $SHELL or /bin/sh)
-* `-s, --socket PATH` - Daemon socket path
+**Options:**
 
-Features:
-* VT100/ANSI escape sequence support
-* Full UTF-8 support with wide character handling (CJK double-width)
-* 8x16 VGA-style bitmap font (ASCII; fallback glyph for unsupported Unicode)
-* 256-color support with RGB extensions
-* PTY-based shell communication
+| Option | Description |
+|--------|-------------|
+| `-c, --cols N` | Terminal columns (default: 80) |
+| `-r, --rows N` | Terminal rows (default: 24) |
+| `-e, --shell PATH` | Shell to execute (default: $SHELL or /bin/sh) |
+| `-s, --socket PATH` | Daemon socket path |
+| `-h, --help` | Show help |
+
+**Features:**
+- VT100/ANSI escape sequence support
+- Full UTF-8 with wide character handling (CJK double-width)
+- 256-color palette with RGB extensions (OSC 4/10/11)
+- Mouse tracking (X10, VT200, SGR, URXVT modes)
+- Alternative screen buffer (vim, htop, less, nano)
+- Scrollback buffer with Shift+PageUp/PageDown navigation
+- Cursor styles (block, underline, bar) with blink support
+- Box drawing characters (U+2500-U+257F)
+- Text decorations (bold, italic, underline, strikethrough)
+
+**Keyboard shortcuts:**
+- Shift+PageUp: Scroll up in history
+- Shift+PageDown: Scroll down in history
 
 ## License
 
