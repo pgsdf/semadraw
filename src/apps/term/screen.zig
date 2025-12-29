@@ -18,6 +18,7 @@ pub const Screen = struct {
     scroll_bottom: u32,
     current_attr: Attr,
     dirty: bool,
+    dirty_rows: []bool, // Per-row dirty tracking for efficient rendering
 
     // Alternative screen buffer support
     alt_cells: ?[]Cell,
@@ -114,6 +115,10 @@ pub const Screen = struct {
             cell.* = Cell.blank();
         }
 
+        // Allocate dirty row tracking
+        const dirty_rows = try allocator.alloc(bool, rows);
+        @memset(dirty_rows, true); // Initially mark all rows as dirty
+
         // Allocate scrollback buffer if enabled
         var scrollback: ?[][]Cell = null;
         if (scrollback_lines > 0) {
@@ -137,6 +142,7 @@ pub const Screen = struct {
             .scroll_bottom = rows - 1,
             .current_attr = Attr.default(),
             .dirty = true,
+            .dirty_rows = dirty_rows,
             // Alternative buffer initially not allocated
             .alt_cells = null,
             .using_alt_buffer = false,
@@ -168,6 +174,7 @@ pub const Screen = struct {
 
     pub fn deinit(self: *Self) void {
         self.allocator.free(self.cells);
+        self.allocator.free(self.dirty_rows);
         if (self.alt_cells) |alt| {
             self.allocator.free(alt);
         }
@@ -196,6 +203,38 @@ pub const Screen = struct {
         return &self.cells[row * self.cols + col];
     }
 
+    // ========================================================================
+    // Dirty row tracking
+    // ========================================================================
+
+    /// Mark a specific row as dirty (needs re-rendering)
+    pub fn markRowDirty(self: *Self, row: u32) void {
+        if (row < self.rows) {
+            self.dirty_rows[row] = true;
+            self.dirty = true;
+        }
+    }
+
+    /// Mark all rows as dirty (full re-render needed)
+    pub fn markAllRowsDirty(self: *Self) void {
+        @memset(self.dirty_rows, true);
+        self.dirty = true;
+    }
+
+    /// Clear all dirty row flags (call after rendering)
+    pub fn clearDirtyRows(self: *Self) void {
+        @memset(self.dirty_rows, false);
+        self.dirty = false;
+    }
+
+    /// Check if a specific row is dirty
+    pub fn isRowDirty(self: *const Self, row: u32) bool {
+        if (row < self.rows) {
+            return self.dirty_rows[row];
+        }
+        return false;
+    }
+
     /// Write a character at cursor position and advance cursor
     pub fn putChar(self: *Self, c: u21) void {
         self.putCharWithWidth(c, charWidth(c));
@@ -222,7 +261,7 @@ pub const Screen = struct {
             self.cursor_col += 1;
         }
 
-        self.dirty = true;
+        self.markRowDirty(self.cursor_row);
     }
 
     /// Determine display width of a Unicode codepoint
@@ -256,27 +295,27 @@ pub const Screen = struct {
         } else {
             self.cursor_row += 1;
         }
-        self.dirty = true;
+        self.markRowDirty(self.cursor_row);
     }
 
     /// Carriage return (move cursor to column 0)
     pub fn carriageReturn(self: *Self) void {
         self.cursor_col = 0;
-        self.dirty = true;
+        self.markRowDirty(self.cursor_row);
     }
 
     /// Tab (move cursor to next 8-column boundary)
     pub fn tab(self: *Self) void {
         const next_tab = (self.cursor_col / 8 + 1) * 8;
         self.cursor_col = @min(next_tab, self.cols - 1);
-        self.dirty = true;
+        self.markRowDirty(self.cursor_row);
     }
 
     /// Backspace (move cursor left, don't delete)
     pub fn backspace(self: *Self) void {
         if (self.cursor_col > 0) {
             self.cursor_col -= 1;
-            self.dirty = true;
+            self.markRowDirty(self.cursor_row);
         }
     }
 
@@ -308,7 +347,12 @@ pub const Screen = struct {
                 cell.* = Cell.blank();
             }
         }
-        self.dirty = true;
+
+        // Mark all rows in scroll region as dirty
+        var dirty_row = start_row;
+        while (dirty_row <= end_row) : (dirty_row += 1) {
+            self.markRowDirty(dirty_row);
+        }
 
         // Reset scroll view when new content is added
         if (self.scroll_view_offset > 0) {
@@ -374,36 +418,48 @@ pub const Screen = struct {
                 cell.* = Cell.blank();
             }
         }
-        self.dirty = true;
+
+        // Mark all rows in scroll region as dirty
+        var dirty_row = start_row;
+        while (dirty_row <= end_row) : (dirty_row += 1) {
+            self.markRowDirty(dirty_row);
+        }
     }
 
     /// Set cursor position (0-indexed)
     pub fn setCursor(self: *Self, col: u32, row: u32) void {
+        const old_row = self.cursor_row;
         self.cursor_col = @min(col, self.cols - 1);
         self.cursor_row = @min(row, self.rows - 1);
-        self.dirty = true;
+        // Mark both old and new cursor rows dirty
+        self.markRowDirty(old_row);
+        self.markRowDirty(self.cursor_row);
     }
 
     /// Move cursor up by n rows
     pub fn cursorUp(self: *Self, n: u32) void {
+        const old_row = self.cursor_row;
         if (n <= self.cursor_row) {
             self.cursor_row -= n;
         } else {
             self.cursor_row = 0;
         }
-        self.dirty = true;
+        self.markRowDirty(old_row);
+        self.markRowDirty(self.cursor_row);
     }
 
     /// Move cursor down by n rows
     pub fn cursorDown(self: *Self, n: u32) void {
+        const old_row = self.cursor_row;
         self.cursor_row = @min(self.cursor_row + n, self.rows - 1);
-        self.dirty = true;
+        self.markRowDirty(old_row);
+        self.markRowDirty(self.cursor_row);
     }
 
     /// Move cursor right by n columns
     pub fn cursorRight(self: *Self, n: u32) void {
         self.cursor_col = @min(self.cursor_col + n, self.cols - 1);
-        self.dirty = true;
+        self.markRowDirty(self.cursor_row);
     }
 
     /// Move cursor left by n columns
@@ -413,7 +469,7 @@ pub const Screen = struct {
         } else {
             self.cursor_col = 0;
         }
-        self.dirty = true;
+        self.markRowDirty(self.cursor_row);
     }
 
     /// Erase from cursor to end of line
@@ -422,7 +478,7 @@ pub const Screen = struct {
         while (col < self.cols) : (col += 1) {
             self.getCellMut(col, self.cursor_row).* = Cell.blank();
         }
-        self.dirty = true;
+        self.markRowDirty(self.cursor_row);
     }
 
     /// Erase from start of line to cursor
@@ -431,7 +487,7 @@ pub const Screen = struct {
         while (col <= self.cursor_col) : (col += 1) {
             self.getCellMut(col, self.cursor_row).* = Cell.blank();
         }
-        self.dirty = true;
+        self.markRowDirty(self.cursor_row);
     }
 
     /// Erase entire line
@@ -440,7 +496,7 @@ pub const Screen = struct {
         for (self.cells[start..][0..self.cols]) |*cell| {
             cell.* = Cell.blank();
         }
-        self.dirty = true;
+        self.markRowDirty(self.cursor_row);
     }
 
     /// Erase from cursor to end of screen
@@ -452,8 +508,8 @@ pub const Screen = struct {
             for (self.cells[start..][0..self.cols]) |*cell| {
                 cell.* = Cell.blank();
             }
+            self.markRowDirty(row);
         }
-        self.dirty = true;
     }
 
     /// Erase from start of screen to cursor
@@ -464,9 +520,9 @@ pub const Screen = struct {
             for (self.cells[start..][0..self.cols]) |*cell| {
                 cell.* = Cell.blank();
             }
+            self.markRowDirty(row);
         }
         self.eraseToStartOfLine();
-        self.dirty = true;
     }
 
     /// Erase entire screen
@@ -474,7 +530,7 @@ pub const Screen = struct {
         for (self.cells) |*cell| {
             cell.* = Cell.blank();
         }
-        self.dirty = true;
+        self.markAllRowsDirty();
     }
 
     /// Set scroll region
@@ -503,7 +559,7 @@ pub const Screen = struct {
         while (col < self.cols) : (col += 1) {
             self.cells[row_start + col] = Cell.blank();
         }
-        self.dirty = true;
+        self.markRowDirty(self.cursor_row);
     }
 
     /// Insert n characters at cursor, shift remaining right
@@ -525,7 +581,7 @@ pub const Screen = struct {
             self.cells[row_start + col] = Cell.blank();
         }
         _ = chars_to_keep;
-        self.dirty = true;
+        self.markRowDirty(self.cursor_row);
     }
 
     /// Delete n lines at cursor row, scroll rest up
@@ -572,7 +628,7 @@ pub const Screen = struct {
             }
         }
 
-        self.dirty = true;
+        self.markAllRowsDirty();
     }
 
     /// Switch back to main screen buffer
@@ -585,7 +641,7 @@ pub const Screen = struct {
         self.alt_cells = temp;
 
         self.using_alt_buffer = false;
-        self.dirty = true;
+        self.markAllRowsDirty();
     }
 
     // ========================================================================
@@ -601,10 +657,12 @@ pub const Screen = struct {
 
     /// Restore cursor position and attributes (DECRC)
     pub fn restoreCursor(self: *Self) void {
+        const old_row = self.cursor_row;
         self.cursor_col = @min(self.saved_cursor_col, self.cols -| 1);
         self.cursor_row = @min(self.saved_cursor_row, self.rows -| 1);
         self.current_attr = self.saved_attr;
-        self.dirty = true;
+        self.markRowDirty(old_row);
+        self.markRowDirty(self.cursor_row);
     }
 
     /// Enter alternate screen with cursor save (mode 1049)
@@ -624,14 +682,14 @@ pub const Screen = struct {
     /// Set cursor visibility
     pub fn setCursorVisible(self: *Self, visible: bool) void {
         self.cursor_visible = visible;
-        self.dirty = true;
+        self.markRowDirty(self.cursor_row);
     }
 
     /// Set cursor style (DECSCUSR)
     pub fn setCursorStyle(self: *Self, style: CursorStyle) void {
         self.cursor_style = style;
         self.cursor_blink = style.shouldBlink();
-        self.dirty = true;
+        self.markRowDirty(self.cursor_row);
     }
 
     /// Get current cursor style
@@ -810,7 +868,7 @@ pub const Screen = struct {
 
         if (new_offset != self.scroll_view_offset) {
             self.scroll_view_offset = new_offset;
-            self.dirty = true;
+            self.markAllRowsDirty();
             return true;
         }
         return false;
@@ -826,7 +884,7 @@ pub const Screen = struct {
         } else {
             self.scroll_view_offset -= n;
         }
-        self.dirty = true;
+        self.markAllRowsDirty();
         return true;
     }
 
@@ -834,7 +892,7 @@ pub const Screen = struct {
     pub fn resetScrollView(self: *Self) void {
         if (self.scroll_view_offset > 0) {
             self.scroll_view_offset = 0;
-            self.dirty = true;
+            self.markAllRowsDirty();
         }
     }
 

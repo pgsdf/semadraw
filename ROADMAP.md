@@ -74,7 +74,7 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 * ~~Mouse input support~~ (DONE - X10/VT200/SGR mouse tracking modes 9/1000-1006/1015, button/motion events)
 * ~~Additional SGR codes~~ (DONE - strikethrough SGR 9/29, overline SGR 53/55, double underline SGR 21)
 * ~~Cursor style variations~~ (DONE - block/underline/bar styles via DECSCUSR CSI Ps SP q, 500ms blink animation)
-* Dirty region tracking (avoid full screen re-render every frame)
+* ~~Dirty region tracking~~ (DONE - per-row dirty flags, renderer skips unchanged rows)
 
 #### Performance Optimizations
 * Compile-time or cached font atlas generation
