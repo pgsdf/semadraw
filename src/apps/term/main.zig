@@ -189,7 +189,7 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
                     .key_press => |key| {
                         // Only process key presses (not releases)
                         if (key.pressed == 1) {
-                            handleKeyPress(&shell, key.key_code, key.modifiers);
+                            handleKeyPress(&shell, &scr, key.key_code, key.modifiers);
                         }
                     },
                     else => {},
@@ -213,9 +213,29 @@ fn renderAndCommit(allocator: std.mem.Allocator, rend: *renderer.Renderer, surfa
     try surface.attachAndCommit(sdcs_data);
 }
 
-fn handleKeyPress(shell: *pty.Pty, key_code: u32, modifiers: u8) void {
+fn handleKeyPress(shell: *pty.Pty, scr: *screen.Screen, key_code: u32, modifiers: u8) void {
     const ctrl = (modifiers & 0x04) != 0;
     const shift = (modifiers & 0x01) != 0;
+
+    // Handle scrollback navigation (Shift+PageUp/PageDown)
+    if (shift) {
+        switch (key_code) {
+            104 => { // PageUp
+                _ = scr.scrollViewUp(scr.rows / 2); // Scroll up half a screen
+                return;
+            },
+            109 => { // PageDown
+                _ = scr.scrollViewDown(scr.rows / 2); // Scroll down half a screen
+                return;
+            },
+            else => {},
+        }
+    }
+
+    // Any other key press resets scroll view to bottom
+    if (scr.isViewingScrollback()) {
+        scr.resetScrollView();
+    }
 
     // Map key codes to terminal sequences
     // These are Linux evdev key codes

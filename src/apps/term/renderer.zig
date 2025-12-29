@@ -52,8 +52,8 @@ pub const Renderer = struct {
         // Group cells by color for efficient rendering
         try self.renderCells();
 
-        // Draw cursor
-        if (self.scr.cursor_visible) {
+        // Draw cursor (hidden when viewing scrollback history)
+        if (self.scr.cursor_visible and !self.scr.isViewingScrollback()) {
             try self.renderCursor();
         }
 
@@ -78,7 +78,8 @@ pub const Renderer = struct {
 
         while (col < self.scr.cols) {
             const start_col = col;
-            const start_cell = self.scr.getCell(col, row);
+            // Use getVisibleCell to support scrollback viewing
+            const start_cell = self.scr.getVisibleCell(col, row);
 
             // Skip continuation cells (part of wide character)
             if (start_cell.width == 0) {
@@ -94,7 +95,8 @@ pub const Renderer = struct {
             defer glyphs.deinit(self.allocator);
 
             while (col < self.scr.cols) {
-                const cell = self.scr.getCell(col, row);
+                // Use getVisibleCell to support scrollback viewing
+                const cell = self.scr.getVisibleCell(col, row);
 
                 // Skip continuation cells
                 if (cell.width == 0) {
