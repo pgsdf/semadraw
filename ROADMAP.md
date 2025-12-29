@@ -56,3 +56,35 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 
 ### Backends
 * Wayland backend for windowed display (implemented, pending testing)
+
+### semadraw-term Improvements
+
+#### Critical (Blocks Basic Functionality)
+* Connect keyboard input handling (handleKeyPress exists but not called in event loop)
+* Alternative screen buffer support (required for vim, htop, less, nano)
+* Missing VT100 escape sequences (RIS, IND, NEL, HTS, RI, DECSC/DECRC)
+
+#### High Priority (Major Features)
+* Scrollback buffer (saved line history above visible window)
+* Fix double encoder reset bug in renderer.zig
+* Extended character support (currently ASCII 32-126 only, Unicode shows "?")
+* OSC escape sequence processing (terminal title, color palette)
+
+#### Medium Priority (Enhancements)
+* Mouse input support (tracking, selection, copy/paste)
+* Additional SGR codes (strikethrough, overline, double underline)
+* Cursor style variations (beam, underline, blinking animation)
+* Dirty region tracking (avoid full screen re-render every frame)
+
+#### Performance Optimizations
+* Compile-time or cached font atlas generation
+* Reuse glyph ArrayList instead of allocating per row
+* Cell caching for glyph index lookups
+* Optimize screen scrolling with block operations
+
+#### Code Quality
+* Remove or connect dead handleKeyPress code
+* Replace magic numbers with named constants
+* Add logging for silently dropped events
+* Terminal state validation improvements
+
