@@ -62,6 +62,7 @@ pub const Font = struct {
 
     /// Generate the font atlas (8-bit alpha values)
     pub fn generateAtlas() [ATLAS_WIDTH * ATLAS_HEIGHT]u8 {
+        @setEvalBranchQuota(100000); // Needed for comptime evaluation of nested loops
         var atlas: [ATLAS_WIDTH * ATLAS_HEIGHT]u8 = undefined;
         @memset(&atlas, 0);
 
