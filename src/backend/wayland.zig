@@ -718,6 +718,8 @@ pub const WaylandBackend = struct {
                 .pressed = pressed,
             };
             self.key_event_count += 1;
+        } else {
+            log.warn("key event queue overflow, dropping key={} pressed={}", .{ key, pressed });
         }
     }
 
@@ -778,6 +780,8 @@ pub const WaylandBackend = struct {
                 .modifiers = self.modifier_state,
             };
             self.mouse_event_count += 1;
+        } else {
+            log.debug("mouse motion event dropped (queue full)", .{});
         }
     }
 
@@ -804,6 +808,8 @@ pub const WaylandBackend = struct {
                 .modifiers = self.modifier_state,
             };
             self.mouse_event_count += 1;
+        } else {
+            log.warn("mouse button event dropped (queue full), button={}", .{button_code});
         }
     }
 
@@ -826,6 +832,8 @@ pub const WaylandBackend = struct {
                 .modifiers = self.modifier_state,
             };
             self.mouse_event_count += 1;
+        } else {
+            log.warn("mouse scroll event dropped (queue full), axis={}", .{axis});
         }
     }
 
