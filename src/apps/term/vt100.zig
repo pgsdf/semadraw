@@ -685,6 +685,22 @@ pub const Parser = struct {
                     self.executeDecrst();
                 }
             },
+            'q' => {
+                // DECSCUSR - Set cursor style (CSI Ps SP q)
+                if (self.intermediate_count == 1 and self.intermediate[0] == ' ') {
+                    const style_param = self.getParam(0, 0);
+                    const style: screen.Screen.CursorStyle = switch (style_param) {
+                        0, 1 => .block_blink, // 0 = default (blinking block), 1 = blinking block
+                        2 => .block_steady,
+                        3 => .underline_blink,
+                        4 => .underline_steady,
+                        5 => .bar_blink,
+                        6 => .bar_steady,
+                        else => .block_blink, // Default for unknown values
+                    };
+                    self.scr.setCursorStyle(style);
+                }
+            },
             else => {},
         }
     }
