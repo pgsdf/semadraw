@@ -501,7 +501,7 @@ pub const Parser = struct {
         self.scr.setPaletteColor(@intCast(index), rgb.r, rgb.g, rgb.b) catch {};
     }
 
-    fn parseOscColor(self: *Self, data: []const u8) ?struct { r: u8, g: u8, b: u8 } {
+    fn parseOscColor(self: *Self, data: []const u8) ?Rgb {
         _ = self;
         if (data.len == 0) return null;
 
@@ -511,7 +511,7 @@ pub const Parser = struct {
                 const r = parseHexByte(data[1..3]) orelse return null;
                 const g = parseHexByte(data[3..5]) orelse return null;
                 const b = parseHexByte(data[5..7]) orelse return null;
-                return .{ .r = r, .g = g, .b = b };
+                return Rgb{ .r = r, .g = g, .b = b };
             }
             return null;
         }
@@ -829,6 +829,9 @@ pub const Parser = struct {
 // Color parsing helper functions
 // ============================================================================
 
+/// RGB color type for OSC color parsing
+const Rgb = struct { r: u8, g: u8, b: u8 };
+
 /// Parse a 2-character hex byte (e.g., "FF" -> 255)
 fn parseHexByte(data: []const u8) ?u8 {
     if (data.len != 2) return null;
@@ -846,7 +849,7 @@ fn hexDigitToValue(c: u8) ?u8 {
 }
 
 /// Parse X11 color format: RR/GG/BB or RRRR/GGGG/BBBB
-fn parseX11Color(data: []const u8) ?struct { r: u8, g: u8, b: u8 } {
+fn parseX11Color(data: []const u8) ?Rgb {
     // Find the two separators
     var sep1: ?usize = null;
     var sep2: ?usize = null;
@@ -878,7 +881,7 @@ fn parseX11Color(data: []const u8) ?struct { r: u8, g: u8, b: u8 } {
     const g = parseHexComponent(g_str) orelse return null;
     const b = parseHexComponent(b_str) orelse return null;
 
-    return .{ .r = r, .g = g, .b = b };
+    return Rgb{ .r = r, .g = g, .b = b };
 }
 
 /// Parse a hex color component (1-4 hex digits) and scale to 0-255
@@ -1237,6 +1240,6 @@ test "parseX11Color" {
     try std.testing.expectEqual(@as(u8, 136), c3.b);
 
     // Invalid formats
-    try std.testing.expectEqual(@as(?@TypeOf(c1), null), parseX11Color("FF/00"));
-    try std.testing.expectEqual(@as(?@TypeOf(c1), null), parseX11Color("FF/00/GG"));
+    try std.testing.expectEqual(@as(?Rgb, null), parseX11Color("FF/00"));
+    try std.testing.expectEqual(@as(?Rgb, null), parseX11Color("FF/00/GG"));
 }
