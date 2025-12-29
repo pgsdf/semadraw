@@ -29,7 +29,6 @@ pub const Renderer = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        self.glyph_buffer.deinit(self.allocator);
         self.encoder.deinit();
     }
 
