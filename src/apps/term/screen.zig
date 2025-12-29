@@ -937,6 +937,76 @@ pub const Screen = struct {
     pub fn getScrollbackCount(self: *const Self) u32 {
         return self.scrollback_count;
     }
+
+    /// Validate terminal state invariants (debug mode only)
+    /// Returns error details if validation fails, null if all invariants hold
+    pub fn validateState(self: *const Self) ?StateValidationError {
+        // Cursor bounds check
+        if (self.cursor_col >= self.cols) {
+            return .{ .kind = .cursor_col_out_of_bounds, .value = self.cursor_col, .limit = self.cols };
+        }
+        if (self.cursor_row >= self.rows) {
+            return .{ .kind = .cursor_row_out_of_bounds, .value = self.cursor_row, .limit = self.rows };
+        }
+
+        // Scroll region validation
+        if (self.scroll_top >= self.rows) {
+            return .{ .kind = .scroll_top_out_of_bounds, .value = self.scroll_top, .limit = self.rows };
+        }
+        if (self.scroll_bottom >= self.rows) {
+            return .{ .kind = .scroll_bottom_out_of_bounds, .value = self.scroll_bottom, .limit = self.rows };
+        }
+        if (self.scroll_top > self.scroll_bottom) {
+            return .{ .kind = .scroll_region_inverted, .value = self.scroll_top, .limit = self.scroll_bottom };
+        }
+
+        // Scrollback buffer validation
+        if (self.scrollback_max > 0) {
+            if (self.scrollback_count > self.scrollback_max) {
+                return .{ .kind = .scrollback_count_exceeds_max, .value = self.scrollback_count, .limit = self.scrollback_max };
+            }
+            if (self.scrollback_count > 0 and self.scrollback_start >= self.scrollback_max) {
+                return .{ .kind = .scrollback_start_out_of_bounds, .value = self.scrollback_start, .limit = self.scrollback_max };
+            }
+        }
+
+        // Scroll view validation
+        if (self.scroll_view_offset > self.scrollback_count) {
+            return .{ .kind = .scroll_view_exceeds_scrollback, .value = self.scroll_view_offset, .limit = self.scrollback_count };
+        }
+
+        return null; // All invariants hold
+    }
+
+    /// Assert that terminal state is valid (panics in debug mode if invalid)
+    pub fn assertValid(self: *const Self) void {
+        if (@import("builtin").mode == .Debug) {
+            if (self.validateState()) |err| {
+                std.debug.panic("Terminal state validation failed: {s} (value={}, limit={})", .{
+                    @tagName(err.kind),
+                    err.value,
+                    err.limit,
+                });
+            }
+        }
+    }
+
+    pub const StateValidationError = struct {
+        kind: ErrorKind,
+        value: u32,
+        limit: u32,
+
+        pub const ErrorKind = enum {
+            cursor_col_out_of_bounds,
+            cursor_row_out_of_bounds,
+            scroll_top_out_of_bounds,
+            scroll_bottom_out_of_bounds,
+            scroll_region_inverted,
+            scrollback_count_exceeds_max,
+            scrollback_start_out_of_bounds,
+            scroll_view_exceeds_scrollback,
+        };
+    };
 };
 
 /// Character cell
@@ -1354,4 +1424,38 @@ test "Scrollback not saved from alt buffer" {
     // Exit alt buffer
     scr.exitAltBuffer();
     try std.testing.expectEqual(@as(u32, 0), scr.scrollback_count);
+}
+
+test "State validation" {
+    const allocator = std.testing.allocator;
+    var scr = try Screen.initWithScrollback(allocator, 10, 5, 10);
+    defer scr.deinit();
+
+    // Initial state should be valid
+    try std.testing.expectEqual(@as(?Screen.StateValidationError, null), scr.validateState());
+
+    // Valid cursor position
+    scr.setCursor(9, 4);
+    try std.testing.expectEqual(@as(?Screen.StateValidationError, null), scr.validateState());
+
+    // Valid scroll region
+    scr.setScrollRegion(1, 3);
+    try std.testing.expectEqual(@as(?Screen.StateValidationError, null), scr.validateState());
+
+    // Reset scroll region
+    scr.setScrollRegion(0, 4);
+    try std.testing.expectEqual(@as(?Screen.StateValidationError, null), scr.validateState());
+
+    // After scrolling, state should still be valid
+    scr.setCursor(0, 4);
+    scr.newline();
+    try std.testing.expectEqual(@as(?Screen.StateValidationError, null), scr.validateState());
+
+    // Scrollback view state should be valid
+    if (scr.scrollback_count > 0) {
+        _ = scr.scrollViewUp(1);
+        try std.testing.expectEqual(@as(?Screen.StateValidationError, null), scr.validateState());
+        scr.resetScrollView();
+        try std.testing.expectEqual(@as(?Screen.StateValidationError, null), scr.validateState());
+    }
 }
