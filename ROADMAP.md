@@ -78,7 +78,7 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 
 #### Performance Optimizations
 * Compile-time or cached font atlas generation
-* Reuse glyph ArrayList instead of allocating per row
+* ~~Reuse glyph ArrayList instead of allocating per row~~ (DONE - single reusable glyph_buffer in Renderer)
 * Cell caching for glyph index lookups
 * Optimize screen scrolling with block operations
 
