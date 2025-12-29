@@ -276,6 +276,8 @@ pub const X11Backend = struct {
                             .pressed = pressed,
                         };
                         self.key_event_count += 1;
+                    } else {
+                        log.warn("key event queue overflow, dropping key={} pressed={}", .{ evdev_code, pressed });
                     }
                 },
                 c.ButtonPress, c.ButtonRelease => {
@@ -314,6 +316,8 @@ pub const X11Backend = struct {
                             .modifiers = self.modifier_state,
                         };
                         self.mouse_event_count += 1;
+                    } else {
+                        log.warn("mouse button event dropped (queue full), button={}", .{btn_event.button});
                     }
                 },
                 c.MotionNotify => {
@@ -346,6 +350,8 @@ pub const X11Backend = struct {
                             .modifiers = self.modifier_state,
                         };
                         self.mouse_event_count += 1;
+                    } else {
+                        log.debug("mouse motion event dropped (queue full)", .{});
                     }
                 },
                 else => {},
