@@ -41,6 +41,9 @@ pub const X11Backend = struct {
     wm_delete_window: Atom,
     frame_count: u64,
     closed: bool,
+    // Rendering protection to prevent resize during render
+    rendering: bool,
+    pending_resize: ?struct { width: u32, height: u32 },
 
     const Self = @This();
 
@@ -64,6 +67,8 @@ pub const X11Backend = struct {
             .wm_delete_window = 0,
             .frame_count = 0,
             .closed = false,
+            .rendering = false,
+            .pending_resize = null,
         };
 
         // Open display
@@ -248,6 +253,12 @@ pub const X11Backend = struct {
 
     fn handleResize(self: *Self, new_width: u32, new_height: u32) !void {
         if (new_width == self.width and new_height == self.height) return;
+
+        // Defer resize if currently rendering to prevent use-after-free
+        if (self.rendering) {
+            self.pending_resize = .{ .width = new_width, .height = new_height };
+            return;
+        }
 
         log.info("resizing: {}x{} -> {}x{}", .{ self.width, self.height, new_width, new_height });
 
@@ -604,6 +615,19 @@ pub const X11Backend = struct {
     fn renderImpl(ctx: *anyopaque, request: backend.RenderRequest) anyerror!backend.RenderResult {
         const self: *Self = @ptrCast(@alignCast(ctx));
         const start = std.time.nanoTimestamp();
+
+        // Mark as rendering to prevent resize during render
+        self.rendering = true;
+        defer {
+            self.rendering = false;
+            // Process any pending resize after rendering completes
+            if (self.pending_resize) |resize| {
+                self.pending_resize = null;
+                self.handleResize(resize.width, resize.height) catch |err| {
+                    log.err("deferred resize failed: {}", .{err});
+                };
+            }
+        }
 
         // Process X11 events (keyboard, window close, etc.)
         if (!self.processEvents()) {

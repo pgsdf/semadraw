@@ -100,6 +100,13 @@ pub const SurfaceRegistry = struct {
     composition_order: std.ArrayListUnmanaged(*Surface),
     order_dirty: bool,
 
+    // Composition lock - prevents destructive operations during rendering
+    compositing: bool,
+    // Deferred destruction queue
+    pending_destroy: std.ArrayListUnmanaged(protocol.SurfaceId),
+    // Deferred buffer updates (surface_id -> new buffer data copy)
+    pending_buffer_updates: std.AutoHashMap(protocol.SurfaceId, []u8),
+
     pub fn init(allocator: std.mem.Allocator) SurfaceRegistry {
         return .{
             .allocator = allocator,
@@ -107,10 +114,21 @@ pub const SurfaceRegistry = struct {
             .next_id = 1,
             .composition_order = .{},
             .order_dirty = false,
+            .compositing = false,
+            .pending_destroy = .{},
+            .pending_buffer_updates = std.AutoHashMap(protocol.SurfaceId, []u8).init(allocator),
         };
     }
 
     pub fn deinit(self: *SurfaceRegistry) void {
+        // Free pending buffer updates
+        var buf_it = self.pending_buffer_updates.valueIterator();
+        while (buf_it.next()) |buf| {
+            self.allocator.free(buf.*);
+        }
+        self.pending_buffer_updates.deinit();
+        self.pending_destroy.deinit(self.allocator);
+
         var it = self.surfaces.valueIterator();
         while (it.next()) |surface_ptr| {
             if (surface_ptr.*.buffer) |*buf| {
@@ -120,6 +138,44 @@ pub const SurfaceRegistry = struct {
         }
         self.surfaces.deinit();
         self.composition_order.deinit(self.allocator);
+    }
+
+    /// Begin composition - prevents destructive operations
+    pub fn beginComposition(self: *SurfaceRegistry) void {
+        self.compositing = true;
+    }
+
+    /// End composition - processes deferred operations
+    pub fn endComposition(self: *SurfaceRegistry) void {
+        self.compositing = false;
+
+        // Process pending buffer updates
+        var buf_it = self.pending_buffer_updates.iterator();
+        while (buf_it.next()) |entry| {
+            const surface_id = entry.key_ptr.*;
+            const new_data = entry.value_ptr.*;
+            if (self.getSurface(surface_id)) |surface| {
+                // Free old buffer
+                if (surface.buffer) |*old_buf| {
+                    old_buf.deinit();
+                }
+                // Set new inline buffer with copied data
+                surface.buffer = .{
+                    .length = new_data.len,
+                    .inline_data = new_data,
+                };
+            } else {
+                // Surface was destroyed, free the copied data
+                self.allocator.free(new_data);
+            }
+        }
+        self.pending_buffer_updates.clearRetainingCapacity();
+
+        // Process pending destructions
+        for (self.pending_destroy.items) |id| {
+            self.destroySurfaceImmediate(id);
+        }
+        self.pending_destroy.clearRetainingCapacity();
     }
 
     /// Create a new surface
@@ -146,8 +202,23 @@ pub const SurfaceRegistry = struct {
         return surface;
     }
 
-    /// Destroy a surface
+    /// Destroy a surface (deferred if compositing)
     pub fn destroySurface(self: *SurfaceRegistry, id: protocol.SurfaceId) void {
+        if (self.compositing) {
+            // Defer destruction until composition ends
+            self.pending_destroy.append(self.allocator, id) catch return;
+            // Mark as invisible immediately to prevent rendering
+            if (self.getSurface(id)) |surface| {
+                surface.visible = false;
+            }
+            self.order_dirty = true;
+        } else {
+            self.destroySurfaceImmediate(id);
+        }
+    }
+
+    /// Destroy a surface immediately (internal use)
+    fn destroySurfaceImmediate(self: *SurfaceRegistry, id: protocol.SurfaceId) void {
         if (self.surfaces.fetchRemove(id)) |kv| {
             const surface = kv.value;
             if (surface.buffer) |*buf| {
@@ -196,6 +267,7 @@ pub const SurfaceRegistry = struct {
     }
 
     /// Attach inline buffer data to a surface (for remote connections)
+    /// During composition, buffer update is deferred to prevent use-after-free
     pub fn attachInlineBuffer(
         self: *SurfaceRegistry,
         surface_id: protocol.SurfaceId,
@@ -203,15 +275,27 @@ pub const SurfaceRegistry = struct {
     ) !void {
         const surface = self.getSurface(surface_id) orelse return error.SurfaceNotFound;
 
-        // Clean up old buffer if present
-        if (surface.buffer) |*old_buf| {
-            old_buf.deinit();
-        }
+        if (self.compositing) {
+            // During composition, copy data and defer the update
+            const data_copy = try self.allocator.alloc(u8, data.len);
+            @memcpy(data_copy, data);
 
-        surface.buffer = .{
-            .length = data.len,
-            .inline_data = data,
-        };
+            // Free any previous pending update for this surface
+            if (self.pending_buffer_updates.fetchRemove(surface_id)) |old| {
+                self.allocator.free(old.value);
+            }
+            try self.pending_buffer_updates.put(surface_id, data_copy);
+        } else {
+            // Not compositing - update immediately
+            if (surface.buffer) |*old_buf| {
+                old_buf.deinit();
+            }
+
+            surface.buffer = .{
+                .length = data.len,
+                .inline_data = data,
+            };
+        }
     }
 
     /// Set surface visibility

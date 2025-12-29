@@ -130,6 +130,9 @@ pub const WaylandBackend = struct {
     // Supported format
     shm_format: u32,
     format_found: bool,
+    // Rendering protection to prevent resize during render
+    rendering: bool,
+    pending_resize: ?struct { width: u32, height: u32 },
 
     const Self = @This();
 
@@ -161,6 +164,8 @@ pub const WaylandBackend = struct {
             .ctrl_held = false,
             .shm_format = WL_SHM_FORMAT_ARGB8888,
             .format_found = false,
+            .rendering = false,
+            .pending_resize = null,
         };
 
         // Connect to Wayland display
@@ -577,9 +582,16 @@ pub const WaylandBackend = struct {
     fn xdgToplevelConfigure(data: ?*anyopaque, _: ?*anyopaque, width: i32, height: i32, _: ?*anyopaque) callconv(.c) void {
         const self: *Self = @ptrCast(@alignCast(data));
         if (width > 0 and height > 0) {
-            if (@as(u32, @intCast(width)) != self.width or @as(u32, @intCast(height)) != self.height) {
+            const new_width: u32 = @intCast(width);
+            const new_height: u32 = @intCast(height);
+            if (new_width != self.width or new_height != self.height) {
+                // Defer resize if currently rendering to prevent use-after-free
+                if (self.rendering) {
+                    self.pending_resize = .{ .width = new_width, .height = new_height };
+                    return;
+                }
                 log.info("resize: {}x{} -> {}x{}", .{ self.width, self.height, width, height });
-                self.createBuffer(@intCast(width), @intCast(height)) catch |err| {
+                self.createBuffer(new_width, new_height) catch |err| {
                     log.err("failed to resize buffer: {}", .{err});
                 };
             }
@@ -908,6 +920,19 @@ pub const WaylandBackend = struct {
     fn renderImpl(ctx: *anyopaque, request: backend.RenderRequest) anyerror!backend.RenderResult {
         const self: *Self = @ptrCast(@alignCast(ctx));
         const start_time = std.time.nanoTimestamp();
+
+        // Mark as rendering to prevent resize during render
+        self.rendering = true;
+        defer {
+            self.rendering = false;
+            // Process any pending resize after rendering completes
+            if (self.pending_resize) |resize| {
+                self.pending_resize = null;
+                self.createBuffer(resize.width, resize.height) catch |err| {
+                    log.err("deferred resize failed: {}", .{err});
+                };
+            }
+        }
 
         if (!self.processEvents()) {
             return backend.RenderResult.failure(request.surface_id, "window closed");

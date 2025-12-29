@@ -134,6 +134,10 @@ pub const Compositor = struct {
 
         self.damage_tracker.beginFrame();
 
+        // Lock surfaces during composition to prevent use-after-free
+        self.surfaces.beginComposition();
+        defer self.surfaces.endComposition();
+
         // Get surfaces in composition order
         const composition_order = try self.surfaces.getCompositionOrder();
 
