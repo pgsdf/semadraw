@@ -72,7 +72,7 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 
 #### Medium Priority (Enhancements)
 * ~~Mouse input support~~ (DONE - X10/VT200/SGR mouse tracking modes 9/1000-1006/1015, button/motion events)
-* Additional SGR codes (strikethrough, overline, double underline)
+* ~~Additional SGR codes~~ (DONE - strikethrough SGR 9/29, overline SGR 53/55, double underline SGR 21)
 * Cursor style variations (beam, underline, blinking animation)
 * Dirty region tracking (avoid full screen re-render every frame)
 

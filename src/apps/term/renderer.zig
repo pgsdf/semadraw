@@ -88,6 +88,9 @@ pub const Renderer = struct {
 
             const start_fg = start_cell.attr.effectiveFg();
             const start_bg = start_cell.attr.effectiveBg();
+            const start_underline = start_cell.attr.underline;
+            const start_strikethrough = start_cell.attr.strikethrough;
+            const start_overline = start_cell.attr.overline;
 
             // Collect consecutive cells with same attributes
             var glyphs: std.ArrayList(semadraw.Encoder.Glyph) = .empty;
@@ -106,8 +109,12 @@ pub const Renderer = struct {
                 const fg = cell.attr.effectiveFg();
                 const bg = cell.attr.effectiveBg();
 
-                // Check if attributes match
-                if (!colorEqual(fg, start_fg) or !colorEqual(bg, start_bg)) {
+                // Check if attributes match (including text decorations)
+                if (!colorEqual(fg, start_fg) or !colorEqual(bg, start_bg) or
+                    cell.attr.underline != start_underline or
+                    cell.attr.strikethrough != start_strikethrough or
+                    cell.attr.overline != start_overline)
+                {
                     break;
                 }
 
@@ -160,6 +167,41 @@ pub const Renderer = struct {
                 glyphs.items,
                 &self.atlas,
             );
+
+            // Draw text decorations
+            const x1: f32 = @floatFromInt(start_col * font.Font.GLYPH_WIDTH);
+            const x2: f32 = @floatFromInt(col * font.Font.GLYPH_WIDTH);
+            const row_y: f32 = @floatFromInt(row * font.Font.GLYPH_HEIGHT);
+            const dec_r = @as(f32, @floatFromInt(fg_rgb.r)) / 255.0;
+            const dec_g = @as(f32, @floatFromInt(fg_rgb.g)) / 255.0;
+            const dec_b = @as(f32, @floatFromInt(fg_rgb.b)) / 255.0;
+
+            // Line thickness (1 pixel for decorations)
+            const line_thickness: f32 = 1.0;
+
+            // Underline: draw at bottom of cell
+            if (start_underline != .none) {
+                const underline_y = row_y + @as(f32, @floatFromInt(font.Font.GLYPH_HEIGHT)) - 1.0;
+                try self.encoder.strokeLine(x1, underline_y, x2, underline_y, line_thickness, dec_r, dec_g, dec_b, 1.0);
+
+                // Double underline: draw second line 2 pixels above
+                if (start_underline == .double) {
+                    const underline_y2 = underline_y - 2.0;
+                    try self.encoder.strokeLine(x1, underline_y2, x2, underline_y2, line_thickness, dec_r, dec_g, dec_b, 1.0);
+                }
+            }
+
+            // Strikethrough: draw at middle of cell
+            if (start_strikethrough) {
+                const strike_y = row_y + @as(f32, @floatFromInt(font.Font.GLYPH_HEIGHT)) / 2.0;
+                try self.encoder.strokeLine(x1, strike_y, x2, strike_y, line_thickness, dec_r, dec_g, dec_b, 1.0);
+            }
+
+            // Overline: draw at top of cell
+            if (start_overline) {
+                const overline_y = row_y + 1.0;
+                try self.encoder.strokeLine(x1, overline_y, x2, overline_y, line_thickness, dec_r, dec_g, dec_b, 1.0);
+            }
         }
     }
 
