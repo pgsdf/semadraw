@@ -1,4 +1,5 @@
 const std = @import("std");
+const font = @import("font");
 
 /// Terminal screen buffer
 /// Manages character grid with attributes, cursor, and scrolling
@@ -251,6 +252,7 @@ pub const Screen = struct {
         cell.char = c;
         cell.attr = self.current_attr;
         cell.width = width;
+        cell.glyph_idx = font.Font.charToIndexWithFallback(c);
         self.cursor_col += 1;
 
         // For wide characters, add continuation cell
@@ -959,12 +961,15 @@ pub const Cell = struct {
     attr: Attr,
     /// Width of this character (1 for most, 2 for wide chars, 0 for continuation)
     width: u2,
+    /// Cached glyph index for fast rendering (avoids charToIndex lookup per frame)
+    glyph_idx: u32,
 
     pub fn blank() Cell {
         return .{
             .char = ' ',
             .attr = Attr.default(),
             .width = 1,
+            .glyph_idx = font.Font.charToIndexWithFallback(' '),
         };
     }
 
@@ -974,6 +979,7 @@ pub const Cell = struct {
             .char = 0,
             .attr = Attr.default(),
             .width = 0,
+            .glyph_idx = font.Font.FALLBACK_INDEX,
         };
     }
 };
