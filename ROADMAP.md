@@ -77,14 +77,14 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 * ~~Dirty region tracking~~ (DONE - per-row dirty flags, renderer skips unchanged rows)
 
 #### Performance Optimizations
-* Compile-time or cached font atlas generation
+* ~~Compile-time or cached font atlas generation~~ (DONE - Font.ATLAS comptime constant, Renderer uses pointer)
 * ~~Reuse glyph ArrayList instead of allocating per row~~ (DONE - single reusable glyph_buffer in Renderer)
 * ~~Cell caching for glyph index lookups~~ (DONE - glyph_idx field cached in Cell, computed on character write)
-* Optimize screen scrolling with block operations
+* ~~Optimize screen scrolling with block operations~~ (DONE - @memset/@memcpy for scroll, erase, insert/delete)
 
 #### Code Quality
 * ~~Remove or connect dead handleKeyPress code~~ (DONE - handleKeyPress connected to key_press events in main loop)
 * ~~Replace magic numbers with named constants~~ (DONE - Key, Modifiers, Ascii structs for evdev codes and control chars)
 * ~~Add logging for silently dropped events~~ (DONE - debug logs for unhandled keys, CSI, DECSET/DECRST, SGR, control chars)
-* Terminal state validation improvements
+* ~~Terminal state validation improvements~~ (DONE - validateState/assertValid for cursor, scroll region, scrollback invariants)
 
