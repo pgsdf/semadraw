@@ -80,7 +80,7 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 * ~~Compile-time or cached font atlas generation~~ (DONE - Font.ATLAS comptime constant, Renderer uses pointer)
 * ~~Reuse glyph ArrayList instead of allocating per row~~ (DONE - single reusable glyph_buffer in Renderer)
 * ~~Cell caching for glyph index lookups~~ (DONE - glyph_idx field cached in Cell, computed on character write)
-* Optimize screen scrolling with block operations
+* ~~Optimize screen scrolling with block operations~~ (DONE - @memset/@memcpy for scroll, erase, insert/delete)
 
 #### Code Quality
 * ~~Remove or connect dead handleKeyPress code~~ (DONE - handleKeyPress connected to key_press events in main loop)

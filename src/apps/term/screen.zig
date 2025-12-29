@@ -334,7 +334,7 @@ pub const Screen = struct {
             self.saveLinesToScrollback(lines_to_scroll);
         }
 
-        // Move lines up
+        // Move lines up using block copy
         var row = start_row;
         while (row <= end_row - lines_to_scroll) : (row += 1) {
             const src_start = (row + lines_to_scroll) * self.cols;
@@ -342,19 +342,13 @@ pub const Screen = struct {
             @memcpy(self.cells[dst_start..][0..self.cols], self.cells[src_start..][0..self.cols]);
         }
 
-        // Clear bottom lines
-        while (row <= end_row) : (row += 1) {
-            const start = row * self.cols;
-            for (self.cells[start..][0..self.cols]) |*cell| {
-                cell.* = Cell.blank();
-            }
-        }
+        // Clear bottom lines using block fill
+        const clear_start = (end_row - lines_to_scroll + 1) * self.cols;
+        const clear_count = lines_to_scroll * self.cols;
+        @memset(self.cells[clear_start..][0..clear_count], Cell.blank());
 
-        // Mark all rows in scroll region as dirty
-        var dirty_row = start_row;
-        while (dirty_row <= end_row) : (dirty_row += 1) {
-            self.markRowDirty(dirty_row);
-        }
+        // Mark all rows in scroll region as dirty using block fill
+        @memset(self.dirty_rows[start_row..][0 .. end_row - start_row + 1], true);
 
         // Reset scroll view when new content is added
         if (self.scroll_view_offset > 0) {
@@ -403,7 +397,7 @@ pub const Screen = struct {
         const start_row = self.scroll_top;
         const end_row = self.scroll_bottom;
 
-        // Move lines down (iterate in reverse)
+        // Move lines down (iterate in reverse to avoid overlap issues)
         var row = end_row;
         while (row >= start_row + lines_to_scroll) : (row -= 1) {
             const src_start = (row - lines_to_scroll) * self.cols;
@@ -412,20 +406,13 @@ pub const Screen = struct {
             if (row == start_row + lines_to_scroll) break;
         }
 
-        // Clear top lines
-        row = start_row;
-        while (row < start_row + lines_to_scroll) : (row += 1) {
-            const start = row * self.cols;
-            for (self.cells[start..][0..self.cols]) |*cell| {
-                cell.* = Cell.blank();
-            }
-        }
+        // Clear top lines using block fill
+        const clear_start = start_row * self.cols;
+        const clear_count = lines_to_scroll * self.cols;
+        @memset(self.cells[clear_start..][0..clear_count], Cell.blank());
 
-        // Mark all rows in scroll region as dirty
-        var dirty_row = start_row;
-        while (dirty_row <= end_row) : (dirty_row += 1) {
-            self.markRowDirty(dirty_row);
-        }
+        // Mark all rows in scroll region as dirty using block fill
+        @memset(self.dirty_rows[start_row..][0 .. end_row - start_row + 1], true);
     }
 
     /// Set cursor position (0-indexed)
@@ -476,62 +463,63 @@ pub const Screen = struct {
 
     /// Erase from cursor to end of line
     pub fn eraseToEndOfLine(self: *Self) void {
-        var col = self.cursor_col;
-        while (col < self.cols) : (col += 1) {
-            self.getCellMut(col, self.cursor_row).* = Cell.blank();
-        }
+        const start = self.cursor_row * self.cols + self.cursor_col;
+        const count = self.cols - self.cursor_col;
+        @memset(self.cells[start..][0..count], Cell.blank());
         self.markRowDirty(self.cursor_row);
     }
 
     /// Erase from start of line to cursor
     pub fn eraseToStartOfLine(self: *Self) void {
-        var col: u32 = 0;
-        while (col <= self.cursor_col) : (col += 1) {
-            self.getCellMut(col, self.cursor_row).* = Cell.blank();
-        }
+        const start = self.cursor_row * self.cols;
+        const count = self.cursor_col + 1;
+        @memset(self.cells[start..][0..count], Cell.blank());
         self.markRowDirty(self.cursor_row);
     }
 
     /// Erase entire line
     pub fn eraseLine(self: *Self) void {
         const start = self.cursor_row * self.cols;
-        for (self.cells[start..][0..self.cols]) |*cell| {
-            cell.* = Cell.blank();
-        }
+        @memset(self.cells[start..][0..self.cols], Cell.blank());
         self.markRowDirty(self.cursor_row);
     }
 
     /// Erase from cursor to end of screen
     pub fn eraseToEndOfScreen(self: *Self) void {
-        self.eraseToEndOfLine();
-        var row = self.cursor_row + 1;
-        while (row < self.rows) : (row += 1) {
-            const start = row * self.cols;
-            for (self.cells[start..][0..self.cols]) |*cell| {
-                cell.* = Cell.blank();
-            }
-            self.markRowDirty(row);
+        // Erase from cursor to end of current line
+        const line_start = self.cursor_row * self.cols + self.cursor_col;
+        const line_count = self.cols - self.cursor_col;
+        @memset(self.cells[line_start..][0..line_count], Cell.blank());
+
+        // Erase all remaining lines
+        if (self.cursor_row + 1 < self.rows) {
+            const start = (self.cursor_row + 1) * self.cols;
+            const count = (self.rows - self.cursor_row - 1) * self.cols;
+            @memset(self.cells[start..][0..count], Cell.blank());
+            @memset(self.dirty_rows[self.cursor_row + 1 ..][0 .. self.rows - self.cursor_row - 1], true);
         }
+        self.markRowDirty(self.cursor_row);
     }
 
     /// Erase from start of screen to cursor
     pub fn eraseToStartOfScreen(self: *Self) void {
-        var row: u32 = 0;
-        while (row < self.cursor_row) : (row += 1) {
-            const start = row * self.cols;
-            for (self.cells[start..][0..self.cols]) |*cell| {
-                cell.* = Cell.blank();
-            }
-            self.markRowDirty(row);
+        // Erase all lines before cursor row
+        if (self.cursor_row > 0) {
+            const count = self.cursor_row * self.cols;
+            @memset(self.cells[0..count], Cell.blank());
+            @memset(self.dirty_rows[0..self.cursor_row], true);
         }
-        self.eraseToStartOfLine();
+
+        // Erase from start of cursor line to cursor
+        const line_start = self.cursor_row * self.cols;
+        const line_count = self.cursor_col + 1;
+        @memset(self.cells[line_start..][0..line_count], Cell.blank());
+        self.markRowDirty(self.cursor_row);
     }
 
     /// Erase entire screen
     pub fn eraseScreen(self: *Self) void {
-        for (self.cells) |*cell| {
-            cell.* = Cell.blank();
-        }
+        @memset(self.cells, Cell.blank());
         self.markAllRowsDirty();
     }
 
@@ -551,16 +539,14 @@ pub const Screen = struct {
         const chars_to_delete = @min(n, self.cols - self.cursor_col);
         const chars_to_shift = self.cols - self.cursor_col - chars_to_delete;
 
-        // Shift characters left
-        var col = self.cursor_col;
-        while (col < self.cursor_col + chars_to_shift) : (col += 1) {
-            self.cells[row_start + col] = self.cells[row_start + col + chars_to_delete];
-        }
+        // Shift characters left using block copy
+        const dst_start = row_start + self.cursor_col;
+        const src_start = row_start + self.cursor_col + chars_to_delete;
+        @memcpy(self.cells[dst_start..][0..chars_to_shift], self.cells[src_start..][0..chars_to_shift]);
 
-        // Clear remaining
-        while (col < self.cols) : (col += 1) {
-            self.cells[row_start + col] = Cell.blank();
-        }
+        // Clear remaining using block fill
+        const clear_start = row_start + self.cursor_col + chars_to_shift;
+        @memset(self.cells[clear_start..][0..chars_to_delete], Cell.blank());
         self.markRowDirty(self.cursor_row);
     }
 
@@ -570,18 +556,16 @@ pub const Screen = struct {
         const chars_to_insert = @min(n, self.cols - self.cursor_col);
         const chars_to_keep = self.cols - self.cursor_col - chars_to_insert;
 
-        // Shift characters right (iterate in reverse)
+        // Shift characters right using backward copy (reverse iteration for overlapping regions)
         var col = self.cols - 1;
         while (col >= self.cursor_col + chars_to_insert) : (col -= 1) {
             self.cells[row_start + col] = self.cells[row_start + col - chars_to_insert];
             if (col == self.cursor_col + chars_to_insert) break;
         }
 
-        // Clear inserted area
-        col = self.cursor_col;
-        while (col < self.cursor_col + chars_to_insert) : (col += 1) {
-            self.cells[row_start + col] = Cell.blank();
-        }
+        // Clear inserted area using block fill
+        const clear_start = row_start + self.cursor_col;
+        @memset(self.cells[clear_start..][0..chars_to_insert], Cell.blank());
         _ = chars_to_keep;
         self.markRowDirty(self.cursor_row);
     }
