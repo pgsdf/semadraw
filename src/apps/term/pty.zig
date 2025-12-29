@@ -82,8 +82,18 @@ pub const Pty = struct {
             _ = ioctl(0, TIOCSWINSZ, @intFromPtr(&ws));
 
             // Execute shell
-            const shell_path = shell orelse getDefaultShell();
-            const shell_basename = std.fs.path.basename(shell_path);
+            const shell_path_slice = shell orelse getDefaultShell();
+
+            // Copy shell path to null-terminated buffer for execve
+            var shell_path_buf: [256]u8 = undefined;
+            if (shell_path_slice.len >= shell_path_buf.len) {
+                posix.exit(1);
+            }
+            @memcpy(shell_path_buf[0..shell_path_slice.len], shell_path_slice);
+            shell_path_buf[shell_path_slice.len] = 0;
+            const shell_path: [*:0]const u8 = @ptrCast(&shell_path_buf);
+
+            const shell_basename = std.fs.path.basename(shell_path_slice);
 
             // Prepare argv with login shell prefix
             var login_name_buf: [256]u8 = undefined;
@@ -100,7 +110,7 @@ pub const Pty = struct {
             const envp = std.c.environ;
 
             const err = std.c.execve(
-                @ptrCast(shell_path.ptr),
+                shell_path,
                 @ptrCast(&argv),
                 envp,
             );
