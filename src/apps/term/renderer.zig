@@ -11,6 +11,8 @@ pub const Renderer = struct {
     scr: *screen.Screen,
     width_px: u32,
     height_px: u32,
+    // Reusable buffer for glyph runs to avoid per-row allocations
+    glyph_buffer: std.ArrayList(semadraw.Encoder.Glyph),
 
     const Self = @This();
 
@@ -22,10 +24,12 @@ pub const Renderer = struct {
             .scr = scr,
             .width_px = scr.cols * font.Font.GLYPH_WIDTH,
             .height_px = scr.rows * font.Font.GLYPH_HEIGHT,
+            .glyph_buffer = .empty,
         };
     }
 
     pub fn deinit(self: *Self) void {
+        self.glyph_buffer.deinit(self.allocator);
         self.encoder.deinit();
     }
 
@@ -116,9 +120,8 @@ pub const Renderer = struct {
             const start_strikethrough = start_cell.attr.strikethrough;
             const start_overline = start_cell.attr.overline;
 
-            // Collect consecutive cells with same attributes
-            var glyphs: std.ArrayList(semadraw.Encoder.Glyph) = .empty;
-            defer glyphs.deinit(self.allocator);
+            // Clear and reuse the glyph buffer (avoids per-run allocation)
+            self.glyph_buffer.clearRetainingCapacity();
 
             while (col < self.scr.cols) {
                 // Use getVisibleCell to support scrollback viewing
@@ -146,7 +149,7 @@ pub const Renderer = struct {
                 if (cell.char != ' ' or !colorEqual(bg, screen.Color.default_bg)) {
                     // Use fallback for unsupported Unicode characters
                     const glyph_idx = font.Font.charToIndexWithFallback(cell.char);
-                    try glyphs.append(self.allocator, .{
+                    try self.glyph_buffer.append(self.allocator, .{
                         .index = glyph_idx,
                         .x_offset = @floatFromInt((col - start_col) * font.Font.GLYPH_WIDTH),
                         .y_offset = 0,
@@ -156,7 +159,7 @@ pub const Renderer = struct {
                 col += 1;
             }
 
-            if (glyphs.items.len == 0) continue;
+            if (self.glyph_buffer.items.len == 0) continue;
 
             // Draw background if not default
             if (!colorEqual(start_bg, screen.Color.default_bg)) {
@@ -188,7 +191,7 @@ pub const Renderer = struct {
                 font.Font.ATLAS_COLS,
                 font.Font.ATLAS_WIDTH,
                 font.Font.ATLAS_HEIGHT,
-                glyphs.items,
+                self.glyph_buffer.items,
                 &self.atlas,
             );
 
