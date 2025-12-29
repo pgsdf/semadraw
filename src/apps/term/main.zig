@@ -283,7 +283,9 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
                     .mouse_event => |mouse| {
                         handleMouseEvent(&shell, &scr, mouse);
                     },
-                    else => {},
+                    else => |tag| {
+                        log.debug("unhandled event type: {}", .{tag});
+                    },
                 }
             }
         }
@@ -539,11 +541,15 @@ fn handleKeyPress(shell: *pty.Pty, scr: *screen.Screen, key_code: u32, modifiers
             len = 4;
         },
 
-        else => {},
+        else => {
+            log.debug("unhandled key code: {}", .{key_code});
+        },
     }
 
     if (len > 0) {
-        shell.write(buf[0..len]) catch {};
+        shell.write(buf[0..len]) catch |err| {
+            log.warn("shell write failed: {}", .{err});
+        };
     }
 }
 
@@ -616,7 +622,9 @@ fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, mouse: client.protocol
     }
 
     if (len > 0) {
-        shell.write(buf[0..len]) catch {};
+        shell.write(buf[0..len]) catch |err| {
+            log.warn("mouse event write failed: {}", .{err});
+        };
     }
 }
 

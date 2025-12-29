@@ -1,6 +1,8 @@
 const std = @import("std");
 const screen = @import("screen");
 
+const log = std.log.scoped(.vt100);
+
 /// VT100/ANSI escape sequence parser with UTF-8 support
 /// Processes input bytes and performs terminal operations on a Screen
 pub const Parser = struct {
@@ -194,7 +196,9 @@ pub const Parser = struct {
             0x09 => self.scr.tab(),
             0x0A, 0x0B, 0x0C => self.scr.newline(), // LF, VT, FF
             0x0D => self.scr.carriageReturn(),
-            else => {},
+            else => {
+                log.debug("unhandled control char: 0x{X:0>2}", .{c});
+            },
         }
     }
 
@@ -292,7 +296,9 @@ pub const Parser = struct {
                 // DECRC - Restore cursor position and attributes
                 self.scr.restoreCursor();
             },
-            else => {},
+            else => {
+                log.debug("unhandled ESC sequence: ESC {c} (0x{X:0>2})", .{ c, c });
+            },
         }
     }
 
@@ -607,7 +613,9 @@ pub const Parser = struct {
                     0 => self.scr.eraseToEndOfScreen(),
                     1 => self.scr.eraseToStartOfScreen(),
                     2, 3 => self.scr.eraseScreen(),
-                    else => {},
+                    else => {
+                        log.debug("unhandled ED mode: {}", .{mode});
+                    },
                 }
             },
             'K' => {
@@ -617,7 +625,9 @@ pub const Parser = struct {
                     0 => self.scr.eraseToEndOfLine(),
                     1 => self.scr.eraseToStartOfLine(),
                     2 => self.scr.eraseLine(),
-                    else => {},
+                    else => {
+                        log.debug("unhandled EL mode: {}", .{mode});
+                    },
                 }
             },
             'L' => {
@@ -701,7 +711,9 @@ pub const Parser = struct {
                     self.scr.setCursorStyle(style);
                 }
             },
-            else => {},
+            else => {
+                log.debug("unhandled CSI: {c} (params={any})", .{ c, self.params[0..self.param_count] });
+            },
         }
     }
 
@@ -763,7 +775,9 @@ pub const Parser = struct {
                     // Save cursor, use alternate screen buffer, clear
                     self.scr.enterAltBufferWithCursorSave() catch {};
                 },
-                else => {},
+                else => {
+                    log.debug("unhandled DECSET mode: {}", .{mode});
+                },
             }
         }
     }
@@ -803,7 +817,9 @@ pub const Parser = struct {
                     // Use normal screen buffer, restore cursor
                     self.scr.exitAltBufferWithCursorRestore();
                 },
-                else => {},
+                else => {
+                    log.debug("unhandled DECRST mode: {}", .{mode});
+                },
             }
         }
     }
@@ -887,7 +903,9 @@ pub const Parser = struct {
                 49 => self.scr.current_attr.bg = screen.Color.default_bg,
                 90...97 => self.scr.current_attr.fg = screen.Color{ .indexed = @intCast(p - 90 + 8) },
                 100...107 => self.scr.current_attr.bg = screen.Color{ .indexed = @intCast(p - 100 + 8) },
-                else => {},
+                else => {
+                    log.debug("unhandled SGR param: {}", .{p});
+                },
             }
             i += 1;
         }
