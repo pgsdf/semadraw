@@ -146,10 +146,9 @@ pub const Renderer = struct {
 
                 // Skip spaces with default background (optimization)
                 if (cell.char != ' ' or !colorEqual(bg, screen.Color.default_bg)) {
-                    // Use fallback for unsupported Unicode characters
-                    const glyph_idx = font.Font.charToIndexWithFallback(cell.char);
+                    // Use cached glyph index from cell (computed once when character was written)
                     try self.glyph_buffer.append(self.allocator, .{
-                        .index = glyph_idx,
+                        .index = cell.glyph_idx,
                         .x_offset = @floatFromInt((col - start_col) * font.Font.GLYPH_WIDTH),
                         .y_offset = 0,
                     });
