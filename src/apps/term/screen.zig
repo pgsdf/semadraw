@@ -33,6 +33,17 @@ pub const Screen = struct {
     scrollback_start: u32, // Ring buffer start index
     scroll_view_offset: u32, // How many lines we're scrolled back (0 = at bottom)
 
+    // Terminal title (set via OSC 0/1/2)
+    title: [256]u8, // Window/icon title (null-terminated)
+    title_len: u8,
+    icon_name: [256]u8, // Icon name (separate from title)
+    icon_name_len: u8,
+
+    // Color palette customization (OSC 4/10/11)
+    custom_palette: ?*[256][3]u8, // Custom 256-color palette (null = use default)
+    custom_fg: ?[3]u8, // Custom foreground color (OSC 10)
+    custom_bg: ?[3]u8, // Custom background color (OSC 11)
+
     /// Default scrollback buffer size (lines)
     pub const DEFAULT_SCROLLBACK_LINES: u32 = 1000;
 
@@ -82,6 +93,15 @@ pub const Screen = struct {
             .scrollback_count = 0,
             .scrollback_start = 0,
             .scroll_view_offset = 0,
+            // Terminal title
+            .title = [_]u8{0} ** 256,
+            .title_len = 0,
+            .icon_name = [_]u8{0} ** 256,
+            .icon_name_len = 0,
+            // Color palette
+            .custom_palette = null,
+            .custom_fg = null,
+            .custom_bg = null,
         };
     }
 
@@ -98,6 +118,10 @@ pub const Screen = struct {
                 }
             }
             self.allocator.free(sb);
+        }
+        // Free custom palette if allocated
+        if (self.custom_palette) |palette| {
+            self.allocator.destroy(palette);
         }
     }
 
@@ -540,6 +564,114 @@ pub const Screen = struct {
     pub fn setCursorVisible(self: *Self, visible: bool) void {
         self.cursor_visible = visible;
         self.dirty = true;
+    }
+
+    // ========================================================================
+    // Terminal title (OSC 0/1/2)
+    // ========================================================================
+
+    /// Set window title (OSC 2) or both title and icon name (OSC 0)
+    pub fn setTitle(self: *Self, text: []const u8) void {
+        const len = @min(text.len, 255);
+        @memcpy(self.title[0..len], text[0..len]);
+        self.title_len = @intCast(len);
+        self.title[len] = 0; // Null terminate
+    }
+
+    /// Set icon name (OSC 1)
+    pub fn setIconName(self: *Self, text: []const u8) void {
+        const len = @min(text.len, 255);
+        @memcpy(self.icon_name[0..len], text[0..len]);
+        self.icon_name_len = @intCast(len);
+        self.icon_name[len] = 0; // Null terminate
+    }
+
+    /// Get current window title as a slice
+    pub fn getTitle(self: *const Self) []const u8 {
+        return self.title[0..self.title_len];
+    }
+
+    /// Get current icon name as a slice
+    pub fn getIconName(self: *const Self) []const u8 {
+        return self.icon_name[0..self.icon_name_len];
+    }
+
+    // ========================================================================
+    // Color palette customization (OSC 4/10/11)
+    // ========================================================================
+
+    /// Set a custom palette color (OSC 4)
+    pub fn setPaletteColor(self: *Self, index: u8, r: u8, g: u8, b: u8) !void {
+        // Allocate custom palette on first use
+        if (self.custom_palette == null) {
+            self.custom_palette = try self.allocator.create([256][3]u8);
+            // Initialize with default palette
+            for (0..256) |i| {
+                const default_rgb = (Color{ .indexed = @intCast(i) }).toRgb();
+                self.custom_palette.?[i] = .{ default_rgb.r, default_rgb.g, default_rgb.b };
+            }
+        }
+        self.custom_palette.?[index] = .{ r, g, b };
+    }
+
+    /// Set custom foreground color (OSC 10)
+    pub fn setForegroundColor(self: *Self, r: u8, g: u8, b: u8) void {
+        self.custom_fg = .{ r, g, b };
+    }
+
+    /// Set custom background color (OSC 11)
+    pub fn setBackgroundColor(self: *Self, r: u8, g: u8, b: u8) void {
+        self.custom_bg = .{ r, g, b };
+    }
+
+    /// Reset palette color to default (OSC 104)
+    pub fn resetPaletteColor(self: *Self, index: u8) void {
+        if (self.custom_palette) |palette| {
+            const default_rgb = (Color{ .indexed = index }).toRgb();
+            palette[index] = .{ default_rgb.r, default_rgb.g, default_rgb.b };
+        }
+    }
+
+    /// Reset all palette colors to default (OSC 104 with no args)
+    pub fn resetPalette(self: *Self) void {
+        if (self.custom_palette) |palette| {
+            self.allocator.destroy(palette);
+            self.custom_palette = null;
+        }
+    }
+
+    /// Reset foreground color to default (OSC 110)
+    pub fn resetForegroundColor(self: *Self) void {
+        self.custom_fg = null;
+    }
+
+    /// Reset background color to default (OSC 111)
+    pub fn resetBackgroundColor(self: *Self) void {
+        self.custom_bg = null;
+    }
+
+    /// Get effective palette color (custom if set, else default)
+    pub fn getPaletteColor(self: *const Self, index: u8) struct { r: u8, g: u8, b: u8 } {
+        if (self.custom_palette) |palette| {
+            return .{ .r = palette[index][0], .g = palette[index][1], .b = palette[index][2] };
+        }
+        return (Color{ .indexed = index }).toRgb();
+    }
+
+    /// Get effective foreground color (custom if set, else default)
+    pub fn getEffectiveForeground(self: *const Self) struct { r: u8, g: u8, b: u8 } {
+        if (self.custom_fg) |fg| {
+            return .{ .r = fg[0], .g = fg[1], .b = fg[2] };
+        }
+        return Color.default_fg.toRgb();
+    }
+
+    /// Get effective background color (custom if set, else default)
+    pub fn getEffectiveBackground(self: *const Self) struct { r: u8, g: u8, b: u8 } {
+        if (self.custom_bg) |bg| {
+            return .{ .r = bg[0], .g = bg[1], .b = bg[2] };
+        }
+        return Color.default_bg.toRgb();
     }
 
     // ========================================================================
