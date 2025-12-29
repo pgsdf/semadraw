@@ -83,8 +83,8 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 * Optimize screen scrolling with block operations
 
 #### Code Quality
-* Remove or connect dead handleKeyPress code
-* Replace magic numbers with named constants
+* ~~Remove or connect dead handleKeyPress code~~ (DONE - handleKeyPress connected to key_press events in main loop)
+* ~~Replace magic numbers with named constants~~ (DONE - Key, Modifiers, Ascii structs for evdev codes and control chars)
 * Add logging for silently dropped events
 * Terminal state validation improvements
 
