@@ -470,9 +470,11 @@ fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, mouse: client.protocol
     const cell_x = @divFloor(mouse.x, @as(i32, font.Font.GLYPH_WIDTH)) + 1;
     const cell_y = @divFloor(mouse.y, @as(i32, font.Font.GLYPH_HEIGHT)) + 1;
 
-    // Clamp to valid range
-    const x: u32 = @intCast(@max(1, @min(cell_x, @as(i32, scr.cols))));
-    const y: u32 = @intCast(@max(1, @min(cell_y, @as(i32, scr.rows))));
+    // Clamp to valid range (cols/rows are u32 but always fit in i32 for reasonable terminals)
+    const max_col: i32 = @intCast(scr.cols);
+    const max_row: i32 = @intCast(scr.rows);
+    const x: u32 = @intCast(@max(1, @min(cell_x, max_col)));
+    const y: u32 = @intCast(@max(1, @min(cell_y, max_row)));
 
     // Generate the mouse report based on encoding mode
     var buf: [32]u8 = undefined;
