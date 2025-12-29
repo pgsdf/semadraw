@@ -576,6 +576,9 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/apps/term/screen.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "font", .module = term_font_mod },
+        },
     });
 
     const term_vt100_mod = b.createModule(.{
