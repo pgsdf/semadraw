@@ -50,7 +50,7 @@ pub const Screen = struct {
     mouse_focus_events: bool, // Mode 1004: Report focus in/out
 
     /// Mouse tracking modes
-    pub const MouseTrackingMode = enum(u8) {
+    pub const MouseTrackingMode = enum(u16) {
         none = 0, // No mouse tracking
         x10 = 9, // X10 mode: Only report button presses
         vt200 = 1000, // VT200 mode: Report presses and releases
@@ -60,7 +60,7 @@ pub const Screen = struct {
     };
 
     /// Mouse encoding modes (how coordinates are reported)
-    pub const MouseEncodingMode = enum(u8) {
+    pub const MouseEncodingMode = enum(u16) {
         x10 = 0, // Default X10: CSI M Cb Cx Cy (limited to 223 columns/rows)
         utf8 = 1005, // UTF-8 encoding for coordinates
         sgr = 1006, // SGR extended: CSI < Pb ; Px ; Py M/m
