@@ -218,6 +218,10 @@ pub const Font = struct {
             else => .{ .left = true, .right = true, .up = true, .down = true },
         };
     }
+
+    /// Pre-computed font atlas (evaluated at compile time)
+    /// This eliminates runtime atlas generation overhead
+    pub const ATLAS: [ATLAS_WIDTH * ATLAS_HEIGHT]u8 = generateAtlas();
 };
 
 /// 8x16 bitmap font data for ASCII 32-126

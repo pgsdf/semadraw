@@ -7,7 +7,8 @@ const font = @import("font");
 pub const Renderer = struct {
     allocator: std.mem.Allocator,
     encoder: semadraw.Encoder,
-    atlas: [font.Font.ATLAS_WIDTH * font.Font.ATLAS_HEIGHT]u8,
+    /// Pointer to compile-time generated font atlas (no per-instance copy needed)
+    atlas: *const [font.Font.ATLAS_WIDTH * font.Font.ATLAS_HEIGHT]u8,
     scr: *screen.Screen,
     width_px: u32,
     height_px: u32,
@@ -20,7 +21,7 @@ pub const Renderer = struct {
         return .{
             .allocator = allocator,
             .encoder = semadraw.Encoder.init(allocator),
-            .atlas = font.Font.generateAtlas(),
+            .atlas = &font.Font.ATLAS,
             .scr = scr,
             .width_px = scr.cols * font.Font.GLYPH_WIDTH,
             .height_px = scr.rows * font.Font.GLYPH_HEIGHT,
@@ -191,7 +192,7 @@ pub const Renderer = struct {
                 font.Font.ATLAS_WIDTH,
                 font.Font.ATLAS_HEIGHT,
                 self.glyph_buffer.items,
-                &self.atlas,
+                self.atlas,
             );
 
             // Draw text decorations

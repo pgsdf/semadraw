@@ -77,7 +77,7 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 * ~~Dirty region tracking~~ (DONE - per-row dirty flags, renderer skips unchanged rows)
 
 #### Performance Optimizations
-* Compile-time or cached font atlas generation
+* ~~Compile-time or cached font atlas generation~~ (DONE - Font.ATLAS comptime constant, Renderer uses pointer)
 * ~~Reuse glyph ArrayList instead of allocating per row~~ (DONE - single reusable glyph_buffer in Renderer)
 * ~~Cell caching for glyph index lookups~~ (DONE - glyph_idx field cached in Cell, computed on character write)
 * Optimize screen scrolling with block operations
