@@ -206,20 +206,35 @@ pub const Renderer = struct {
     }
 
     fn renderCursor(self: *Self) !void {
-        const cursor_x = self.scr.cursor_col * font.Font.GLYPH_WIDTH;
-        const cursor_y = self.scr.cursor_row * font.Font.GLYPH_HEIGHT;
+        const cursor_x: f32 = @floatFromInt(self.scr.cursor_col * font.Font.GLYPH_WIDTH);
+        const cursor_y: f32 = @floatFromInt(self.scr.cursor_row * font.Font.GLYPH_HEIGHT);
+        const glyph_w: f32 = @floatFromInt(font.Font.GLYPH_WIDTH);
+        const glyph_h: f32 = @floatFromInt(font.Font.GLYPH_HEIGHT);
 
-        // Draw a block cursor
-        try self.encoder.fillRect(
-            @floatFromInt(cursor_x),
-            @floatFromInt(cursor_y),
-            @floatFromInt(font.Font.GLYPH_WIDTH),
-            @floatFromInt(font.Font.GLYPH_HEIGHT),
-            0.7,
-            0.7,
-            0.7,
-            0.8, // Semi-transparent white
-        );
+        // Cursor color (semi-transparent white)
+        const r: f32 = 0.7;
+        const g: f32 = 0.7;
+        const b: f32 = 0.7;
+        const a: f32 = 0.8;
+
+        // Draw cursor based on style
+        switch (self.scr.getCursorShape()) {
+            .block => {
+                // Full block cursor
+                try self.encoder.fillRect(cursor_x, cursor_y, glyph_w, glyph_h, r, g, b, a);
+            },
+            .underline => {
+                // Underline cursor: thin line at bottom of cell (2 pixels high)
+                const underline_height: f32 = 2.0;
+                const underline_y = cursor_y + glyph_h - underline_height;
+                try self.encoder.fillRect(cursor_x, underline_y, glyph_w, underline_height, r, g, b, a);
+            },
+            .bar => {
+                // Bar/beam cursor: thin vertical line on left side (2 pixels wide)
+                const bar_width: f32 = 2.0;
+                try self.encoder.fillRect(cursor_x, cursor_y, bar_width, glyph_h, r, g, b, a);
+            },
+        }
     }
 
     fn colorEqual(a: screen.Color, b: screen.Color) bool {

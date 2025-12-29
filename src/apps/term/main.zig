@@ -141,6 +141,11 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
     // Initial render
     try renderAndCommit(allocator, &rend, surface);
 
+    // Cursor blink state
+    const blink_interval_ms: i64 = 500; // Toggle every 500ms
+    var last_blink_time = std.time.milliTimestamp();
+    var cursor_blink_visible = true;
+
     // Main event loop
     var running = true;
     while (running) {
@@ -153,10 +158,23 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
         const poll_slice: []posix.pollfd = @ptrCast(&poll_fds);
         const n = posix.poll(poll_slice, 16) catch continue; // 16ms timeout for ~60fps
 
+        // Check cursor blink timing
+        const current_time = std.time.milliTimestamp();
+        if (scr.shouldCursorBlink() and current_time - last_blink_time >= blink_interval_ms) {
+            cursor_blink_visible = !cursor_blink_visible;
+            last_blink_time = current_time;
+            scr.dirty = true; // Need to re-render for blink state change
+        }
+
+        // For non-blinking cursors, always show
+        if (!scr.shouldCursorBlink()) {
+            cursor_blink_visible = true;
+        }
+
         if (n == 0) {
             // Timeout - check for render needs
             if (scr.dirty) {
-                try renderAndCommit(allocator, &rend, surface);
+                try renderAndCommitWithBlink(allocator, &rend, surface, cursor_blink_visible);
                 scr.dirty = false;
             }
             continue;
@@ -202,7 +220,7 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
 
         // Render if dirty
         if (scr.dirty) {
-            try renderAndCommit(allocator, &rend, surface);
+            try renderAndCommitWithBlink(allocator, &rend, surface, cursor_blink_visible);
             scr.dirty = false;
         }
     }
@@ -211,6 +229,19 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
 }
 
 fn renderAndCommit(allocator: std.mem.Allocator, rend: *renderer.Renderer, surface: *client.Surface) !void {
+    const sdcs_data = try rend.render();
+    defer allocator.free(sdcs_data);
+    try surface.attachAndCommit(sdcs_data);
+}
+
+fn renderAndCommitWithBlink(allocator: std.mem.Allocator, rend: *renderer.Renderer, surface: *client.Surface, cursor_blink_visible: bool) !void {
+    // Temporarily hide cursor if blinking and in "off" phase
+    const original_visible = rend.scr.cursor_visible;
+    if (!cursor_blink_visible) {
+        rend.scr.cursor_visible = false;
+    }
+    defer rend.scr.cursor_visible = original_visible;
+
     const sdcs_data = try rend.render();
     defer allocator.free(sdcs_data);
     try surface.attachAndCommit(sdcs_data);

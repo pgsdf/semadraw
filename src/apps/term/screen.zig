@@ -12,6 +12,8 @@ pub const Screen = struct {
     cursor_col: u32,
     cursor_row: u32,
     cursor_visible: bool,
+    cursor_style: CursorStyle,
+    cursor_blink: bool, // Whether cursor should blink (from style)
     scroll_top: u32,
     scroll_bottom: u32,
     current_attr: Attr,
@@ -67,6 +69,36 @@ pub const Screen = struct {
         urxvt = 1015, // URXVT style: CSI Pb ; Px ; Py M
     };
 
+    /// Cursor style (DECSCUSR - CSI Ps SP q)
+    pub const CursorStyle = enum(u8) {
+        block = 0, // Default block cursor (filled rectangle)
+        block_blink = 1, // Blinking block
+        block_steady = 2, // Steady block
+        underline_blink = 3, // Blinking underline
+        underline_steady = 4, // Steady underline
+        bar_blink = 5, // Blinking bar (beam/I-beam)
+        bar_steady = 6, // Steady bar
+
+        /// Check if this style should blink
+        pub fn shouldBlink(self: CursorStyle) bool {
+            return switch (self) {
+                .block, .block_blink, .underline_blink, .bar_blink => true,
+                .block_steady, .underline_steady, .bar_steady => false,
+            };
+        }
+
+        /// Get the shape type (block, underline, or bar)
+        pub fn shape(self: CursorStyle) Shape {
+            return switch (self) {
+                .block, .block_blink, .block_steady => .block,
+                .underline_blink, .underline_steady => .underline,
+                .bar_blink, .bar_steady => .bar,
+            };
+        }
+
+        pub const Shape = enum { block, underline, bar };
+    };
+
     /// Default scrollback buffer size (lines)
     pub const DEFAULT_SCROLLBACK_LINES: u32 = 1000;
 
@@ -99,6 +131,8 @@ pub const Screen = struct {
             .cursor_col = 0,
             .cursor_row = 0,
             .cursor_visible = true,
+            .cursor_style = .block,
+            .cursor_blink = true,
             .scroll_top = 0,
             .scroll_bottom = rows - 1,
             .current_attr = Attr.default(),
@@ -591,6 +625,28 @@ pub const Screen = struct {
     pub fn setCursorVisible(self: *Self, visible: bool) void {
         self.cursor_visible = visible;
         self.dirty = true;
+    }
+
+    /// Set cursor style (DECSCUSR)
+    pub fn setCursorStyle(self: *Self, style: CursorStyle) void {
+        self.cursor_style = style;
+        self.cursor_blink = style.shouldBlink();
+        self.dirty = true;
+    }
+
+    /// Get current cursor style
+    pub fn getCursorStyle(self: *const Self) CursorStyle {
+        return self.cursor_style;
+    }
+
+    /// Get cursor shape (block, underline, or bar)
+    pub fn getCursorShape(self: *const Self) CursorStyle.Shape {
+        return self.cursor_style.shape();
+    }
+
+    /// Check if cursor should blink
+    pub fn shouldCursorBlink(self: *const Self) bool {
+        return self.cursor_blink;
     }
 
     // ========================================================================
