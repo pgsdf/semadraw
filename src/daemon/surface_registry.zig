@@ -354,6 +354,14 @@ pub const SurfaceRegistry = struct {
         return self.composition_order.items;
     }
 
+    /// Get the top (highest z-order) visible surface for keyboard focus
+    pub fn getTopVisibleSurface(self: *SurfaceRegistry) ?protocol.SurfaceId {
+        const order = self.getCompositionOrder() catch return null;
+        if (order.len == 0) return null;
+        // Last in order is top (highest z-order)
+        return order[order.len - 1].id;
+    }
+
     /// Remove all surfaces owned by a client
     pub fn removeClientSurfaces(self: *SurfaceRegistry, client: protocol.ClientId) void {
         var to_remove = std.ArrayListUnmanaged(protocol.SurfaceId){};

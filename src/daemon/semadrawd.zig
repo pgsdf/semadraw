@@ -181,6 +181,12 @@ pub const Daemon = struct {
                 break;
             }
 
+            // Forward keyboard events to focused surface's client
+            const key_events = self.comp.getKeyEvents();
+            if (key_events.len > 0) {
+                self.forwardKeyEvents(key_events);
+            }
+
             if (n == 0) continue; // Timeout, no socket events
 
             // Process events
@@ -803,6 +809,32 @@ pub const Daemon = struct {
 
     pub fn stop(self: *Daemon) void {
         self.running = false;
+    }
+
+    /// Forward keyboard events to the top visible surface's client
+    fn forwardKeyEvents(self: *Daemon, key_events: []const backend.KeyEvent) void {
+        // Get the top visible surface to send keyboard input to
+        const top_surface_id = self.surfaces.getTopVisibleSurface() orelse return;
+        const surface = self.surfaces.getSurface(top_surface_id) orelse return;
+
+        for (key_events) |event| {
+            const msg = protocol.KeyPressMsg{
+                .surface_id = top_surface_id,
+                .key_code = event.key_code,
+                .modifiers = event.modifiers,
+                .pressed = if (event.pressed) 1 else 0,
+            };
+            var payload: [protocol.KeyPressMsg.SIZE]u8 = undefined;
+            msg.serialize(&payload);
+
+            // Try to send to local client first
+            if (self.clients.findById(surface.owner)) |session| {
+                session.send(.key_press, &payload) catch {};
+            } else if (self.remote_clients.get(surface.owner)) |remote_session| {
+                // Try remote client
+                remote_session.client.sendMessage(.key_press, &payload) catch {};
+            }
+        }
     }
 };
 

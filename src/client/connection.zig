@@ -19,6 +19,7 @@ pub const Event = union(enum) {
     frame_complete: protocol.FrameCompleteMsg,
     sync_done: protocol.SyncDoneMsg,
     error_reply: protocol.ErrorReplyMsg,
+    key_press: protocol.KeyPressMsg,
     disconnected: void,
 };
 
@@ -348,6 +349,13 @@ pub const Connection = struct {
                 if (msg.payload) |p| {
                     if (protocol.ErrorReplyMsg.deserialize(p)) |m| {
                         return .{ .error_reply = m };
+                    } else |_| {}
+                }
+            },
+            .key_press => {
+                if (msg.payload) |p| {
+                    if (protocol.KeyPressMsg.deserialize(p)) |m| {
+                        return .{ .key_press = m };
                     } else |_| {}
                 }
             },

@@ -186,6 +186,12 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
                     .error_reply => |err| {
                         log.err("daemon error: {}", .{err.code});
                     },
+                    .key_press => |key| {
+                        // Only process key presses (not releases)
+                        if (key.pressed == 1) {
+                            handleKeyPress(&shell, key.key_code, key.modifiers);
+                        }
+                    },
                     else => {},
                 }
             }
@@ -210,122 +216,130 @@ fn renderAndCommit(allocator: std.mem.Allocator, rend: *renderer.Renderer, surfa
 fn handleKeyPress(shell: *pty.Pty, key_code: u32, modifiers: u8) void {
     const ctrl = (modifiers & 0x04) != 0;
     const shift = (modifiers & 0x01) != 0;
-    _ = shift;
 
     // Map key codes to terminal sequences
     // These are Linux evdev key codes
     var buf: [16]u8 = undefined;
     var len: usize = 0;
 
+    // Helper to get letter with shift support
+    const getChar = struct {
+        fn get(lower: u8, is_shift: bool, is_ctrl: bool) u8 {
+            if (is_ctrl) {
+                // Ctrl+letter = ASCII 1-26
+                return lower - 'a' + 1;
+            } else if (is_shift) {
+                return lower - 32; // Convert to uppercase
+            } else {
+                return lower;
+            }
+        }
+    }.get;
+
     switch (key_code) {
         // Letters A-Z (16-50 are Q,W,E,R,T,Y,U,I,O,P, A,S,D,F,G,H,J,K,L, Z,X,C,V,B,N,M)
         16 => { // Q
-            if (ctrl) {
-                buf[0] = 0x11; // Ctrl+Q
-                len = 1;
-            } else {
-                buf[0] = 'q';
-                len = 1;
-            }
+            buf[0] = getChar('q', shift, ctrl);
+            len = 1;
         },
         17 => {
-            buf[0] = if (ctrl) 0x17 else 'w';
+            buf[0] = getChar('w', shift, ctrl);
             len = 1;
         },
         18 => {
-            buf[0] = if (ctrl) 0x05 else 'e';
+            buf[0] = getChar('e', shift, ctrl);
             len = 1;
         },
         19 => {
-            buf[0] = if (ctrl) 0x12 else 'r';
+            buf[0] = getChar('r', shift, ctrl);
             len = 1;
         },
         20 => {
-            buf[0] = if (ctrl) 0x14 else 't';
+            buf[0] = getChar('t', shift, ctrl);
             len = 1;
         },
         21 => {
-            buf[0] = if (ctrl) 0x19 else 'y';
+            buf[0] = getChar('y', shift, ctrl);
             len = 1;
         },
         22 => {
-            buf[0] = if (ctrl) 0x15 else 'u';
+            buf[0] = getChar('u', shift, ctrl);
             len = 1;
         },
         23 => {
-            buf[0] = if (ctrl) 0x09 else 'i';
+            buf[0] = getChar('i', shift, ctrl);
             len = 1;
         },
         24 => {
-            buf[0] = if (ctrl) 0x0F else 'o';
+            buf[0] = getChar('o', shift, ctrl);
             len = 1;
         },
         25 => {
-            buf[0] = if (ctrl) 0x10 else 'p';
+            buf[0] = getChar('p', shift, ctrl);
             len = 1;
         },
         30 => {
-            buf[0] = if (ctrl) 0x01 else 'a';
+            buf[0] = getChar('a', shift, ctrl);
             len = 1;
         },
         31 => {
-            buf[0] = if (ctrl) 0x13 else 's';
+            buf[0] = getChar('s', shift, ctrl);
             len = 1;
         },
         32 => {
-            buf[0] = if (ctrl) 0x04 else 'd';
+            buf[0] = getChar('d', shift, ctrl);
             len = 1;
         },
         33 => {
-            buf[0] = if (ctrl) 0x06 else 'f';
+            buf[0] = getChar('f', shift, ctrl);
             len = 1;
         },
         34 => {
-            buf[0] = if (ctrl) 0x07 else 'g';
+            buf[0] = getChar('g', shift, ctrl);
             len = 1;
         },
         35 => {
-            buf[0] = if (ctrl) 0x08 else 'h';
+            buf[0] = getChar('h', shift, ctrl);
             len = 1;
         },
         36 => {
-            buf[0] = if (ctrl) 0x0A else 'j';
+            buf[0] = getChar('j', shift, ctrl);
             len = 1;
         },
         37 => {
-            buf[0] = if (ctrl) 0x0B else 'k';
+            buf[0] = getChar('k', shift, ctrl);
             len = 1;
         },
         38 => {
-            buf[0] = if (ctrl) 0x0C else 'l';
+            buf[0] = getChar('l', shift, ctrl);
             len = 1;
         },
         44 => {
-            buf[0] = if (ctrl) 0x1A else 'z';
+            buf[0] = getChar('z', shift, ctrl);
             len = 1;
         },
         45 => {
-            buf[0] = if (ctrl) 0x18 else 'x';
+            buf[0] = getChar('x', shift, ctrl);
             len = 1;
         },
         46 => {
-            buf[0] = if (ctrl) 0x03 else 'c'; // Ctrl+C
+            buf[0] = getChar('c', shift, ctrl);
             len = 1;
         },
         47 => {
-            buf[0] = if (ctrl) 0x16 else 'v';
+            buf[0] = getChar('v', shift, ctrl);
             len = 1;
         },
         48 => {
-            buf[0] = if (ctrl) 0x02 else 'b';
+            buf[0] = getChar('b', shift, ctrl);
             len = 1;
         },
         49 => {
-            buf[0] = if (ctrl) 0x0E else 'n';
+            buf[0] = getChar('n', shift, ctrl);
             len = 1;
         },
         50 => {
-            buf[0] = if (ctrl) 0x0D else 'm';
+            buf[0] = getChar('m', shift, ctrl);
             len = 1;
         },
 

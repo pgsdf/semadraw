@@ -290,6 +290,14 @@ pub const Compositor = struct {
         }
         return true;
     }
+
+    /// Get pending key events from backend
+    pub fn getKeyEvents(self: *Self) []const backend_mod.KeyEvent {
+        if (self.output) |*out| {
+            return out.be.getKeyEvents();
+        }
+        return &[_]backend_mod.KeyEvent{};
+    }
 };
 
 /// Result of a composite operation

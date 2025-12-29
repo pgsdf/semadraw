@@ -44,6 +44,11 @@ pub const X11Backend = struct {
     // Rendering protection to prevent resize during render
     rendering: bool,
     pending_resize: ?struct { width: u32, height: u32 },
+    // Keyboard event queue
+    key_events: [backend.MAX_KEY_EVENTS]backend.KeyEvent,
+    key_event_count: usize,
+    // Modifier state tracking
+    modifier_state: u8,
 
     const Self = @This();
 
@@ -69,6 +74,9 @@ pub const X11Backend = struct {
             .closed = false,
             .rendering = false,
             .pending_resize = null,
+            .key_events = undefined,
+            .key_event_count = 0,
+            .modifier_state = 0,
         };
 
         // Open display
@@ -233,15 +241,36 @@ pub const X11Backend = struct {
                         return false;
                     }
                 },
-                c.KeyPress => {
+                c.KeyPress, c.KeyRelease => {
                     const key_event = event.xkey;
+                    const pressed = (event.type == c.KeyPress);
+
+                    // Update modifier state
+                    self.modifier_state = 0;
+                    if (key_event.state & c.ShiftMask != 0) self.modifier_state |= 0x01;
+                    if (key_event.state & c.Mod1Mask != 0) self.modifier_state |= 0x02; // Alt
+                    if (key_event.state & c.ControlMask != 0) self.modifier_state |= 0x04;
+                    if (key_event.state & c.Mod4Mask != 0) self.modifier_state |= 0x08; // Meta/Super
+
+                    // Convert X11 keycode to evdev keycode (X11 = evdev + 8)
+                    const evdev_code: u32 = if (key_event.keycode >= 8) key_event.keycode - 8 else 0;
+
+                    // Check for Ctrl+Q to quit
                     const keysym = c.XLookupKeysym(@constCast(&key_event), 0);
-                    // Ctrl+Q to quit (less likely to conflict with applications)
-                    const ctrl_held = (key_event.state & c.ControlMask) != 0;
-                    if (ctrl_held and (keysym == c.XK_q or keysym == c.XK_Q)) {
+                    if (pressed and (self.modifier_state & 0x04) != 0 and (keysym == c.XK_q or keysym == c.XK_Q)) {
                         log.info("Ctrl+Q pressed, closing window", .{});
                         self.closed = true;
                         return false;
+                    }
+
+                    // Queue the key event for clients
+                    if (self.key_event_count < backend.MAX_KEY_EVENTS) {
+                        self.key_events[self.key_event_count] = .{
+                            .key_code = evdev_code,
+                            .modifiers = self.modifier_state,
+                            .pressed = pressed,
+                        };
+                        self.key_event_count += 1;
                     }
                 },
                 else => {},
@@ -690,6 +719,13 @@ pub const X11Backend = struct {
         self.deinit();
     }
 
+    fn getKeyEventsImpl(ctx: *anyopaque) []const backend.KeyEvent {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        const count = self.key_event_count;
+        self.key_event_count = 0; // Clear the queue
+        return self.key_events[0..count];
+    }
+
     pub const vtable = backend.Backend.VTable{
         .getCapabilities = getCapabilitiesImpl,
         .initFramebuffer = initFramebufferImpl,
@@ -697,6 +733,7 @@ pub const X11Backend = struct {
         .getPixels = getPixelsImpl,
         .resize = resizeImpl,
         .pollEvents = pollEventsImpl,
+        .getKeyEvents = getKeyEventsImpl,
         .deinit = deinitImpl,
     };
 

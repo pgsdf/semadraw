@@ -44,6 +44,9 @@ pub const MsgType = enum(u16) {
     frame_complete = 0x8021,
     sync_done = 0x8040,
     error_reply = 0x80F0,
+
+    // Daemon -> Client input events (0x9xxx)
+    key_press = 0x9001,
 };
 
 /// Message header (8 bytes, always present)
@@ -441,6 +444,47 @@ pub const ErrorReplyMsg = extern struct {
         return .{
             .code = std.meta.intToEnum(ErrorCode, code_val) catch .internal_error,
             .context = std.mem.readInt(u32, buf[4..8], .little),
+        };
+    }
+};
+
+// ============================================================================
+// Input Events
+// ============================================================================
+
+/// Key press/release event
+pub const KeyPressMsg = extern struct {
+    surface_id: SurfaceId, // Target surface (focused surface)
+    key_code: u32, // Platform key code (evdev on Linux)
+    modifiers: u8, // Modifier state: bit 0=shift, bit 1=alt, bit 2=ctrl, bit 3=meta
+    pressed: u8, // 1 = pressed, 0 = released
+    _reserved: u16 = 0,
+
+    pub const SIZE: usize = 12;
+
+    // Modifier bit masks
+    pub const MOD_SHIFT: u8 = 0x01;
+    pub const MOD_ALT: u8 = 0x02;
+    pub const MOD_CTRL: u8 = 0x04;
+    pub const MOD_META: u8 = 0x08;
+
+    pub fn serialize(self: KeyPressMsg, buf: []u8) void {
+        std.debug.assert(buf.len >= SIZE);
+        std.mem.writeInt(u32, buf[0..4], self.surface_id, .little);
+        std.mem.writeInt(u32, buf[4..8], self.key_code, .little);
+        buf[8] = self.modifiers;
+        buf[9] = self.pressed;
+        std.mem.writeInt(u16, buf[10..12], self._reserved, .little);
+    }
+
+    pub fn deserialize(buf: []const u8) !KeyPressMsg {
+        if (buf.len < SIZE) return error.BufferTooSmall;
+        return .{
+            .surface_id = std.mem.readInt(u32, buf[0..4], .little),
+            .key_code = std.mem.readInt(u32, buf[4..8], .little),
+            .modifiers = buf[8],
+            .pressed = buf[9],
+            ._reserved = std.mem.readInt(u16, buf[10..12], .little),
         };
     }
 };
