@@ -3,6 +3,7 @@ const std = @import("std");
 /// Terminal screen buffer
 /// Manages character grid with attributes, cursor, and scrolling
 /// Supports alternative screen buffer (mode 1049) for vim, htop, less, etc.
+/// Supports scrollback history for viewing past output
 pub const Screen = struct {
     allocator: std.mem.Allocator,
     cols: u32,
@@ -25,12 +26,35 @@ pub const Screen = struct {
     saved_cursor_row: u32,
     saved_attr: Attr,
 
+    // Scrollback buffer (ring buffer of saved lines)
+    scrollback: ?[][]Cell, // Array of saved lines (each line is cols cells)
+    scrollback_max: u32, // Maximum number of lines to save
+    scrollback_count: u32, // Current number of lines in scrollback
+    scrollback_start: u32, // Ring buffer start index
+    scroll_view_offset: u32, // How many lines we're scrolled back (0 = at bottom)
+
+    /// Default scrollback buffer size (lines)
+    pub const DEFAULT_SCROLLBACK_LINES: u32 = 1000;
+
     const Self = @This();
 
     pub fn init(allocator: std.mem.Allocator, cols: u32, rows: u32) !Self {
+        return initWithScrollback(allocator, cols, rows, DEFAULT_SCROLLBACK_LINES);
+    }
+
+    pub fn initWithScrollback(allocator: std.mem.Allocator, cols: u32, rows: u32, scrollback_lines: u32) !Self {
         const cells = try allocator.alloc(Cell, cols * rows);
         for (cells) |*cell| {
             cell.* = Cell.blank();
+        }
+
+        // Allocate scrollback buffer if enabled
+        var scrollback: ?[][]Cell = null;
+        if (scrollback_lines > 0) {
+            scrollback = try allocator.alloc([]Cell, scrollback_lines);
+            for (scrollback.?) |*line| {
+                line.* = &[_]Cell{};
+            }
         }
 
         return .{
@@ -52,6 +76,12 @@ pub const Screen = struct {
             .saved_cursor_col = 0,
             .saved_cursor_row = 0,
             .saved_attr = Attr.default(),
+            // Scrollback buffer
+            .scrollback = scrollback,
+            .scrollback_max = scrollback_lines,
+            .scrollback_count = 0,
+            .scrollback_start = 0,
+            .scroll_view_offset = 0,
         };
     }
 
@@ -59,6 +89,15 @@ pub const Screen = struct {
         self.allocator.free(self.cells);
         if (self.alt_cells) |alt| {
             self.allocator.free(alt);
+        }
+        // Free scrollback buffer
+        if (self.scrollback) |sb| {
+            for (sb) |line| {
+                if (line.len > 0) {
+                    self.allocator.free(line);
+                }
+            }
+            self.allocator.free(sb);
         }
     }
 
@@ -157,10 +196,17 @@ pub const Screen = struct {
     }
 
     /// Scroll up by n lines within scroll region
+    /// Lines scrolling off the top are saved to scrollback (main buffer only)
     pub fn scrollUp(self: *Self, n: u32) void {
         const lines_to_scroll = @min(n, self.scroll_bottom - self.scroll_top + 1);
         const start_row = self.scroll_top;
         const end_row = self.scroll_bottom;
+
+        // Save lines to scrollback (only from main buffer, not alt buffer)
+        // Only save when scroll region is at the top of screen
+        if (!self.using_alt_buffer and start_row == 0) {
+            self.saveLinesToScrollback(lines_to_scroll);
+        }
 
         // Move lines up
         var row = start_row;
@@ -178,6 +224,46 @@ pub const Screen = struct {
             }
         }
         self.dirty = true;
+
+        // Reset scroll view when new content is added
+        if (self.scroll_view_offset > 0) {
+            self.scroll_view_offset = 0;
+        }
+    }
+
+    /// Save lines from the top of screen to scrollback buffer
+    fn saveLinesToScrollback(self: *Self, count: u32) void {
+        const sb = self.scrollback orelse return;
+        if (self.scrollback_max == 0) return;
+
+        var i: u32 = 0;
+        while (i < count) : (i += 1) {
+            // Calculate the index in the ring buffer
+            var idx: u32 = undefined;
+            if (self.scrollback_count < self.scrollback_max) {
+                // Buffer not full yet, append
+                idx = self.scrollback_count;
+                self.scrollback_count += 1;
+            } else {
+                // Buffer full, overwrite oldest
+                idx = self.scrollback_start;
+                self.scrollback_start = (self.scrollback_start + 1) % self.scrollback_max;
+            }
+
+            // Free old line if any
+            if (sb[idx].len > 0) {
+                self.allocator.free(sb[idx]);
+            }
+
+            // Allocate and copy the line
+            const new_line = self.allocator.alloc(Cell, self.cols) catch {
+                sb[idx] = &[_]Cell{};
+                continue;
+            };
+            const src_start = i * self.cols;
+            @memcpy(new_line, self.cells[src_start..][0..self.cols]);
+            sb[idx] = new_line;
+        }
     }
 
     /// Scroll down by n lines within scroll region
@@ -454,6 +540,104 @@ pub const Screen = struct {
     pub fn setCursorVisible(self: *Self, visible: bool) void {
         self.cursor_visible = visible;
         self.dirty = true;
+    }
+
+    // ========================================================================
+    // Scrollback buffer navigation
+    // ========================================================================
+
+    /// Scroll view up (into history) by n lines
+    /// Returns true if scroll position changed
+    pub fn scrollViewUp(self: *Self, n: u32) bool {
+        if (self.scrollback_count == 0) return false;
+
+        const max_offset = self.scrollback_count;
+        const new_offset = @min(self.scroll_view_offset + n, max_offset);
+
+        if (new_offset != self.scroll_view_offset) {
+            self.scroll_view_offset = new_offset;
+            self.dirty = true;
+            return true;
+        }
+        return false;
+    }
+
+    /// Scroll view down (toward present) by n lines
+    /// Returns true if scroll position changed
+    pub fn scrollViewDown(self: *Self, n: u32) bool {
+        if (self.scroll_view_offset == 0) return false;
+
+        if (n >= self.scroll_view_offset) {
+            self.scroll_view_offset = 0;
+        } else {
+            self.scroll_view_offset -= n;
+        }
+        self.dirty = true;
+        return true;
+    }
+
+    /// Reset scroll view to bottom (present)
+    pub fn resetScrollView(self: *Self) void {
+        if (self.scroll_view_offset > 0) {
+            self.scroll_view_offset = 0;
+            self.dirty = true;
+        }
+    }
+
+    /// Check if currently viewing scrollback
+    pub fn isViewingScrollback(self: *const Self) bool {
+        return self.scroll_view_offset > 0;
+    }
+
+    /// Get cell at visible position (considering scroll offset)
+    /// This returns the cell that should be displayed at the given screen position
+    pub fn getVisibleCell(self: *const Self, col: u32, row: u32) Cell {
+        if (self.scroll_view_offset == 0) {
+            // Not scrolled, return normal cell
+            return self.cells[row * self.cols + col];
+        }
+
+        // Calculate which line this row maps to in the combined view
+        // scroll_view_offset = how many lines of scrollback we're viewing
+        // The visible area is: [scrollback history] + [screen buffer]
+        // With scroll_view_offset, we're looking at an earlier slice
+
+        const scrollback_lines_visible = @min(self.scroll_view_offset, self.scrollback_count);
+        const screen_lines_visible = self.rows - scrollback_lines_visible;
+
+        if (row < scrollback_lines_visible) {
+            // This row is from scrollback
+            const sb = self.scrollback orelse return Cell.blank();
+
+            // Calculate which scrollback line to show
+            // scrollback_count - scroll_view_offset + row gives us the line index
+            // We need to account for the ring buffer
+            const lines_from_end = self.scroll_view_offset - row;
+            if (lines_from_end > self.scrollback_count) {
+                return Cell.blank();
+            }
+            const line_idx = self.scrollback_count - lines_from_end;
+
+            // Convert to ring buffer index
+            const ring_idx = (self.scrollback_start + line_idx) % self.scrollback_max;
+            const line = sb[ring_idx];
+            if (line.len == 0 or col >= line.len) {
+                return Cell.blank();
+            }
+            return line[col];
+        } else {
+            // This row is from screen buffer
+            const screen_row = row - scrollback_lines_visible;
+            if (screen_row >= screen_lines_visible) {
+                return Cell.blank();
+            }
+            return self.cells[screen_row * self.cols + col];
+        }
+    }
+
+    /// Get the number of lines available in scrollback
+    pub fn getScrollbackCount(self: *const Self) u32 {
+        return self.scrollback_count;
     }
 };
 
@@ -745,4 +929,116 @@ test "Screen mode 1049 (alt buffer with cursor save)" {
     try std.testing.expectEqual(@as(u32, 10), scr.cursor_row);
     try std.testing.expect(scr.current_attr.underline);
     try std.testing.expectEqual(@as(u21, 'X'), scr.getCell(15, 10).char); // main buffer preserved
+}
+
+test "Scrollback buffer saves lines" {
+    const allocator = std.testing.allocator;
+    // Create a small screen with scrollback enabled
+    var scr = try Screen.initWithScrollback(allocator, 10, 3, 10);
+    defer scr.deinit();
+
+    // Fill the screen
+    scr.setCursor(0, 0);
+    scr.putChar('L');
+    scr.putChar('1');
+    scr.setCursor(0, 1);
+    scr.putChar('L');
+    scr.putChar('2');
+    scr.setCursor(0, 2);
+    scr.putChar('L');
+    scr.putChar('3');
+
+    try std.testing.expectEqual(@as(u32, 0), scr.scrollback_count);
+
+    // Scroll up (this should save L1 to scrollback)
+    scr.setCursor(0, 2);
+    scr.newline(); // This triggers scrollUp
+
+    try std.testing.expectEqual(@as(u32, 1), scr.scrollback_count);
+    // L2 should now be on row 0, L3 on row 1
+    try std.testing.expectEqual(@as(u21, 'L'), scr.getCell(0, 0).char);
+    try std.testing.expectEqual(@as(u21, '2'), scr.getCell(1, 0).char);
+}
+
+test "Scrollback view navigation" {
+    const allocator = std.testing.allocator;
+    var scr = try Screen.initWithScrollback(allocator, 10, 3, 10);
+    defer scr.deinit();
+
+    // Fill with multiple lines and scroll them into history
+    var line_num: u8 = '0';
+    var i: u32 = 0;
+    while (i < 6) : (i += 1) {
+        scr.setCursor(0, 2);
+        scr.putChar('L');
+        scr.putChar(line_num);
+        line_num += 1;
+        scr.newline();
+    }
+
+    // Should have 4 lines in scrollback (lines 0-3 scrolled off)
+    // Current screen shows lines 4, 5, and new blank line
+    try std.testing.expectEqual(@as(u32, 4), scr.scrollback_count);
+    try std.testing.expectEqual(@as(u32, 0), scr.scroll_view_offset);
+
+    // Scroll view up into history
+    try std.testing.expect(scr.scrollViewUp(2));
+    try std.testing.expectEqual(@as(u32, 2), scr.scroll_view_offset);
+    try std.testing.expect(scr.isViewingScrollback());
+
+    // Scroll view down
+    try std.testing.expect(scr.scrollViewDown(1));
+    try std.testing.expectEqual(@as(u32, 1), scr.scroll_view_offset);
+
+    // Reset scroll view
+    scr.resetScrollView();
+    try std.testing.expectEqual(@as(u32, 0), scr.scroll_view_offset);
+    try std.testing.expect(!scr.isViewingScrollback());
+}
+
+test "Scrollback getVisibleCell" {
+    const allocator = std.testing.allocator;
+    var scr = try Screen.initWithScrollback(allocator, 10, 3, 10);
+    defer scr.deinit();
+
+    // Put 'A' on first line, scroll it into history
+    scr.putChar('A');
+    scr.setCursor(0, 2);
+    scr.newline();
+
+    // Now 'A' is in scrollback, screen is empty
+    try std.testing.expectEqual(@as(u32, 1), scr.scrollback_count);
+
+    // Without scrollback view, we see the current screen
+    try std.testing.expectEqual(@as(u21, ' '), scr.getVisibleCell(0, 0).char);
+
+    // Scroll up to view history
+    _ = scr.scrollViewUp(1);
+
+    // Now we should see the scrollback line
+    try std.testing.expectEqual(@as(u21, 'A'), scr.getVisibleCell(0, 0).char);
+}
+
+test "Scrollback not saved from alt buffer" {
+    const allocator = std.testing.allocator;
+    var scr = try Screen.initWithScrollback(allocator, 10, 3, 10);
+    defer scr.deinit();
+
+    // Put something on main screen
+    scr.putChar('M');
+
+    // Switch to alt buffer
+    try scr.enterAltBuffer(true);
+    try std.testing.expect(scr.using_alt_buffer);
+
+    // Scroll in alt buffer - should NOT save to scrollback
+    scr.putChar('A');
+    scr.setCursor(0, 2);
+    scr.newline();
+
+    try std.testing.expectEqual(@as(u32, 0), scr.scrollback_count);
+
+    // Exit alt buffer
+    scr.exitAltBuffer();
+    try std.testing.expectEqual(@as(u32, 0), scr.scrollback_count);
 }

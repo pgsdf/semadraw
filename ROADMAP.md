@@ -65,7 +65,7 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 * ~~Missing VT100 escape sequences~~ (DONE - RIS, IND, NEL, RI, DECSC/DECRC, cursor visibility mode 25)
 
 #### High Priority (Major Features)
-* Scrollback buffer (saved line history above visible window)
+* ~~Scrollback buffer~~ (DONE - ring buffer with Shift+PageUp/Down navigation)
 * Fix double encoder reset bug in renderer.zig
 * Extended character support (currently ASCII 32-126 only, Unicode shows "?")
 * OSC escape sequence processing (terminal title, color palette)
