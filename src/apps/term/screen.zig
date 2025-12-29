@@ -44,6 +44,29 @@ pub const Screen = struct {
     custom_fg: ?[3]u8, // Custom foreground color (OSC 10)
     custom_bg: ?[3]u8, // Custom background color (OSC 11)
 
+    // Mouse tracking configuration (DECSET modes)
+    mouse_tracking: MouseTrackingMode,
+    mouse_encoding: MouseEncodingMode,
+    mouse_focus_events: bool, // Mode 1004: Report focus in/out
+
+    /// Mouse tracking modes
+    pub const MouseTrackingMode = enum(u8) {
+        none = 0, // No mouse tracking
+        x10 = 9, // X10 mode: Only report button presses
+        vt200 = 1000, // VT200 mode: Report presses and releases
+        vt200_highlight = 1001, // VT200 highlight mode
+        btn_event = 1002, // Button-event mode: presses, releases, and motion with button down
+        any_event = 1003, // Any-event mode: all motion events
+    };
+
+    /// Mouse encoding modes (how coordinates are reported)
+    pub const MouseEncodingMode = enum(u8) {
+        x10 = 0, // Default X10: CSI M Cb Cx Cy (limited to 223 columns/rows)
+        utf8 = 1005, // UTF-8 encoding for coordinates
+        sgr = 1006, // SGR extended: CSI < Pb ; Px ; Py M/m
+        urxvt = 1015, // URXVT style: CSI Pb ; Px ; Py M
+    };
+
     /// Default scrollback buffer size (lines)
     pub const DEFAULT_SCROLLBACK_LINES: u32 = 1000;
 
@@ -102,6 +125,10 @@ pub const Screen = struct {
             .custom_palette = null,
             .custom_fg = null,
             .custom_bg = null,
+            // Mouse tracking
+            .mouse_tracking = .none,
+            .mouse_encoding = .x10,
+            .mouse_focus_events = false,
         };
     }
 
@@ -672,6 +699,45 @@ pub const Screen = struct {
             return .{ .r = bg[0], .g = bg[1], .b = bg[2] };
         }
         return Color.default_bg.toRgb();
+    }
+
+    // ========================================================================
+    // Mouse tracking (DECSET modes 9, 1000-1006, 1015)
+    // ========================================================================
+
+    /// Set mouse tracking mode
+    pub fn setMouseTracking(self: *Self, mode: MouseTrackingMode) void {
+        self.mouse_tracking = mode;
+    }
+
+    /// Get current mouse tracking mode
+    pub fn getMouseTracking(self: *const Self) MouseTrackingMode {
+        return self.mouse_tracking;
+    }
+
+    /// Set mouse encoding mode
+    pub fn setMouseEncoding(self: *Self, mode: MouseEncodingMode) void {
+        self.mouse_encoding = mode;
+    }
+
+    /// Get current mouse encoding mode
+    pub fn getMouseEncoding(self: *const Self) MouseEncodingMode {
+        return self.mouse_encoding;
+    }
+
+    /// Enable/disable focus event reporting (mode 1004)
+    pub fn setFocusEvents(self: *Self, enabled: bool) void {
+        self.mouse_focus_events = enabled;
+    }
+
+    /// Check if focus event reporting is enabled
+    pub fn getFocusEvents(self: *const Self) bool {
+        return self.mouse_focus_events;
+    }
+
+    /// Check if any mouse tracking is enabled
+    pub fn isMouseTrackingEnabled(self: *const Self) bool {
+        return self.mouse_tracking != .none;
     }
 
     // ========================================================================

@@ -192,6 +192,9 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
                             handleKeyPress(&shell, &scr, key.key_code, key.modifiers);
                         }
                     },
+                    .mouse_event => |mouse| {
+                        handleMouseEvent(&shell, &scr, mouse);
+                    },
                     else => {},
                 }
             }
@@ -441,4 +444,189 @@ fn handleKeyPress(shell: *pty.Pty, scr: *screen.Screen, key_code: u32, modifiers
     if (len > 0) {
         shell.write(buf[0..len]) catch {};
     }
+}
+
+fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, mouse: client.protocol.MouseEventMsg) void {
+    // Check if mouse tracking is enabled
+    const tracking = scr.getMouseTracking();
+    if (tracking == .none) return;
+
+    const encoding = scr.getMouseEncoding();
+    const event_type = mouse.event_type;
+
+    // Check if this event type should be reported based on tracking mode
+    const should_report = switch (tracking) {
+        .none => false,
+        .x10 => event_type == .press, // X10 only reports button presses
+        .vt200, .vt200_highlight => event_type == .press or event_type == .release,
+        .btn_event => event_type == .press or event_type == .release or
+            (event_type == .motion and isButtonPressed(mouse.button)),
+        .any_event => true, // Report all events
+    };
+
+    if (!should_report) return;
+
+    // Convert pixel coordinates to cell coordinates
+    const cell_x = @divFloor(mouse.x, @as(i32, font.Font.GLYPH_WIDTH)) + 1;
+    const cell_y = @divFloor(mouse.y, @as(i32, font.Font.GLYPH_HEIGHT)) + 1;
+
+    // Clamp to valid range
+    const x: u32 = @intCast(@max(1, @min(cell_x, @as(i32, scr.cols))));
+    const y: u32 = @intCast(@max(1, @min(cell_y, @as(i32, scr.rows))));
+
+    // Generate the mouse report based on encoding mode
+    var buf: [32]u8 = undefined;
+    var len: usize = 0;
+
+    switch (encoding) {
+        .sgr => {
+            // SGR extended mode: CSI < Pb ; Px ; Py M/m
+            // Pb = button number (0=left, 1=middle, 2=right) + modifiers
+            // Px, Py = 1-based coordinates
+            // M = press, m = release
+            const btn = getButtonCode(mouse.button, mouse.modifiers, event_type == .motion);
+            const terminator: u8 = if (event_type == .release) 'm' else 'M';
+            len = formatSgrMouse(&buf, btn, x, y, terminator);
+        },
+        .urxvt => {
+            // URXVT mode: CSI Pb ; Px ; Py M
+            const btn = getButtonCode(mouse.button, mouse.modifiers, event_type == .motion) + 32;
+            len = formatUrxvtMouse(&buf, btn, x, y);
+        },
+        .x10, .utf8 => {
+            // X10/UTF-8 mode: CSI M Cb Cx Cy
+            // Cb = 32 + button + modifiers
+            // Cx, Cy = 32 + coordinate (1-based)
+            const btn = getButtonCode(mouse.button, mouse.modifiers, event_type == .motion);
+            // For release in X10 mode, use button 3 (release indicator)
+            const cb: u8 = if (event_type == .release) 32 + 3 else 32 + btn;
+            const cx: u8 = @intCast(@min(x + 32, 255));
+            const cy: u8 = @intCast(@min(y + 32, 255));
+            buf[0] = 0x1B;
+            buf[1] = '[';
+            buf[2] = 'M';
+            buf[3] = cb;
+            buf[4] = cx;
+            buf[5] = cy;
+            len = 6;
+        },
+    }
+
+    if (len > 0) {
+        shell.write(buf[0..len]) catch {};
+    }
+}
+
+fn isButtonPressed(button: client.protocol.MouseButtonId) bool {
+    return switch (button) {
+        .left, .middle, .right => true,
+        .scroll_up, .scroll_down, .scroll_left, .scroll_right, .button4, .button5 => false,
+    };
+}
+
+fn getButtonCode(button: client.protocol.MouseButtonId, modifiers: u8, is_motion: bool) u8 {
+    // Base button code: 0=left, 1=middle, 2=right
+    var code: u8 = switch (button) {
+        .left => 0,
+        .middle => 1,
+        .right => 2,
+        .scroll_up => 64, // Scroll up
+        .scroll_down => 65, // Scroll down
+        .scroll_left => 66,
+        .scroll_right => 67,
+        .button4, .button5 => 0,
+    };
+
+    // Add modifier bits
+    if (modifiers & 0x01 != 0) code |= 4; // Shift
+    if (modifiers & 0x02 != 0) code |= 8; // Alt/Meta
+    if (modifiers & 0x04 != 0) code |= 16; // Ctrl
+
+    // Add motion bit
+    if (is_motion) code |= 32;
+
+    return code;
+}
+
+fn formatSgrMouse(buf: []u8, btn: u8, x: u32, y: u32, terminator: u8) usize {
+    // Format: CSI < btn ; x ; y M/m
+    var i: usize = 0;
+    buf[i] = 0x1B;
+    i += 1;
+    buf[i] = '[';
+    i += 1;
+    buf[i] = '<';
+    i += 1;
+
+    // Button
+    i += formatDecimal(buf[i..], btn);
+    buf[i] = ';';
+    i += 1;
+
+    // X coordinate
+    i += formatDecimal(buf[i..], @intCast(x));
+    buf[i] = ';';
+    i += 1;
+
+    // Y coordinate
+    i += formatDecimal(buf[i..], @intCast(y));
+
+    // Terminator
+    buf[i] = terminator;
+    i += 1;
+
+    return i;
+}
+
+fn formatUrxvtMouse(buf: []u8, btn: u8, x: u32, y: u32) usize {
+    // Format: CSI btn ; x ; y M
+    var i: usize = 0;
+    buf[i] = 0x1B;
+    i += 1;
+    buf[i] = '[';
+    i += 1;
+
+    // Button
+    i += formatDecimal(buf[i..], btn);
+    buf[i] = ';';
+    i += 1;
+
+    // X coordinate
+    i += formatDecimal(buf[i..], @intCast(x));
+    buf[i] = ';';
+    i += 1;
+
+    // Y coordinate
+    i += formatDecimal(buf[i..], @intCast(y));
+
+    // Terminator
+    buf[i] = 'M';
+    i += 1;
+
+    return i;
+}
+
+fn formatDecimal(buf: []u8, value: u32) usize {
+    if (value == 0) {
+        buf[0] = '0';
+        return 1;
+    }
+
+    var v = value;
+    var len: usize = 0;
+
+    // Count digits
+    var temp = value;
+    while (temp > 0) : (temp /= 10) {
+        len += 1;
+    }
+
+    // Write digits in reverse order
+    var i = len;
+    while (v > 0) : (v /= 10) {
+        i -= 1;
+        buf[i] = @intCast('0' + (v % 10));
+    }
+
+    return len;
 }

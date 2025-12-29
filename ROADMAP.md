@@ -71,7 +71,7 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 * ~~OSC escape sequence processing~~ (DONE - OSC 0/1/2 for title, OSC 4/10/11 for colors, OSC 104/110/111 for reset)
 
 #### Medium Priority (Enhancements)
-* Mouse input support (tracking, selection, copy/paste)
+* ~~Mouse input support~~ (DONE - X10/VT200/SGR mouse tracking modes 9/1000-1006/1015, button/motion events)
 * Additional SGR codes (strikethrough, overline, double underline)
 * Cursor style variations (beam, underline, blinking animation)
 * Dirty region tracking (avoid full screen re-render every frame)

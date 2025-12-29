@@ -47,6 +47,9 @@ pub const X11Backend = struct {
     // Keyboard event queue
     key_events: [backend.MAX_KEY_EVENTS]backend.KeyEvent,
     key_event_count: usize,
+    // Mouse event queue
+    mouse_events: [backend.MAX_MOUSE_EVENTS]backend.MouseEvent,
+    mouse_event_count: usize,
     // Modifier state tracking
     modifier_state: u8,
 
@@ -76,6 +79,8 @@ pub const X11Backend = struct {
             .pending_resize = null,
             .key_events = undefined,
             .key_event_count = 0,
+            .mouse_events = undefined,
+            .mouse_event_count = 0,
             .modifier_state = 0,
         };
 
@@ -122,8 +127,8 @@ pub const X11Backend = struct {
         self.wm_delete_window = c.XInternAtom(self.display.?, "WM_DELETE_WINDOW", c.False);
         _ = c.XSetWMProtocols(self.display.?, self.window, &self.wm_delete_window, 1);
 
-        // Select input events
-        _ = c.XSelectInput(self.display.?, self.window, c.ExposureMask | c.KeyPressMask | c.StructureNotifyMask);
+        // Select input events (keyboard, mouse, and window events)
+        _ = c.XSelectInput(self.display.?, self.window, c.ExposureMask | c.KeyPressMask | c.KeyReleaseMask | c.StructureNotifyMask | c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask);
 
         // Create graphics context
         self.gc = c.XCreateGC(self.display.?, self.window, 0, null);
@@ -271,6 +276,76 @@ pub const X11Backend = struct {
                             .pressed = pressed,
                         };
                         self.key_event_count += 1;
+                    }
+                },
+                c.ButtonPress, c.ButtonRelease => {
+                    const btn_event = event.xbutton;
+                    const pressed = (event.type == c.ButtonPress);
+
+                    // Update modifier state from button event
+                    self.modifier_state = 0;
+                    if (btn_event.state & c.ShiftMask != 0) self.modifier_state |= 0x01;
+                    if (btn_event.state & c.Mod1Mask != 0) self.modifier_state |= 0x02;
+                    if (btn_event.state & c.ControlMask != 0) self.modifier_state |= 0x04;
+                    if (btn_event.state & c.Mod4Mask != 0) self.modifier_state |= 0x08;
+
+                    // Convert X11 button to our MouseButton enum
+                    // X11: 1=left, 2=middle, 3=right, 4=scroll up, 5=scroll down
+                    const button: backend.MouseButton = switch (btn_event.button) {
+                        1 => .left,
+                        2 => .middle,
+                        3 => .right,
+                        4 => .scroll_up,
+                        5 => .scroll_down,
+                        6 => .scroll_left,
+                        7 => .scroll_right,
+                        8 => .button4,
+                        9 => .button5,
+                        else => .left,
+                    };
+
+                    // Queue the mouse event
+                    if (self.mouse_event_count < backend.MAX_MOUSE_EVENTS) {
+                        self.mouse_events[self.mouse_event_count] = .{
+                            .x = @intCast(btn_event.x),
+                            .y = @intCast(btn_event.y),
+                            .button = button,
+                            .event_type = if (pressed) .press else .release,
+                            .modifiers = self.modifier_state,
+                        };
+                        self.mouse_event_count += 1;
+                    }
+                },
+                c.MotionNotify => {
+                    const motion_event = event.xmotion;
+
+                    // Update modifier state from motion event
+                    self.modifier_state = 0;
+                    if (motion_event.state & c.ShiftMask != 0) self.modifier_state |= 0x01;
+                    if (motion_event.state & c.Mod1Mask != 0) self.modifier_state |= 0x02;
+                    if (motion_event.state & c.ControlMask != 0) self.modifier_state |= 0x04;
+                    if (motion_event.state & c.Mod4Mask != 0) self.modifier_state |= 0x08;
+
+                    // Determine which button is pressed during motion
+                    const button: backend.MouseButton = if (motion_event.state & c.Button1Mask != 0)
+                        .left
+                    else if (motion_event.state & c.Button2Mask != 0)
+                        .middle
+                    else if (motion_event.state & c.Button3Mask != 0)
+                        .right
+                    else
+                        .left;
+
+                    // Queue the motion event
+                    if (self.mouse_event_count < backend.MAX_MOUSE_EVENTS) {
+                        self.mouse_events[self.mouse_event_count] = .{
+                            .x = @intCast(motion_event.x),
+                            .y = @intCast(motion_event.y),
+                            .button = button,
+                            .event_type = .motion,
+                            .modifiers = self.modifier_state,
+                        };
+                        self.mouse_event_count += 1;
                     }
                 },
                 else => {},
@@ -726,6 +801,13 @@ pub const X11Backend = struct {
         return self.key_events[0..count];
     }
 
+    fn getMouseEventsImpl(ctx: *anyopaque) []const backend.MouseEvent {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        const count = self.mouse_event_count;
+        self.mouse_event_count = 0; // Clear the queue
+        return self.mouse_events[0..count];
+    }
+
     pub const vtable = backend.Backend.VTable{
         .getCapabilities = getCapabilitiesImpl,
         .initFramebuffer = initFramebufferImpl,
@@ -734,6 +816,7 @@ pub const X11Backend = struct {
         .resize = resizeImpl,
         .pollEvents = pollEventsImpl,
         .getKeyEvents = getKeyEventsImpl,
+        .getMouseEvents = getMouseEventsImpl,
         .deinit = deinitImpl,
     };
 

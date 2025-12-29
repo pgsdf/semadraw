@@ -298,6 +298,14 @@ pub const Compositor = struct {
         }
         return &[_]backend_mod.KeyEvent{};
     }
+
+    /// Get pending mouse events from backend
+    pub fn getMouseEvents(self: *Self) []const backend_mod.MouseEvent {
+        if (self.output) |*out| {
+            return out.be.getMouseEvents();
+        }
+        return &[_]backend_mod.MouseEvent{};
+    }
 };
 
 /// Result of a composite operation

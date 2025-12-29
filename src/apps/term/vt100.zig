@@ -695,6 +695,10 @@ pub const Parser = struct {
         while (i < self.param_count) : (i += 1) {
             const mode = self.params[i];
             switch (mode) {
+                9 => {
+                    // X10 mouse tracking
+                    self.scr.setMouseTracking(.x10);
+                },
                 25 => {
                     // DECTCEM - Show cursor
                     self.scr.setCursorVisible(true);
@@ -702,6 +706,38 @@ pub const Parser = struct {
                 47 => {
                     // Use alternate screen buffer (no clear)
                     self.scr.enterAltBuffer(false) catch {};
+                },
+                1000 => {
+                    // VT200 mouse tracking (button events)
+                    self.scr.setMouseTracking(.vt200);
+                },
+                1001 => {
+                    // VT200 highlight mouse tracking
+                    self.scr.setMouseTracking(.vt200_highlight);
+                },
+                1002 => {
+                    // Button-event mouse tracking
+                    self.scr.setMouseTracking(.btn_event);
+                },
+                1003 => {
+                    // Any-event mouse tracking
+                    self.scr.setMouseTracking(.any_event);
+                },
+                1004 => {
+                    // Focus in/out event reporting
+                    self.scr.setFocusEvents(true);
+                },
+                1005 => {
+                    // UTF-8 mouse encoding
+                    self.scr.setMouseEncoding(.utf8);
+                },
+                1006 => {
+                    // SGR extended mouse encoding
+                    self.scr.setMouseEncoding(.sgr);
+                },
+                1015 => {
+                    // URXVT mouse encoding
+                    self.scr.setMouseEncoding(.urxvt);
                 },
                 1047 => {
                     // Use alternate screen buffer (with clear)
@@ -722,6 +758,10 @@ pub const Parser = struct {
         while (i < self.param_count) : (i += 1) {
             const mode = self.params[i];
             switch (mode) {
+                9, 1000, 1001, 1002, 1003 => {
+                    // Disable mouse tracking
+                    self.scr.setMouseTracking(.none);
+                },
                 25 => {
                     // DECTCEM - Hide cursor
                     self.scr.setCursorVisible(false);
@@ -729,6 +769,14 @@ pub const Parser = struct {
                 47 => {
                     // Use normal screen buffer
                     self.scr.exitAltBuffer();
+                },
+                1004 => {
+                    // Disable focus event reporting
+                    self.scr.setFocusEvents(false);
+                },
+                1005, 1006, 1015 => {
+                    // Reset to default X10 mouse encoding
+                    self.scr.setMouseEncoding(.x10);
                 },
                 1047 => {
                     // Use normal screen buffer (clear alt on exit)

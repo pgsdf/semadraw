@@ -47,6 +47,7 @@ pub const MsgType = enum(u16) {
 
     // Daemon -> Client input events (0x9xxx)
     key_press = 0x9001,
+    mouse_event = 0x9002,
 };
 
 /// Message header (8 bytes, always present)
@@ -485,6 +486,63 @@ pub const KeyPressMsg = extern struct {
             .modifiers = buf[8],
             .pressed = buf[9],
             ._reserved = std.mem.readInt(u16, buf[10..12], .little),
+        };
+    }
+};
+
+/// Mouse event types
+pub const MouseEventType = enum(u8) {
+    press = 0,
+    release = 1,
+    motion = 2,
+};
+
+/// Mouse button identifiers
+pub const MouseButtonId = enum(u8) {
+    left = 0,
+    middle = 1,
+    right = 2,
+    scroll_up = 3,
+    scroll_down = 4,
+    scroll_left = 5,
+    scroll_right = 6,
+    button4 = 7,
+    button5 = 8,
+};
+
+/// Mouse event message
+pub const MouseEventMsg = extern struct {
+    surface_id: SurfaceId, // Target surface (focused surface)
+    x: i32, // X coordinate in pixels
+    y: i32, // Y coordinate in pixels
+    button: MouseButtonId, // Button involved
+    event_type: MouseEventType, // Press, release, or motion
+    modifiers: u8, // Modifier state: bit 0=shift, bit 1=alt, bit 2=ctrl, bit 3=meta
+    _reserved: u8 = 0,
+
+    pub const SIZE: usize = 16;
+
+    pub fn serialize(self: MouseEventMsg, buf: []u8) void {
+        std.debug.assert(buf.len >= SIZE);
+        std.mem.writeInt(u32, buf[0..4], self.surface_id, .little);
+        std.mem.writeInt(i32, buf[4..8], self.x, .little);
+        std.mem.writeInt(i32, buf[8..12], self.y, .little);
+        buf[12] = @intFromEnum(self.button);
+        buf[13] = @intFromEnum(self.event_type);
+        buf[14] = self.modifiers;
+        buf[15] = self._reserved;
+    }
+
+    pub fn deserialize(buf: []const u8) !MouseEventMsg {
+        if (buf.len < SIZE) return error.BufferTooSmall;
+        return .{
+            .surface_id = std.mem.readInt(u32, buf[0..4], .little),
+            .x = std.mem.readInt(i32, buf[4..8], .little),
+            .y = std.mem.readInt(i32, buf[8..12], .little),
+            .button = @enumFromInt(buf[12]),
+            .event_type = @enumFromInt(buf[13]),
+            .modifiers = buf[14],
+            ._reserved = buf[15],
         };
     }
 };

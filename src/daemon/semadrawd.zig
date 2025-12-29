@@ -187,6 +187,12 @@ pub const Daemon = struct {
                 self.forwardKeyEvents(key_events);
             }
 
+            // Forward mouse events to focused surface's client
+            const mouse_events = self.comp.getMouseEvents();
+            if (mouse_events.len > 0) {
+                self.forwardMouseEvents(mouse_events);
+            }
+
             if (n == 0) continue; // Timeout, no socket events
 
             // Process events
@@ -833,6 +839,34 @@ pub const Daemon = struct {
             } else if (self.remote_clients.get(surface.owner)) |remote_session| {
                 // Try remote client
                 remote_session.client.sendMessage(.key_press, &payload) catch {};
+            }
+        }
+    }
+
+    /// Forward mouse events to the top visible surface's client
+    fn forwardMouseEvents(self: *Daemon, mouse_events: []const backend.MouseEvent) void {
+        // Get the top visible surface to send mouse input to
+        const top_surface_id = self.surfaces.getTopVisibleSurface() orelse return;
+        const surface = self.surfaces.getSurface(top_surface_id) orelse return;
+
+        for (mouse_events) |event| {
+            const msg = protocol.MouseEventMsg{
+                .surface_id = top_surface_id,
+                .x = event.x,
+                .y = event.y,
+                .button = @enumFromInt(@intFromEnum(event.button)),
+                .event_type = @enumFromInt(@intFromEnum(event.event_type)),
+                .modifiers = event.modifiers,
+            };
+            var payload: [protocol.MouseEventMsg.SIZE]u8 = undefined;
+            msg.serialize(&payload);
+
+            // Try to send to local client first
+            if (self.clients.findById(surface.owner)) |session| {
+                session.send(.mouse_event, &payload) catch {};
+            } else if (self.remote_clients.get(surface.owner)) |remote_session| {
+                // Try remote client
+                remote_session.client.sendMessage(.mouse_event, &payload) catch {};
             }
         }
     }
