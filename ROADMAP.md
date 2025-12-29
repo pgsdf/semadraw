@@ -85,6 +85,6 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 #### Code Quality
 * ~~Remove or connect dead handleKeyPress code~~ (DONE - handleKeyPress connected to key_press events in main loop)
 * ~~Replace magic numbers with named constants~~ (DONE - Key, Modifiers, Ascii structs for evdev codes and control chars)
-* Add logging for silently dropped events
+* ~~Add logging for silently dropped events~~ (DONE - debug logs for unhandled keys, CSI, DECSET/DECRST, SGR, control chars)
 * Terminal state validation improvements
 
