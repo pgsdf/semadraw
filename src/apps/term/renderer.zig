@@ -30,6 +30,7 @@ pub const Renderer = struct {
     }
 
     /// Render the screen to SDCS and return the encoded data
+    /// Uses dirty row tracking to skip re-rendering unchanged rows
     pub fn render(self: *Self) ![]u8 {
         try self.encoder.reset();
 
@@ -48,8 +49,8 @@ pub const Renderer = struct {
 
         try self.encoder.setBlend(semadraw.Encoder.BlendMode.SrcOver);
 
-        // Group cells by color for efficient rendering
-        try self.renderCells();
+        // Render only dirty rows for efficiency
+        try self.renderDirtyCells();
 
         // Draw cursor (hidden when viewing scrollback history)
         if (self.scr.cursor_visible and !self.scr.isViewingScrollback()) {
@@ -58,8 +59,19 @@ pub const Renderer = struct {
 
         try self.encoder.end();
 
+        // Clear dirty flags after successful render
+        self.scr.clearDirtyRows();
+
         // Return the encoded data with SDCS header for daemon validation
         return self.encoder.finishBytesWithHeader();
+    }
+
+    /// Render a full frame (all rows) regardless of dirty state
+    /// Use this when you need to guarantee a complete redraw
+    pub fn renderFull(self: *Self) ![]u8 {
+        // Mark all rows dirty to force full render
+        self.scr.markAllRowsDirty();
+        return self.render();
     }
 
     fn renderCells(self: *Self) !void {
@@ -69,6 +81,18 @@ pub const Renderer = struct {
         var row: u32 = 0;
         while (row < self.scr.rows) : (row += 1) {
             try self.renderRow(row);
+        }
+    }
+
+    fn renderDirtyCells(self: *Self) !void {
+        // Only render rows that have been marked as dirty
+        // This significantly reduces rendering cost when only a few rows change
+
+        var row: u32 = 0;
+        while (row < self.scr.rows) : (row += 1) {
+            if (self.scr.isRowDirty(row)) {
+                try self.renderRow(row);
+            }
         }
     }
 
