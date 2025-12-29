@@ -61,8 +61,8 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 
 #### Critical (Blocks Basic Functionality)
 * ~~Connect keyboard input handling~~ (DONE - full pipeline from X11 backend through daemon to terminal)
-* Alternative screen buffer support (required for vim, htop, less, nano)
-* Missing VT100 escape sequences (RIS, IND, NEL, HTS, RI, DECSC/DECRC)
+* ~~Alternative screen buffer support~~ (DONE - modes 47/1047/1049 for vim, htop, less, nano)
+* ~~Missing VT100 escape sequences~~ (DONE - RIS, IND, NEL, RI, DECSC/DECRC, cursor visibility mode 25)
 
 #### High Priority (Major Features)
 * Scrollback buffer (saved line history above visible window)
