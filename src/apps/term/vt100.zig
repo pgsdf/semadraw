@@ -807,19 +807,24 @@ pub const Parser = struct {
                 1 => self.scr.current_attr.bold = true,
                 2 => self.scr.current_attr.dim = true,
                 3 => self.scr.current_attr.italic = true,
-                4 => self.scr.current_attr.underline = true,
+                4 => self.scr.current_attr.underline = .single,
                 5, 6 => self.scr.current_attr.blink = true,
                 7 => self.scr.current_attr.reverse = true,
                 8 => self.scr.current_attr.hidden = true,
-                21, 22 => {
+                9 => self.scr.current_attr.strikethrough = true,
+                21 => self.scr.current_attr.underline = .double,
+                22 => {
                     self.scr.current_attr.bold = false;
                     self.scr.current_attr.dim = false;
                 },
                 23 => self.scr.current_attr.italic = false,
-                24 => self.scr.current_attr.underline = false,
+                24 => self.scr.current_attr.underline = .none,
                 25 => self.scr.current_attr.blink = false,
                 27 => self.scr.current_attr.reverse = false,
                 28 => self.scr.current_attr.hidden = false,
+                29 => self.scr.current_attr.strikethrough = false,
+                53 => self.scr.current_attr.overline = true,
+                55 => self.scr.current_attr.overline = false,
                 30...37 => self.scr.current_attr.fg = screen.Color{ .indexed = @intCast(p - 30) },
                 38 => {
                     // Extended foreground color

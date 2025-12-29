@@ -871,10 +871,19 @@ pub const Attr = struct {
     bold: bool,
     dim: bool,
     italic: bool,
-    underline: bool,
+    underline: UnderlineStyle,
     blink: bool,
     reverse: bool,
     hidden: bool,
+    strikethrough: bool,
+    overline: bool,
+
+    /// Underline style options
+    pub const UnderlineStyle = enum(u8) {
+        none = 0,
+        single = 1,
+        double = 2,
+    };
 
     pub fn default() Attr {
         return .{
@@ -883,10 +892,12 @@ pub const Attr = struct {
             .bold = false,
             .dim = false,
             .italic = false,
-            .underline = false,
+            .underline = .none,
             .blink = false,
             .reverse = false,
             .hidden = false,
+            .strikethrough = false,
+            .overline = false,
         };
     }
 
@@ -1108,7 +1119,7 @@ test "Screen mode 1049 (alt buffer with cursor save)" {
     // Set up initial state
     scr.setCursor(15, 10);
     scr.putChar('X');
-    scr.current_attr.underline = true;
+    scr.current_attr.underline = .single;
 
     // Enter alt buffer with cursor save (mode 1049)
     try scr.enterAltBufferWithCursorSave();
@@ -1118,14 +1129,14 @@ test "Screen mode 1049 (alt buffer with cursor save)" {
     // Move cursor in alt buffer
     scr.setCursor(5, 3);
     scr.putChar('Y');
-    scr.current_attr.underline = false;
+    scr.current_attr.underline = .none;
 
     // Exit alt buffer with cursor restore (mode 1049)
     scr.exitAltBufferWithCursorRestore();
     try std.testing.expect(!scr.using_alt_buffer);
     try std.testing.expectEqual(@as(u32, 16), scr.cursor_col); // restored after 'X' was written
     try std.testing.expectEqual(@as(u32, 10), scr.cursor_row);
-    try std.testing.expect(scr.current_attr.underline);
+    try std.testing.expect(scr.current_attr.underline == .single);
     try std.testing.expectEqual(@as(u21, 'X'), scr.getCell(15, 10).char); // main buffer preserved
 }
 
