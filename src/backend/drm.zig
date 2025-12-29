@@ -319,15 +319,27 @@ pub const DrmBackend = struct {
         };
 
         var last_err: ?anyerror = null;
+        var had_resources_failed = false;
         for (paths) |path| {
             if (init(allocator, path)) |self| {
                 return self;
             } else |err| {
                 log.warn("failed to open {s}: {}", .{ path, err });
+                if (err == error.GetResourcesFailed) {
+                    had_resources_failed = true;
+                }
                 last_err = err;
                 continue;
             }
         }
+
+        // Provide helpful error message
+        if (had_resources_failed) {
+            log.err("KMS backend requires exclusive display access.", .{});
+            log.err("If running under X11/Wayland, use '--backend x11' or '--backend wayland' instead.", .{});
+            log.err("For KMS, switch to a virtual console (Ctrl+Alt+F2) and run without a display server.", .{});
+        }
+
         if (last_err) |err| {
             return err;
         }

@@ -161,6 +161,9 @@ pub const X11Backend = struct {
         _ = c.XMapWindow(self.display.?, self.window);
         _ = c.XFlush(self.display.?);
 
+        // Present initial black framebuffer to avoid showing uninitialized X11 window content
+        self.present();
+
         log.info("X11 window created: {}x{}", .{ width, height });
 
         return self;
