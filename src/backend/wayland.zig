@@ -31,6 +31,7 @@ extern const wl_buffer_interface: wl_interface;
 extern const wl_surface_interface: wl_interface;
 extern const wl_seat_interface: wl_interface;
 extern const wl_keyboard_interface: wl_interface;
+extern const wl_pointer_interface: wl_interface;
 extern const wl_callback_interface: wl_interface;
 
 // XDG shell interfaces - we'll define these ourselves since headers aren't available
@@ -93,6 +94,7 @@ const WL_SHM_FORMAT_XRGB8888: u32 = 1;
 const WL_KEYBOARD_KEY_STATE_PRESSED: u32 = 1;
 
 // Seat capability
+const WL_SEAT_CAPABILITY_POINTER: u32 = 1;
 const WL_SEAT_CAPABILITY_KEYBOARD: u32 = 2;
 
 /// Wayland backend for windowed display
@@ -134,6 +136,20 @@ pub const WaylandBackend = struct {
     rendering: bool,
     pending_resize: ?struct { width: u32, height: u32 },
 
+    // Keyboard event queue
+    key_events: [backend.MAX_KEY_EVENTS]backend.KeyEvent,
+    key_event_count: usize,
+    // Mouse event queue
+    mouse_events: [backend.MAX_MOUSE_EVENTS]backend.MouseEvent,
+    mouse_event_count: usize,
+    // Modifier state tracking
+    modifier_state: u8,
+    // Mouse pointer
+    pointer: ?*anyopaque,
+    // Mouse position
+    mouse_x: i32,
+    mouse_y: i32,
+
     const Self = @This();
 
     pub fn init(allocator: std.mem.Allocator) !*Self {
@@ -166,6 +182,14 @@ pub const WaylandBackend = struct {
             .format_found = false,
             .rendering = false,
             .pending_resize = null,
+            .key_events = undefined,
+            .key_event_count = 0,
+            .mouse_events = undefined,
+            .mouse_event_count = 0,
+            .modifier_state = 0,
+            .pointer = null,
+            .mouse_x = 0,
+            .mouse_y = 0,
         };
 
         // Connect to Wayland display
@@ -309,6 +333,9 @@ pub const WaylandBackend = struct {
         }
         if (self.keyboard != null) {
             wl_proxy_destroy(self.keyboard.?);
+        }
+        if (self.pointer != null) {
+            wl_proxy_destroy(self.pointer.?);
         }
         if (self.seat != null) {
             wl_proxy_destroy(self.seat.?);
@@ -617,6 +644,7 @@ pub const WaylandBackend = struct {
     fn seatCapabilities(data: ?*anyopaque, seat: ?*anyopaque, caps: u32) callconv(.c) void {
         const self: *Self = @ptrCast(@alignCast(data));
 
+        // Handle keyboard capability
         if (caps & WL_SEAT_CAPABILITY_KEYBOARD != 0) {
             if (self.keyboard == null) {
                 // wl_seat.get_keyboard (opcode 1)
@@ -629,6 +657,22 @@ pub const WaylandBackend = struct {
             if (self.keyboard != null) {
                 wl_proxy_destroy(self.keyboard.?);
                 self.keyboard = null;
+            }
+        }
+
+        // Handle pointer capability
+        if (caps & WL_SEAT_CAPABILITY_POINTER != 0) {
+            if (self.pointer == null) {
+                // wl_seat.get_pointer (opcode 0)
+                self.pointer = wl_proxy_marshal_flags(seat.?, 0, &wl_pointer_interface, 1, 0);
+                if (self.pointer != null) {
+                    _ = wl_proxy_add_listener(self.pointer.?, &pointer_listener, self);
+                }
+            }
+        } else {
+            if (self.pointer != null) {
+                wl_proxy_destroy(self.pointer.?);
+                self.pointer = null;
             }
         }
     }
@@ -657,21 +701,132 @@ pub const WaylandBackend = struct {
 
     fn keyboardKey(data: ?*anyopaque, _: ?*anyopaque, _: u32, _: u32, key: u32, state: u32) callconv(.c) void {
         const self: *Self = @ptrCast(@alignCast(data));
+        const pressed = state == WL_KEYBOARD_KEY_STATE_PRESSED;
 
-        // Key pressed
-        if (state == WL_KEYBOARD_KEY_STATE_PRESSED) {
-            // KEY_Q = 16
-            if (key == 16 and self.ctrl_held) {
-                log.info("Ctrl+Q pressed, closing window", .{});
-                self.closed = true;
-            }
+        // Handle Ctrl+Q to close window
+        if (pressed and key == 16 and self.ctrl_held) {
+            log.info("Ctrl+Q pressed, closing window", .{});
+            self.closed = true;
+            return;
+        }
+
+        // Queue the key event
+        if (self.key_event_count < backend.MAX_KEY_EVENTS) {
+            self.key_events[self.key_event_count] = .{
+                .key_code = key,
+                .modifiers = self.modifier_state,
+                .pressed = pressed,
+            };
+            self.key_event_count += 1;
         }
     }
 
     fn keyboardModifiers(data: ?*anyopaque, _: ?*anyopaque, _: u32, mods_depressed: u32, _: u32, _: u32, _: u32) callconv(.c) void {
         const self: *Self = @ptrCast(@alignCast(data));
-        // Check for Ctrl (bit 2 in typical xkb layouts)
-        self.ctrl_held = (mods_depressed & 4) != 0;
+
+        // Map xkb modifier bits to our modifier format
+        // xkb: bit 0 = shift, bit 1 = caps, bit 2 = ctrl, bit 3 = mod1 (alt)
+        // Our format: bit 0 = shift, bit 1 = alt, bit 2 = ctrl, bit 3 = meta
+        var modifiers: u8 = 0;
+        if (mods_depressed & 1 != 0) modifiers |= 0x01; // Shift
+        if (mods_depressed & 8 != 0) modifiers |= 0x02; // Alt (mod1)
+        if (mods_depressed & 4 != 0) modifiers |= 0x04; // Ctrl
+
+        self.modifier_state = modifiers;
+        self.ctrl_held = (modifiers & 0x04) != 0;
+    }
+
+    // Pointer listener
+    const PointerListener = extern struct {
+        enter: *const fn (?*anyopaque, ?*anyopaque, u32, ?*anyopaque, i32, i32) callconv(.c) void,
+        leave: *const fn (?*anyopaque, ?*anyopaque, u32, ?*anyopaque) callconv(.c) void,
+        motion: *const fn (?*anyopaque, ?*anyopaque, u32, i32, i32) callconv(.c) void,
+        button: *const fn (?*anyopaque, ?*anyopaque, u32, u32, u32, u32) callconv(.c) void,
+        axis: *const fn (?*anyopaque, ?*anyopaque, u32, u32, i32) callconv(.c) void,
+    };
+
+    const pointer_listener = PointerListener{
+        .enter = pointerEnter,
+        .leave = pointerLeave,
+        .motion = pointerMotion,
+        .button = pointerButton,
+        .axis = pointerAxis,
+    };
+
+    fn pointerEnter(data: ?*anyopaque, _: ?*anyopaque, _: u32, _: ?*anyopaque, sx: i32, sy: i32) callconv(.c) void {
+        const self: *Self = @ptrCast(@alignCast(data));
+        // Wayland uses fixed-point 24.8 format for surface coordinates
+        self.mouse_x = sx >> 8;
+        self.mouse_y = sy >> 8;
+    }
+
+    fn pointerLeave(_: ?*anyopaque, _: ?*anyopaque, _: u32, _: ?*anyopaque) callconv(.c) void {}
+
+    fn pointerMotion(data: ?*anyopaque, _: ?*anyopaque, _: u32, sx: i32, sy: i32) callconv(.c) void {
+        const self: *Self = @ptrCast(@alignCast(data));
+        // Wayland uses fixed-point 24.8 format
+        self.mouse_x = sx >> 8;
+        self.mouse_y = sy >> 8;
+
+        // Queue motion event
+        if (self.mouse_event_count < backend.MAX_MOUSE_EVENTS) {
+            self.mouse_events[self.mouse_event_count] = .{
+                .x = self.mouse_x,
+                .y = self.mouse_y,
+                .button = .left,
+                .event_type = .motion,
+                .modifiers = self.modifier_state,
+            };
+            self.mouse_event_count += 1;
+        }
+    }
+
+    fn pointerButton(data: ?*anyopaque, _: ?*anyopaque, _: u32, _: u32, button_code: u32, state: u32) callconv(.c) void {
+        const self: *Self = @ptrCast(@alignCast(data));
+
+        // Map Linux button codes to our MouseButton enum
+        // BTN_LEFT = 0x110 (272), BTN_RIGHT = 0x111 (273), BTN_MIDDLE = 0x112 (274)
+        const button: backend.MouseButton = switch (button_code) {
+            272 => .left,
+            273 => .right,
+            274 => .middle,
+            else => .left,
+        };
+
+        const event_type: backend.MouseEventType = if (state == 1) .press else .release;
+
+        if (self.mouse_event_count < backend.MAX_MOUSE_EVENTS) {
+            self.mouse_events[self.mouse_event_count] = .{
+                .x = self.mouse_x,
+                .y = self.mouse_y,
+                .button = button,
+                .event_type = event_type,
+                .modifiers = self.modifier_state,
+            };
+            self.mouse_event_count += 1;
+        }
+    }
+
+    fn pointerAxis(data: ?*anyopaque, _: ?*anyopaque, _: u32, axis: u32, value: i32) callconv(.c) void {
+        const self: *Self = @ptrCast(@alignCast(data));
+
+        // axis: 0 = vertical, 1 = horizontal
+        // value: positive = down/right, negative = up/left (fixed point 24.8)
+        if (self.mouse_event_count < backend.MAX_MOUSE_EVENTS) {
+            const button: backend.MouseButton = if (axis == 0)
+                (if (value > 0) .scroll_down else .scroll_up)
+            else
+                (if (value > 0) .scroll_right else .scroll_left);
+
+            self.mouse_events[self.mouse_event_count] = .{
+                .x = self.mouse_x,
+                .y = self.mouse_y,
+                .button = button,
+                .event_type = .press,
+                .modifiers = self.modifier_state,
+            };
+            self.mouse_event_count += 1;
+        }
     }
 
     // ========================================================================
@@ -999,6 +1154,20 @@ pub const WaylandBackend = struct {
         self.deinit();
     }
 
+    fn getKeyEventsImpl(ctx: *anyopaque) []const backend.KeyEvent {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        const count = self.key_event_count;
+        self.key_event_count = 0; // Clear the queue
+        return self.key_events[0..count];
+    }
+
+    fn getMouseEventsImpl(ctx: *anyopaque) []const backend.MouseEvent {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        const count = self.mouse_event_count;
+        self.mouse_event_count = 0; // Clear the queue
+        return self.mouse_events[0..count];
+    }
+
     pub const vtable = backend.Backend.VTable{
         .getCapabilities = getCapabilitiesImpl,
         .initFramebuffer = initFramebufferImpl,
@@ -1006,6 +1175,8 @@ pub const WaylandBackend = struct {
         .getPixels = getPixelsImpl,
         .resize = resizeImpl,
         .pollEvents = pollEventsImpl,
+        .getKeyEvents = getKeyEventsImpl,
+        .getMouseEvents = getMouseEventsImpl,
         .deinit = deinitImpl,
     };
 

@@ -48,14 +48,12 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 * X11 backend for windowed display
 * Vulkan backend (GPU-accelerated rendering with X11 presentation)
 * Remote transport (TCP server, inline buffer transfer, remote client library)
+* Wayland backend for windowed display (keyboard and mouse input support)
 
 ### Applications
 * Terminal emulator (semadraw-term) for console environment
 
 ## Next
-
-### Backends
-* Wayland backend for windowed display (implemented, pending testing)
 
 ### semadraw-term Improvements
 
