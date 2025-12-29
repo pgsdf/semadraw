@@ -89,6 +89,43 @@ pub const KeyEvent = struct {
 /// Maximum number of key events that can be queued
 pub const MAX_KEY_EVENTS = 32;
 
+/// Mouse button identifiers
+pub const MouseButton = enum(u8) {
+    left = 0,
+    middle = 1,
+    right = 2,
+    scroll_up = 3,
+    scroll_down = 4,
+    scroll_left = 5,
+    scroll_right = 6,
+    button4 = 7,
+    button5 = 8,
+};
+
+/// Mouse event type
+pub const MouseEventType = enum(u8) {
+    press = 0,
+    release = 1,
+    motion = 2,
+};
+
+/// Mouse event from backend
+pub const MouseEvent = struct {
+    /// X coordinate in pixels
+    x: i32,
+    /// Y coordinate in pixels
+    y: i32,
+    /// Button involved (for press/release)
+    button: MouseButton,
+    /// Event type
+    event_type: MouseEventType,
+    /// Modifier state: bit 0=shift, bit 1=alt, bit 2=ctrl, bit 3=meta
+    modifiers: u8,
+};
+
+/// Maximum number of mouse events that can be queued
+pub const MAX_MOUSE_EVENTS = 64;
+
 /// Backend interface - all backends must implement this
 pub const Backend = struct {
     ptr: *anyopaque,
@@ -111,6 +148,9 @@ pub const Backend = struct {
         /// Get pending key events (empties the queue)
         /// Returns slice of events, caller should not free
         getKeyEvents: ?*const fn (ctx: *anyopaque) []const KeyEvent = null,
+        /// Get pending mouse events (empties the queue)
+        /// Returns slice of events, caller should not free
+        getMouseEvents: ?*const fn (ctx: *anyopaque) []const MouseEvent = null,
         /// Cleanup and free resources
         deinit: *const fn (ctx: *anyopaque) void,
     };
@@ -148,6 +188,15 @@ pub const Backend = struct {
             return func(self.ptr);
         }
         return &[_]KeyEvent{};
+    }
+
+    /// Get pending mouse events (empties the queue)
+    /// Returns empty slice if backend doesn't support mouse input
+    pub fn getMouseEvents(self: Backend) []const MouseEvent {
+        if (self.vtable.getMouseEvents) |func| {
+            return func(self.ptr);
+        }
+        return &[_]MouseEvent{};
     }
 
     pub fn deinit(self: Backend) void {

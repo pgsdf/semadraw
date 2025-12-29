@@ -20,6 +20,7 @@ pub const Event = union(enum) {
     sync_done: protocol.SyncDoneMsg,
     error_reply: protocol.ErrorReplyMsg,
     key_press: protocol.KeyPressMsg,
+    mouse_event: protocol.MouseEventMsg,
     disconnected: void,
 };
 
@@ -356,6 +357,13 @@ pub const Connection = struct {
                 if (msg.payload) |p| {
                     if (protocol.KeyPressMsg.deserialize(p)) |m| {
                         return .{ .key_press = m };
+                    } else |_| {}
+                }
+            },
+            .mouse_event => {
+                if (msg.payload) |p| {
+                    if (protocol.MouseEventMsg.deserialize(p)) |m| {
+                        return .{ .mouse_event = m };
                     } else |_| {}
                 }
             },
