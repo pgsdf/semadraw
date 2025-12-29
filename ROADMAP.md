@@ -66,7 +66,7 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 
 #### High Priority (Major Features)
 * ~~Scrollback buffer~~ (DONE - ring buffer with Shift+PageUp/Down navigation)
-* Fix double encoder reset bug in renderer.zig
+* ~~Fix double encoder reset bug in renderer.zig~~ (DONE - removed duplicate reset call)
 * Extended character support (currently ASCII 32-126 only, Unicode shows "?")
 * OSC escape sequence processing (terminal title, color palette)
 
