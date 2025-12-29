@@ -1,33 +1,53 @@
 const std = @import("std");
 
 /// 8x16 VGA-style bitmap font for terminal rendering
-/// Covers ASCII printable characters (32-126)
+/// Covers ASCII printable characters (32-126) plus box drawing (U+2500-U+257F)
 /// For unsupported Unicode characters, returns a fallback glyph
 pub const Font = struct {
     pub const GLYPH_WIDTH: u32 = 8;
     pub const GLYPH_HEIGHT: u32 = 16;
     pub const FIRST_CHAR: u8 = 32; // space
     pub const LAST_CHAR: u8 = 126; // tilde
-    pub const GLYPH_COUNT: u32 = LAST_CHAR - FIRST_CHAR + 1; // 95 characters
-    pub const ATLAS_COLS: u32 = 16; // 16 glyphs per row
-    pub const ATLAS_ROWS: u32 = (GLYPH_COUNT + ATLAS_COLS - 1) / ATLAS_COLS; // 6 rows
-    pub const ATLAS_WIDTH: u32 = GLYPH_WIDTH * ATLAS_COLS; // 128
-    pub const ATLAS_HEIGHT: u32 = GLYPH_HEIGHT * ATLAS_ROWS; // 96
+    pub const ASCII_GLYPH_COUNT: u32 = LAST_CHAR - FIRST_CHAR + 1; // 95 characters
 
-    /// Fallback glyph index (question mark) for unsupported characters
-    pub const FALLBACK_INDEX: u32 = '?' - FIRST_CHAR;
+    // Box drawing characters (U+2500-U+257F) - 128 characters
+    pub const BOX_FIRST: u21 = 0x2500;
+    pub const BOX_LAST: u21 = 0x257F;
+    pub const BOX_GLYPH_COUNT: u32 = BOX_LAST - BOX_FIRST + 1; // 128 characters
+
+    // Special glyphs at the end
+    pub const FALLBACK_GLYPH_IDX: u32 = ASCII_GLYPH_COUNT + BOX_GLYPH_COUNT;
+    pub const BLOCK_GLYPH_IDX: u32 = ASCII_GLYPH_COUNT + BOX_GLYPH_COUNT + 1;
+
+    pub const GLYPH_COUNT: u32 = ASCII_GLYPH_COUNT + BOX_GLYPH_COUNT + 2; // +2 for fallback and block
+    pub const ATLAS_COLS: u32 = 16; // 16 glyphs per row
+    pub const ATLAS_ROWS: u32 = (GLYPH_COUNT + ATLAS_COLS - 1) / ATLAS_COLS;
+    pub const ATLAS_WIDTH: u32 = GLYPH_WIDTH * ATLAS_COLS; // 128
+    pub const ATLAS_HEIGHT: u32 = GLYPH_HEIGHT * ATLAS_ROWS;
+
+    /// Fallback glyph index for unsupported characters (filled box pattern)
+    pub const FALLBACK_INDEX: u32 = FALLBACK_GLYPH_IDX;
 
     /// Get atlas index for a character (or null for unsupported)
     /// Accepts Unicode codepoint (u21)
     pub fn charToIndex(c: u21) ?u32 {
+        // ASCII printable range
         if (c >= FIRST_CHAR and c <= LAST_CHAR) {
             return @intCast(c - FIRST_CHAR);
+        }
+        // Box drawing characters
+        if (c >= BOX_FIRST and c <= BOX_LAST) {
+            return @as(u32, @intCast(c - BOX_FIRST)) + ASCII_GLYPH_COUNT;
+        }
+        // Block element: full block (U+2588)
+        if (c == 0x2588) {
+            return BLOCK_GLYPH_IDX;
         }
         return null;
     }
 
     /// Get atlas index with fallback for unsupported characters
-    /// Returns the fallback glyph (?) for characters outside ASCII range
+    /// Returns the fallback glyph for characters outside supported range
     pub fn charToIndexWithFallback(c: u21) u32 {
         return charToIndex(c) orelse FALLBACK_INDEX;
     }
@@ -45,7 +65,8 @@ pub const Font = struct {
         var atlas: [ATLAS_WIDTH * ATLAS_HEIGHT]u8 = undefined;
         @memset(&atlas, 0);
 
-        for (0..GLYPH_COUNT) |glyph_idx| {
+        // Generate ASCII glyphs
+        for (0..ASCII_GLYPH_COUNT) |glyph_idx| {
             const glyph = font_data[glyph_idx];
             const atlas_x = (glyph_idx % ATLAS_COLS) * GLYPH_WIDTH;
             const atlas_y = (glyph_idx / ATLAS_COLS) * GLYPH_HEIGHT;
@@ -60,13 +81,148 @@ pub const Font = struct {
             }
         }
 
+        // Generate box drawing glyphs
+        for (0..BOX_GLYPH_COUNT) |i| {
+            const glyph_idx = ASCII_GLYPH_COUNT + i;
+            const atlas_x = (glyph_idx % ATLAS_COLS) * GLYPH_WIDTH;
+            const atlas_y = (glyph_idx / ATLAS_COLS) * GLYPH_HEIGHT;
+            const box_char: u21 = @intCast(BOX_FIRST + i);
+
+            generateBoxGlyph(&atlas, atlas_x, atlas_y, box_char);
+        }
+
+        // Generate fallback glyph (checkerboard pattern for unknown chars)
+        {
+            const atlas_x = (FALLBACK_GLYPH_IDX % ATLAS_COLS) * GLYPH_WIDTH;
+            const atlas_y = (FALLBACK_GLYPH_IDX / ATLAS_COLS) * GLYPH_HEIGHT;
+            for (0..GLYPH_HEIGHT) |row| {
+                for (0..GLYPH_WIDTH) |col| {
+                    const idx = (atlas_y + row) * ATLAS_WIDTH + atlas_x + col;
+                    // Checkerboard pattern with border
+                    if (row == 0 or row == GLYPH_HEIGHT - 1 or col == 0 or col == GLYPH_WIDTH - 1) {
+                        atlas[idx] = 255;
+                    } else if ((row + col) % 2 == 0) {
+                        atlas[idx] = 128;
+                    }
+                }
+            }
+        }
+
+        // Generate full block glyph (U+2588)
+        {
+            const atlas_x = (BLOCK_GLYPH_IDX % ATLAS_COLS) * GLYPH_WIDTH;
+            const atlas_y = (BLOCK_GLYPH_IDX / ATLAS_COLS) * GLYPH_HEIGHT;
+            for (0..GLYPH_HEIGHT) |row| {
+                for (0..GLYPH_WIDTH) |col| {
+                    const idx = (atlas_y + row) * ATLAS_WIDTH + atlas_x + col;
+                    atlas[idx] = 255;
+                }
+            }
+        }
+
         return atlas;
+    }
+
+    /// Generate a box drawing glyph at the specified atlas position
+    fn generateBoxGlyph(atlas: *[ATLAS_WIDTH * ATLAS_HEIGHT]u8, atlas_x: usize, atlas_y: usize, char_code: u21) void {
+        const mid_x = GLYPH_WIDTH / 2;
+        const mid_y = GLYPH_HEIGHT / 2;
+
+        // Determine which segments are present based on character
+        const segments = getBoxSegments(char_code);
+
+        // Draw the segments
+        for (0..GLYPH_HEIGHT) |row| {
+            for (0..GLYPH_WIDTH) |col| {
+                const idx = (atlas_y + row) * ATLAS_WIDTH + atlas_x + col;
+                var pixel: u8 = 0;
+
+                // Horizontal line (left half)
+                if (segments.left and row >= mid_y - 1 and row <= mid_y and col < mid_x) {
+                    pixel = 255;
+                }
+                // Horizontal line (right half)
+                if (segments.right and row >= mid_y - 1 and row <= mid_y and col >= mid_x) {
+                    pixel = 255;
+                }
+                // Vertical line (top half)
+                if (segments.up and col >= mid_x - 1 and col <= mid_x and row < mid_y) {
+                    pixel = 255;
+                }
+                // Vertical line (bottom half)
+                if (segments.down and col >= mid_x - 1 and col <= mid_x and row >= mid_y) {
+                    pixel = 255;
+                }
+
+                if (pixel > atlas[idx]) {
+                    atlas[idx] = pixel;
+                }
+            }
+        }
+    }
+
+    const BoxSegments = struct {
+        left: bool,
+        right: bool,
+        up: bool,
+        down: bool,
+    };
+
+    /// Get which segments are present for a box drawing character
+    fn getBoxSegments(c: u21) BoxSegments {
+        return switch (c) {
+            // Light box drawing
+            0x2500 => .{ .left = true, .right = true, .up = false, .down = false }, // ─
+            0x2502 => .{ .left = false, .right = false, .up = true, .down = true }, // │
+            0x250C => .{ .left = false, .right = true, .up = false, .down = true }, // ┌
+            0x2510 => .{ .left = true, .right = false, .up = false, .down = true }, // ┐
+            0x2514 => .{ .left = false, .right = true, .up = true, .down = false }, // └
+            0x2518 => .{ .left = true, .right = false, .up = true, .down = false }, // ┘
+            0x251C => .{ .left = false, .right = true, .up = true, .down = true }, // ├
+            0x2524 => .{ .left = true, .right = false, .up = true, .down = true }, // ┤
+            0x252C => .{ .left = true, .right = true, .up = false, .down = true }, // ┬
+            0x2534 => .{ .left = true, .right = true, .up = true, .down = false }, // ┴
+            0x253C => .{ .left = true, .right = true, .up = true, .down = true }, // ┼
+
+            // Heavy box drawing
+            0x2501 => .{ .left = true, .right = true, .up = false, .down = false }, // ━
+            0x2503 => .{ .left = false, .right = false, .up = true, .down = true }, // ┃
+            0x250F => .{ .left = false, .right = true, .up = false, .down = true }, // ┏
+            0x2513 => .{ .left = true, .right = false, .up = false, .down = true }, // ┓
+            0x2517 => .{ .left = false, .right = true, .up = true, .down = false }, // ┗
+            0x251B => .{ .left = true, .right = false, .up = true, .down = false }, // ┛
+            0x2523 => .{ .left = false, .right = true, .up = true, .down = true }, // ┣
+            0x252B => .{ .left = true, .right = false, .up = true, .down = true }, // ┫
+            0x2533 => .{ .left = true, .right = true, .up = false, .down = true }, // ┳
+            0x253B => .{ .left = true, .right = true, .up = true, .down = false }, // ┻
+            0x254B => .{ .left = true, .right = true, .up = true, .down = true }, // ╋
+
+            // Double box drawing
+            0x2550 => .{ .left = true, .right = true, .up = false, .down = false }, // ═
+            0x2551 => .{ .left = false, .right = false, .up = true, .down = true }, // ║
+            0x2554 => .{ .left = false, .right = true, .up = false, .down = true }, // ╔
+            0x2557 => .{ .left = true, .right = false, .up = false, .down = true }, // ╗
+            0x255A => .{ .left = false, .right = true, .up = true, .down = false }, // ╚
+            0x255D => .{ .left = true, .right = false, .up = true, .down = false }, // ╝
+            0x2560 => .{ .left = false, .right = true, .up = true, .down = true }, // ╠
+            0x2563 => .{ .left = true, .right = false, .up = true, .down = true }, // ╣
+            0x2566 => .{ .left = true, .right = true, .up = false, .down = true }, // ╦
+            0x2569 => .{ .left = true, .right = true, .up = true, .down = false }, // ╩
+            0x256C => .{ .left = true, .right = true, .up = true, .down = true }, // ╬
+
+            // Dashed variants (treat as solid for simplicity)
+            0x2504, 0x2505, 0x2508, 0x2509 => .{ .left = true, .right = true, .up = false, .down = false },
+            0x2506, 0x2507, 0x250A, 0x250B => .{ .left = false, .right = false, .up = true, .down = true },
+
+            // Default: show all segments for unrecognized box chars
+            else => .{ .left = true, .right = true, .up = true, .down = true },
+        };
     }
 };
 
 /// 8x16 bitmap font data for ASCII 32-126
 /// Each glyph is 16 rows of 8-bit patterns (MSB = leftmost pixel)
-const font_data = [Font.GLYPH_COUNT][Font.GLYPH_HEIGHT]u8{
+const font_data = [Font.ASCII_GLYPH_COUNT][Font.GLYPH_HEIGHT]u8{
     // 32: space
     .{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
     // 33: !
@@ -289,15 +445,50 @@ test "Font char to index" {
     try std.testing.expectEqual(@as(?u32, 16), Font.charToIndex('0'));
     try std.testing.expectEqual(@as(?u32, null), Font.charToIndex(0));
     try std.testing.expectEqual(@as(?u32, null), Font.charToIndex(127));
-    // Unicode outside ASCII range returns null
+    // Unicode outside ASCII range returns null (except box drawing)
     try std.testing.expectEqual(@as(?u32, null), Font.charToIndex(0x00E9)); // é
     try std.testing.expectEqual(@as(?u32, null), Font.charToIndex(0x4E2D)); // 中
+}
+
+test "Font box drawing char to index" {
+    // Box drawing characters should map to indices after ASCII
+    const box_horiz = Font.charToIndex(0x2500); // ─
+    try std.testing.expect(box_horiz != null);
+    try std.testing.expectEqual(@as(u32, Font.ASCII_GLYPH_COUNT), box_horiz.?);
+
+    const box_vert = Font.charToIndex(0x2502); // │
+    try std.testing.expect(box_vert != null);
+    try std.testing.expectEqual(@as(u32, Font.ASCII_GLYPH_COUNT + 2), box_vert.?);
+
+    const box_corner = Font.charToIndex(0x250C); // ┌
+    try std.testing.expect(box_corner != null);
+
+    // Full block
+    const block = Font.charToIndex(0x2588);
+    try std.testing.expectEqual(Font.BLOCK_GLYPH_IDX, block.?);
 }
 
 test "Font char to index with fallback" {
     // ASCII still works
     try std.testing.expectEqual(@as(u32, 33), Font.charToIndexWithFallback('A'));
-    // Non-ASCII returns fallback (?)
+    // Box drawing works
+    try std.testing.expectEqual(@as(u32, Font.ASCII_GLYPH_COUNT), Font.charToIndexWithFallback(0x2500));
+    // Non-ASCII non-box returns fallback
     try std.testing.expectEqual(Font.FALLBACK_INDEX, Font.charToIndexWithFallback(0x00E9)); // é
     try std.testing.expectEqual(Font.FALLBACK_INDEX, Font.charToIndexWithFallback(0x4E2D)); // 中
+}
+
+test "Font atlas has box drawing glyphs" {
+    const atlas = Font.generateAtlas();
+    // Box horizontal line should have pixels in the middle rows
+    const idx = Font.charToIndex(0x2500).?;
+    const pos = Font.indexToAtlasPos(idx);
+    var has_pixel = false;
+    for (0..Font.GLYPH_HEIGHT) |row| {
+        for (0..Font.GLYPH_WIDTH) |col| {
+            const atlas_idx = (pos.y + row) * Font.ATLAS_WIDTH + pos.x + col;
+            if (atlas[atlas_idx] != 0) has_pixel = true;
+        }
+    }
+    try std.testing.expect(has_pixel);
 }

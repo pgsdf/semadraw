@@ -31,7 +31,6 @@ pub const Renderer = struct {
 
     /// Render the screen to SDCS and return the encoded data
     pub fn render(self: *Self) ![]u8 {
-        self.encoder.reset() catch {};
         try self.encoder.reset();
 
         // Draw background
