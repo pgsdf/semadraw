@@ -76,6 +76,19 @@ pub const RenderResult = struct {
     }
 };
 
+/// Key event from backend (keyboard input)
+pub const KeyEvent = struct {
+    /// Key code (evdev code on Linux)
+    key_code: u32,
+    /// Modifier state: bit 0=shift, bit 1=alt, bit 2=ctrl, bit 3=meta
+    modifiers: u8,
+    /// True if key pressed, false if released
+    pressed: bool,
+};
+
+/// Maximum number of key events that can be queued
+pub const MAX_KEY_EVENTS = 32;
+
 /// Backend interface - all backends must implement this
 pub const Backend = struct {
     ptr: *anyopaque,
@@ -95,6 +108,9 @@ pub const Backend = struct {
         /// Process pending events (keyboard, window, etc.)
         /// Returns false if backend should stop (e.g., window closed)
         pollEvents: *const fn (ctx: *anyopaque) bool,
+        /// Get pending key events (empties the queue)
+        /// Returns slice of events, caller should not free
+        getKeyEvents: ?*const fn (ctx: *anyopaque) []const KeyEvent = null,
         /// Cleanup and free resources
         deinit: *const fn (ctx: *anyopaque) void,
     };
@@ -123,6 +139,15 @@ pub const Backend = struct {
     /// Returns false if backend should stop (e.g., window closed)
     pub fn pollEvents(self: Backend) bool {
         return self.vtable.pollEvents(self.ptr);
+    }
+
+    /// Get pending key events (empties the queue)
+    /// Returns empty slice if backend doesn't support keyboard input
+    pub fn getKeyEvents(self: Backend) []const KeyEvent {
+        if (self.vtable.getKeyEvents) |func| {
+            return func(self.ptr);
+        }
+        return &[_]KeyEvent{};
     }
 
     pub fn deinit(self: Backend) void {
