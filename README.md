@@ -229,7 +229,7 @@ semadraw-term
 **Example 1: Terminal on X11**
 ```sh
 # Terminal 1: Start daemon
-semadrawd --backend x11 --verbose
+semadrawd --backend x11
 
 # Terminal 2: Run terminal emulator with custom size
 semadraw-term --cols 120 --rows 40 --shell /bin/bash
@@ -267,8 +267,7 @@ semadrawd [OPTIONS]
 |--------|-------------|
 | `-b, --backend TYPE` | Backend: software, headless, kms, x11, vulkan, wayland |
 | `-s, --socket PATH` | Unix socket path (default: /var/run/semadraw/semadraw.sock) |
-| `-v, --verbose` | Enable verbose logging |
-| `--tcp PORT` | Enable TCP server on PORT for remote connections |
+| `-t, --tcp PORT` | Enable TCP server on PORT for remote connections |
 | `--tcp-addr ADDR` | Bind TCP to specific address (default: 0.0.0.0) |
 | `-h, --help` | Show help |
 
