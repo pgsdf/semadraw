@@ -19,6 +19,13 @@ pub const Parser = struct {
     // Private mode flag (for CSI ? sequences like DECSET/DECRST)
     private_mode: bool,
 
+    // OSC (Operating System Command) parsing state
+    osc_cmd: u16, // OSC command number (0-65535)
+    osc_buf: [512]u8, // OSC string data buffer
+    osc_len: u16, // Current length of OSC data
+    osc_in_param: bool, // True if still parsing command number
+    osc_esc_seen: bool, // True if ESC was seen (for ST terminator)
+
     const Self = @This();
 
     const State = enum {
@@ -46,6 +53,11 @@ pub const Parser = struct {
             .utf8_len = 0,
             .utf8_expected = 0,
             .private_mode = false,
+            .osc_cmd = 0,
+            .osc_buf = undefined,
+            .osc_len = 0,
+            .osc_in_param = true,
+            .osc_esc_seen = false,
         };
     }
 
@@ -79,6 +91,10 @@ pub const Parser = struct {
         self.intermediate = [_]u8{0} ** 4;
         self.intermediate_count = 0;
         self.private_mode = false;
+        self.osc_cmd = 0;
+        self.osc_len = 0;
+        self.osc_in_param = true;
+        self.osc_esc_seen = false;
     }
 
     fn handleGround(self: *Self, c: u8) void {
@@ -191,8 +207,12 @@ pub const Parser = struct {
             self.intermediate = [_]u8{0} ** 4;
             self.intermediate_count = 0;
         } else if (c == ']') {
-            // OSC
+            // OSC - initialize OSC state
             self.state = .osc_string;
+            self.osc_cmd = 0;
+            self.osc_len = 0;
+            self.osc_in_param = true;
+            self.osc_esc_seen = false;
         } else if (c == 'P') {
             // DCS
             self.state = .dcs_entry;
@@ -346,13 +366,173 @@ pub const Parser = struct {
     }
 
     fn handleOscString(self: *Self, c: u8) void {
-        // OSC ends with BEL (0x07) or ST (ESC \)
-        if (c == 0x07) {
-            self.reset();
-        } else if (c == 0x1B) {
-            self.state = .escape; // May be ST
+        // Check for ST terminator after ESC
+        if (self.osc_esc_seen) {
+            if (c == '\\') {
+                // ESC \ = ST, execute OSC and reset
+                self.executeOsc();
+                self.reset();
+                return;
+            } else {
+                // ESC followed by something else - abort OSC and re-process
+                self.reset();
+                self.state = .escape;
+                self.handleEscape(c);
+                return;
+            }
         }
-        // Otherwise consume the string (we don't handle OSC for now)
+
+        // Check for terminators
+        if (c == 0x07) {
+            // BEL terminates OSC
+            self.executeOsc();
+            self.reset();
+            return;
+        } else if (c == 0x1B) {
+            // ESC - might be start of ST
+            self.osc_esc_seen = true;
+            return;
+        }
+
+        // Parse OSC content
+        if (self.osc_in_param) {
+            // Still parsing command number
+            if (c >= '0' and c <= '9') {
+                self.osc_cmd = self.osc_cmd * 10 + (c - '0');
+            } else if (c == ';') {
+                // End of command number, start of data
+                self.osc_in_param = false;
+            } else {
+                // Invalid character in command number - abort
+                self.reset();
+            }
+        } else {
+            // Collecting data bytes
+            if (self.osc_len < self.osc_buf.len) {
+                self.osc_buf[self.osc_len] = c;
+                self.osc_len += 1;
+            }
+            // If buffer full, continue consuming but ignore extra bytes
+        }
+    }
+
+    fn executeOsc(self: *Self) void {
+        const data = self.osc_buf[0..self.osc_len];
+
+        switch (self.osc_cmd) {
+            0 => {
+                // Set icon name and window title
+                self.scr.setIconName(data);
+                self.scr.setTitle(data);
+            },
+            1 => {
+                // Set icon name only
+                self.scr.setIconName(data);
+            },
+            2 => {
+                // Set window title only
+                self.scr.setTitle(data);
+            },
+            4 => {
+                // Set indexed palette color: OSC 4 ; index ; color ST
+                self.parseOscPaletteColor(data);
+            },
+            10 => {
+                // Set foreground color: OSC 10 ; color ST
+                if (self.parseOscColor(data)) |rgb| {
+                    self.scr.setForegroundColor(rgb.r, rgb.g, rgb.b);
+                }
+            },
+            11 => {
+                // Set background color: OSC 11 ; color ST
+                if (self.parseOscColor(data)) |rgb| {
+                    self.scr.setBackgroundColor(rgb.r, rgb.g, rgb.b);
+                }
+            },
+            104 => {
+                // Reset palette color(s)
+                if (data.len == 0) {
+                    // Reset all colors
+                    self.scr.resetPalette();
+                } else {
+                    // Reset specific color index
+                    if (self.parseDecimalNumber(data)) |idx| {
+                        if (idx <= 255) {
+                            self.scr.resetPaletteColor(@intCast(idx));
+                        }
+                    }
+                }
+            },
+            110 => {
+                // Reset foreground color
+                self.scr.resetForegroundColor();
+            },
+            111 => {
+                // Reset background color
+                self.scr.resetBackgroundColor();
+            },
+            else => {
+                // Unsupported OSC command - ignore
+            },
+        }
+    }
+
+    fn parseOscPaletteColor(self: *Self, data: []const u8) void {
+        // Format: index ; color
+        // Find semicolon separator
+        var sep_pos: ?usize = null;
+        for (data, 0..) |c, i| {
+            if (c == ';') {
+                sep_pos = i;
+                break;
+            }
+        }
+
+        const sep = sep_pos orelse return;
+        if (sep == 0 or sep >= data.len - 1) return;
+
+        const index_str = data[0..sep];
+        const color_str = data[sep + 1 ..];
+
+        const index = self.parseDecimalNumber(index_str) orelse return;
+        if (index > 255) return;
+
+        const rgb = self.parseOscColor(color_str) orelse return;
+        self.scr.setPaletteColor(@intCast(index), rgb.r, rgb.g, rgb.b) catch {};
+    }
+
+    fn parseOscColor(self: *Self, data: []const u8) ?struct { r: u8, g: u8, b: u8 } {
+        _ = self;
+        if (data.len == 0) return null;
+
+        // Format 1: #RRGGBB
+        if (data[0] == '#') {
+            if (data.len == 7) {
+                const r = parseHexByte(data[1..3]) orelse return null;
+                const g = parseHexByte(data[3..5]) orelse return null;
+                const b = parseHexByte(data[5..7]) orelse return null;
+                return .{ .r = r, .g = g, .b = b };
+            }
+            return null;
+        }
+
+        // Format 2: rgb:RR/GG/BB or rgb:RRRR/GGGG/BBBB (X11 format)
+        if (data.len >= 4 and std.mem.eql(u8, data[0..4], "rgb:")) {
+            return parseX11Color(data[4..]);
+        }
+
+        return null;
+    }
+
+    fn parseDecimalNumber(self: *Self, data: []const u8) ?u32 {
+        _ = self;
+        if (data.len == 0) return null;
+        var result: u32 = 0;
+        for (data) |c| {
+            if (c < '0' or c > '9') return null;
+            result = result * 10 + (c - '0');
+        }
+        return result;
     }
 
     fn handleDcsEntry(self: *Self, c: u8) void {
@@ -646,6 +826,86 @@ pub const Parser = struct {
 };
 
 // ============================================================================
+// Color parsing helper functions
+// ============================================================================
+
+/// Parse a 2-character hex byte (e.g., "FF" -> 255)
+fn parseHexByte(data: []const u8) ?u8 {
+    if (data.len != 2) return null;
+    const high = hexDigitToValue(data[0]) orelse return null;
+    const low = hexDigitToValue(data[1]) orelse return null;
+    return high * 16 + low;
+}
+
+/// Parse a hex digit to its numeric value
+fn hexDigitToValue(c: u8) ?u8 {
+    if (c >= '0' and c <= '9') return c - '0';
+    if (c >= 'a' and c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' and c <= 'F') return c - 'A' + 10;
+    return null;
+}
+
+/// Parse X11 color format: RR/GG/BB or RRRR/GGGG/BBBB
+fn parseX11Color(data: []const u8) ?struct { r: u8, g: u8, b: u8 } {
+    // Find the two separators
+    var sep1: ?usize = null;
+    var sep2: ?usize = null;
+
+    for (data, 0..) |c, i| {
+        if (c == '/') {
+            if (sep1 == null) {
+                sep1 = i;
+            } else if (sep2 == null) {
+                sep2 = i;
+            } else {
+                return null; // Too many separators
+            }
+        }
+    }
+
+    const s1 = sep1 orelse return null;
+    const s2 = sep2 orelse return null;
+
+    const r_str = data[0..s1];
+    const g_str = data[s1 + 1 .. s2];
+    const b_str = data[s2 + 1 ..];
+
+    // All components must have the same length (1-4 hex digits)
+    if (r_str.len == 0 or r_str.len > 4) return null;
+    if (r_str.len != g_str.len or r_str.len != b_str.len) return null;
+
+    const r = parseHexComponent(r_str) orelse return null;
+    const g = parseHexComponent(g_str) orelse return null;
+    const b = parseHexComponent(b_str) orelse return null;
+
+    return .{ .r = r, .g = g, .b = b };
+}
+
+/// Parse a hex color component (1-4 hex digits) and scale to 0-255
+fn parseHexComponent(data: []const u8) ?u8 {
+    if (data.len == 0 or data.len > 4) return null;
+
+    var value: u16 = 0;
+    for (data) |c| {
+        const digit = hexDigitToValue(c) orelse return null;
+        value = value * 16 + digit;
+    }
+
+    // Scale based on component length:
+    // 1 digit: multiply by 17 (0xF -> 0xFF)
+    // 2 digits: use as-is
+    // 3 digits: divide by 16 (0xFFF -> 0xFF)
+    // 4 digits: divide by 256 (0xFFFF -> 0xFF)
+    return switch (data.len) {
+        1 => @intCast(value * 17),
+        2 => @intCast(value),
+        3 => @intCast(value >> 4),
+        4 => @intCast(value >> 8),
+        else => null,
+    };
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -871,4 +1131,112 @@ test "Parser DECSET/DECRST mode 25 (cursor visibility)" {
     // Show cursor
     parser.feedSlice("\x1b[?25h");
     try std.testing.expect(scr.cursor_visible);
+}
+
+test "Parser OSC 0 (set icon name and title)" {
+    const allocator = std.testing.allocator;
+    var scr = try screen.Screen.init(allocator, 80, 24);
+    defer scr.deinit();
+
+    var parser = Parser.init(&scr);
+
+    // OSC 0 ; text BEL
+    parser.feedSlice("\x1b]0;My Terminal Title\x07");
+
+    try std.testing.expectEqualStrings("My Terminal Title", scr.getTitle());
+    try std.testing.expectEqualStrings("My Terminal Title", scr.getIconName());
+}
+
+test "Parser OSC 2 (set title only)" {
+    const allocator = std.testing.allocator;
+    var scr = try screen.Screen.init(allocator, 80, 24);
+    defer scr.deinit();
+
+    var parser = Parser.init(&scr);
+
+    // OSC 2 ; text ESC \ (ST terminator)
+    parser.feedSlice("\x1b]2;Window Title\x1b\\");
+
+    try std.testing.expectEqualStrings("Window Title", scr.getTitle());
+    try std.testing.expectEqualStrings("", scr.getIconName());
+}
+
+test "Parser OSC 1 (set icon name only)" {
+    const allocator = std.testing.allocator;
+    var scr = try screen.Screen.init(allocator, 80, 24);
+    defer scr.deinit();
+
+    var parser = Parser.init(&scr);
+
+    // First set title
+    parser.feedSlice("\x1b]2;Title\x07");
+    // Then set icon name only
+    parser.feedSlice("\x1b]1;Icon\x07");
+
+    try std.testing.expectEqualStrings("Title", scr.getTitle());
+    try std.testing.expectEqualStrings("Icon", scr.getIconName());
+}
+
+test "Parser OSC 10/11 (foreground/background colors)" {
+    const allocator = std.testing.allocator;
+    var scr = try screen.Screen.init(allocator, 80, 24);
+    defer scr.deinit();
+
+    var parser = Parser.init(&scr);
+
+    // Set foreground to red (#FF0000)
+    parser.feedSlice("\x1b]10;#FF0000\x07");
+    const fg = scr.getEffectiveForeground();
+    try std.testing.expectEqual(@as(u8, 255), fg.r);
+    try std.testing.expectEqual(@as(u8, 0), fg.g);
+    try std.testing.expectEqual(@as(u8, 0), fg.b);
+
+    // Set background using X11 format
+    parser.feedSlice("\x1b]11;rgb:00/FF/00\x07");
+    const bg = scr.getEffectiveBackground();
+    try std.testing.expectEqual(@as(u8, 0), bg.r);
+    try std.testing.expectEqual(@as(u8, 255), bg.g);
+    try std.testing.expectEqual(@as(u8, 0), bg.b);
+
+    // Reset colors
+    parser.feedSlice("\x1b]110;\x07");
+    parser.feedSlice("\x1b]111;\x07");
+    const fg2 = scr.getEffectiveForeground();
+    const bg2 = scr.getEffectiveBackground();
+    // Should be back to defaults (gray/black)
+    try std.testing.expectEqual(@as(u8, 170), fg2.r); // default_fg color 7
+    try std.testing.expectEqual(@as(u8, 0), bg2.r); // default_bg color 0
+}
+
+test "parseHexByte" {
+    try std.testing.expectEqual(@as(?u8, 0), parseHexByte("00"));
+    try std.testing.expectEqual(@as(?u8, 255), parseHexByte("FF"));
+    try std.testing.expectEqual(@as(?u8, 255), parseHexByte("ff"));
+    try std.testing.expectEqual(@as(?u8, 171), parseHexByte("AB"));
+    try std.testing.expectEqual(@as(?u8, null), parseHexByte("GG"));
+    try std.testing.expectEqual(@as(?u8, null), parseHexByte("F"));
+}
+
+test "parseX11Color" {
+    // 2-digit format
+    const c1 = parseX11Color("FF/00/80").?;
+    try std.testing.expectEqual(@as(u8, 255), c1.r);
+    try std.testing.expectEqual(@as(u8, 0), c1.g);
+    try std.testing.expectEqual(@as(u8, 128), c1.b);
+
+    // 4-digit format
+    const c2 = parseX11Color("FFFF/0000/8080").?;
+    try std.testing.expectEqual(@as(u8, 255), c2.r);
+    try std.testing.expectEqual(@as(u8, 0), c2.g);
+    try std.testing.expectEqual(@as(u8, 128), c2.b);
+
+    // 1-digit format
+    const c3 = parseX11Color("F/0/8").?;
+    try std.testing.expectEqual(@as(u8, 255), c3.r);
+    try std.testing.expectEqual(@as(u8, 0), c3.g);
+    try std.testing.expectEqual(@as(u8, 136), c3.b);
+
+    // Invalid formats
+    try std.testing.expectEqual(@as(?@TypeOf(c1), null), parseX11Color("FF/00"));
+    try std.testing.expectEqual(@as(?@TypeOf(c1), null), parseX11Color("FF/00/GG"));
 }

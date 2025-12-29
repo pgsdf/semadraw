@@ -68,7 +68,7 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 * ~~Scrollback buffer~~ (DONE - ring buffer with Shift+PageUp/Down navigation)
 * ~~Fix double encoder reset bug in renderer.zig~~ (DONE - removed duplicate reset call)
 * ~~Extended character support~~ (DONE - added box drawing U+2500-U+257F, full block, improved fallback glyph)
-* OSC escape sequence processing (terminal title, color palette)
+* ~~OSC escape sequence processing~~ (DONE - OSC 0/1/2 for title, OSC 4/10/11 for colors, OSC 104/110/111 for reset)
 
 #### Medium Priority (Enhancements)
 * Mouse input support (tracking, selection, copy/paste)
