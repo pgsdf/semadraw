@@ -24,12 +24,11 @@ pub const Renderer = struct {
             .scr = scr,
             .width_px = scr.cols * font.Font.GLYPH_WIDTH,
             .height_px = scr.rows * font.Font.GLYPH_HEIGHT,
-            .glyph_buffer = std.ArrayList(semadraw.Encoder.Glyph).init(allocator),
+            .glyph_buffer = .empty,
         };
     }
 
     pub fn deinit(self: *Self) void {
-        self.glyph_buffer.deinit();
         self.encoder.deinit();
     }
 
@@ -149,7 +148,7 @@ pub const Renderer = struct {
                 if (cell.char != ' ' or !colorEqual(bg, screen.Color.default_bg)) {
                     // Use fallback for unsupported Unicode characters
                     const glyph_idx = font.Font.charToIndexWithFallback(cell.char);
-                    try self.glyph_buffer.append(.{
+                    try self.glyph_buffer.append(self.allocator, .{
                         .index = glyph_idx,
                         .x_offset = @floatFromInt((col - start_col) * font.Font.GLYPH_WIDTH),
                         .y_offset = 0,
