@@ -86,19 +86,28 @@ zig build
 
 # Run tests
 zig build test
-
-# Binaries are in ./zig-out/bin/
-ls ./zig-out/bin/
 ```
 
-### Install System-wide (Optional)
+### Install
 
 ```sh
-# Copy binaries to /usr/local/bin
-sudo cp ./zig-out/bin/semadrawd /usr/local/bin/
-sudo cp ./zig-out/bin/semadraw-term /usr/local/bin/
+# Install to /usr/local (default)
+sudo zig build install --prefix /usr/local
 
-# Create socket directory
+# Or install to custom location
+zig build install --prefix ~/.local
+```
+
+This installs:
+- `/usr/local/bin/semadrawd` - Compositor daemon
+- `/usr/local/bin/semadraw-term` - Terminal emulator
+- `/usr/local/bin/sdcs_dump` - SDCS file inspector
+- `/usr/local/bin/sdcs_replay` - Software renderer
+- `/usr/local/lib/libsemadraw_client.a` - Client library
+
+**Create socket directory (if using default socket path):**
+
+```sh
 sudo mkdir -p /var/run/semadraw
 sudo chmod 755 /var/run/semadraw
 ```
@@ -108,8 +117,8 @@ sudo chmod 755 /var/run/semadraw
 Generate and view a 1280x1080 showcase of SemaDraw capabilities:
 
 ```sh
-./zig-out/bin/sdcs_make_demo /tmp/demo.sdcs
-./zig-out/bin/sdcs_replay /tmp/demo.sdcs /tmp/demo.ppm 1280 1080
+sdcs_make_demo /tmp/demo.sdcs
+sdcs_replay /tmp/demo.sdcs /tmp/demo.ppm 1280 1080
 feh /tmp/demo.ppm
 ```
 
@@ -155,10 +164,10 @@ For running SemaDraw directly on the console without X11 or Wayland (framebuffer
 # Switch to a virtual console (Ctrl+Alt+F2) or boot without display manager
 
 # Start semadrawd with KMS backend (requires root or video group membership)
-sudo ./zig-out/bin/semadrawd --backend kms
+sudo semadrawd --backend kms
 
 # In another terminal/session, run the terminal emulator
-./zig-out/bin/semadraw-term
+semadraw-term
 ```
 
 **Requirements:**
@@ -177,20 +186,20 @@ For running SemaDraw as a window inside an X11 session:
 
 ```sh
 # Start semadrawd with X11 backend
-./zig-out/bin/semadrawd --backend x11
+semadrawd --backend x11
 
 # Run the terminal emulator (in another terminal)
-./zig-out/bin/semadraw-term
+semadraw-term
 ```
 
 **For GPU-accelerated rendering with Vulkan:**
 
 ```sh
 # Start with Vulkan backend (requires Vulkan-capable GPU)
-./zig-out/bin/semadrawd --backend vulkan
+semadrawd --backend vulkan
 
 # Run the terminal emulator
-./zig-out/bin/semadraw-term
+semadraw-term
 ```
 
 **Requirements:**
@@ -204,10 +213,10 @@ For running SemaDraw as a window inside a Wayland session:
 
 ```sh
 # Start semadrawd with Wayland backend
-./zig-out/bin/semadrawd --backend wayland
+semadrawd --backend wayland
 
 # Run the terminal emulator (in another terminal)
-./zig-out/bin/semadraw-term
+semadraw-term
 ```
 
 **Requirements:**
@@ -220,28 +229,28 @@ For running SemaDraw as a window inside a Wayland session:
 **Example 1: Terminal on X11**
 ```sh
 # Terminal 1: Start daemon
-./zig-out/bin/semadrawd --backend x11 --verbose
+semadrawd --backend x11 --verbose
 
 # Terminal 2: Run terminal emulator with custom size
-./zig-out/bin/semadraw-term --cols 120 --rows 40 --shell /bin/bash
+semadraw-term --cols 120 --rows 40 --shell /bin/bash
 ```
 
 **Example 2: Terminal on Wayland**
 ```sh
 # Terminal 1: Start daemon
-./zig-out/bin/semadrawd --backend wayland
+semadrawd --backend wayland
 
 # Terminal 2: Run terminal
-./zig-out/bin/semadraw-term
+semadraw-term
 ```
 
 **Example 3: Headless testing**
 ```sh
 # Start headless (no display output)
-./zig-out/bin/semadrawd --backend headless
+semadrawd --backend headless
 
 # Connect terminal for testing
-./zig-out/bin/semadraw-term
+semadraw-term
 ```
 
 ## semadrawd Reference
@@ -249,7 +258,7 @@ For running SemaDraw as a window inside a Wayland session:
 Start the compositor daemon:
 
 ```sh
-./zig-out/bin/semadrawd [OPTIONS]
+semadrawd [OPTIONS]
 ```
 
 **Options:**
@@ -280,10 +289,10 @@ semadrawd supports TCP connections for remote SDCS streaming:
 
 ```sh
 # Enable TCP on port 7234
-./zig-out/bin/semadrawd --backend x11 --tcp 7234
+semadrawd --backend x11 --tcp 7234
 
 # Bind to specific address
-./zig-out/bin/semadrawd --tcp 7234 --tcp-addr 192.168.1.100
+semadrawd --tcp 7234 --tcp-addr 192.168.1.100
 ```
 
 Remote clients use inline buffer transfer instead of shared memory.
@@ -293,7 +302,7 @@ Remote clients use inline buffer transfer instead of shared memory.
 Terminal emulator for running shell sessions:
 
 ```sh
-./zig-out/bin/semadraw-term [OPTIONS]
+semadraw-term [OPTIONS]
 ```
 
 **Options:**
