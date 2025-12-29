@@ -28,6 +28,76 @@ const PollFd = extern struct {
     revents: i16,
 };
 
+/// Keyboard modifier masks
+const Modifiers = struct {
+    const SHIFT: u8 = 0x01;
+    const ALT: u8 = 0x02;
+    const CTRL: u8 = 0x04;
+};
+
+/// ASCII control codes
+const Ascii = struct {
+    const TAB: u8 = 0x09;
+    const CR: u8 = 0x0D; // Carriage return (Enter)
+    const ESC: u8 = 0x1B;
+    const DEL: u8 = 0x7F; // Delete (Backspace)
+};
+
+/// Linux evdev key codes
+const Key = struct {
+    const ESC: u32 = 1;
+    const @"1": u32 = 2;
+    const @"2": u32 = 3;
+    const @"3": u32 = 4;
+    const @"4": u32 = 5;
+    const @"5": u32 = 6;
+    const @"6": u32 = 7;
+    const @"7": u32 = 8;
+    const @"8": u32 = 9;
+    const @"9": u32 = 10;
+    const @"0": u32 = 11;
+    const BACKSPACE: u32 = 14;
+    const TAB: u32 = 15;
+    const Q: u32 = 16;
+    const W: u32 = 17;
+    const E: u32 = 18;
+    const R: u32 = 19;
+    const T: u32 = 20;
+    const Y: u32 = 21;
+    const U: u32 = 22;
+    const I: u32 = 23;
+    const O: u32 = 24;
+    const P: u32 = 25;
+    const ENTER: u32 = 28;
+    const A: u32 = 30;
+    const S: u32 = 31;
+    const D: u32 = 32;
+    const F: u32 = 33;
+    const G: u32 = 34;
+    const H: u32 = 35;
+    const J: u32 = 36;
+    const K: u32 = 37;
+    const L: u32 = 38;
+    const Z: u32 = 44;
+    const X: u32 = 45;
+    const C: u32 = 46;
+    const V: u32 = 47;
+    const B: u32 = 48;
+    const N: u32 = 49;
+    const M: u32 = 50;
+    const SPACE: u32 = 57;
+    const HOME: u32 = 102;
+    const UP: u32 = 103;
+    const PAGE_UP: u32 = 104;
+    const LEFT: u32 = 105;
+    const RIGHT: u32 = 106;
+    const END: u32 = 107;
+    const DOWN: u32 = 108;
+    const PAGE_DOWN: u32 = 109;
+    const INSERT: u32 = 110;
+    const DELETE: u32 = 111;
+};
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -248,17 +318,17 @@ fn renderAndCommitWithBlink(allocator: std.mem.Allocator, rend: *renderer.Render
 }
 
 fn handleKeyPress(shell: *pty.Pty, scr: *screen.Screen, key_code: u32, modifiers: u8) void {
-    const ctrl = (modifiers & 0x04) != 0;
-    const shift = (modifiers & 0x01) != 0;
+    const ctrl = (modifiers & Modifiers.CTRL) != 0;
+    const shift = (modifiers & Modifiers.SHIFT) != 0;
 
     // Handle scrollback navigation (Shift+PageUp/PageDown)
     if (shift) {
         switch (key_code) {
-            104 => { // PageUp
+            Key.PAGE_UP => {
                 _ = scr.scrollViewUp(scr.rows / 2); // Scroll up half a screen
                 return;
             },
-            109 => { // PageDown
+            Key.PAGE_DOWN => {
                 _ = scr.scrollViewDown(scr.rows / 2); // Scroll down half a screen
                 return;
             },
@@ -291,180 +361,180 @@ fn handleKeyPress(shell: *pty.Pty, scr: *screen.Screen, key_code: u32, modifiers
     }.get;
 
     switch (key_code) {
-        // Letters A-Z (16-50 are Q,W,E,R,T,Y,U,I,O,P, A,S,D,F,G,H,J,K,L, Z,X,C,V,B,N,M)
-        16 => { // Q
+        // Letters A-Z
+        Key.Q => {
             buf[0] = getChar('q', shift, ctrl);
             len = 1;
         },
-        17 => {
+        Key.W => {
             buf[0] = getChar('w', shift, ctrl);
             len = 1;
         },
-        18 => {
+        Key.E => {
             buf[0] = getChar('e', shift, ctrl);
             len = 1;
         },
-        19 => {
+        Key.R => {
             buf[0] = getChar('r', shift, ctrl);
             len = 1;
         },
-        20 => {
+        Key.T => {
             buf[0] = getChar('t', shift, ctrl);
             len = 1;
         },
-        21 => {
+        Key.Y => {
             buf[0] = getChar('y', shift, ctrl);
             len = 1;
         },
-        22 => {
+        Key.U => {
             buf[0] = getChar('u', shift, ctrl);
             len = 1;
         },
-        23 => {
+        Key.I => {
             buf[0] = getChar('i', shift, ctrl);
             len = 1;
         },
-        24 => {
+        Key.O => {
             buf[0] = getChar('o', shift, ctrl);
             len = 1;
         },
-        25 => {
+        Key.P => {
             buf[0] = getChar('p', shift, ctrl);
             len = 1;
         },
-        30 => {
+        Key.A => {
             buf[0] = getChar('a', shift, ctrl);
             len = 1;
         },
-        31 => {
+        Key.S => {
             buf[0] = getChar('s', shift, ctrl);
             len = 1;
         },
-        32 => {
+        Key.D => {
             buf[0] = getChar('d', shift, ctrl);
             len = 1;
         },
-        33 => {
+        Key.F => {
             buf[0] = getChar('f', shift, ctrl);
             len = 1;
         },
-        34 => {
+        Key.G => {
             buf[0] = getChar('g', shift, ctrl);
             len = 1;
         },
-        35 => {
+        Key.H => {
             buf[0] = getChar('h', shift, ctrl);
             len = 1;
         },
-        36 => {
+        Key.J => {
             buf[0] = getChar('j', shift, ctrl);
             len = 1;
         },
-        37 => {
+        Key.K => {
             buf[0] = getChar('k', shift, ctrl);
             len = 1;
         },
-        38 => {
+        Key.L => {
             buf[0] = getChar('l', shift, ctrl);
             len = 1;
         },
-        44 => {
+        Key.Z => {
             buf[0] = getChar('z', shift, ctrl);
             len = 1;
         },
-        45 => {
+        Key.X => {
             buf[0] = getChar('x', shift, ctrl);
             len = 1;
         },
-        46 => {
+        Key.C => {
             buf[0] = getChar('c', shift, ctrl);
             len = 1;
         },
-        47 => {
+        Key.V => {
             buf[0] = getChar('v', shift, ctrl);
             len = 1;
         },
-        48 => {
+        Key.B => {
             buf[0] = getChar('b', shift, ctrl);
             len = 1;
         },
-        49 => {
+        Key.N => {
             buf[0] = getChar('n', shift, ctrl);
             len = 1;
         },
-        50 => {
+        Key.M => {
             buf[0] = getChar('m', shift, ctrl);
             len = 1;
         },
 
-        // Numbers 0-9 (keys 2-11)
-        2...11 => |k| {
+        // Numbers 0-9
+        Key.@"1"...Key.@"0" => |k| {
             buf[0] = @intCast('0' + ((k + 8) % 10));
             len = 1;
         },
 
         // Special keys
-        1 => { // Escape
-            buf[0] = 0x1B;
+        Key.ESC => {
+            buf[0] = Ascii.ESC;
             len = 1;
         },
-        14 => { // Backspace
-            buf[0] = 0x7F;
+        Key.BACKSPACE => {
+            buf[0] = Ascii.DEL;
             len = 1;
         },
-        15 => { // Tab
-            buf[0] = 0x09;
+        Key.TAB => {
+            buf[0] = Ascii.TAB;
             len = 1;
         },
-        28 => { // Enter
-            buf[0] = 0x0D;
+        Key.ENTER => {
+            buf[0] = Ascii.CR;
             len = 1;
         },
-        57 => { // Space
+        Key.SPACE => {
             buf[0] = ' ';
             len = 1;
         },
 
         // Arrow keys
-        103 => { // Up
+        Key.UP => {
             @memcpy(buf[0..3], "\x1b[A");
             len = 3;
         },
-        108 => { // Down
+        Key.DOWN => {
             @memcpy(buf[0..3], "\x1b[B");
             len = 3;
         },
-        106 => { // Right
+        Key.RIGHT => {
             @memcpy(buf[0..3], "\x1b[C");
             len = 3;
         },
-        105 => { // Left
+        Key.LEFT => {
             @memcpy(buf[0..3], "\x1b[D");
             len = 3;
         },
 
         // Home/End/PageUp/PageDown
-        102 => { // Home
+        Key.HOME => {
             @memcpy(buf[0..3], "\x1b[H");
             len = 3;
         },
-        107 => { // End
+        Key.END => {
             @memcpy(buf[0..3], "\x1b[F");
             len = 3;
         },
-        104 => { // PageUp
+        Key.PAGE_UP => {
             @memcpy(buf[0..4], "\x1b[5~");
             len = 4;
         },
-        109 => { // PageDown
+        Key.PAGE_DOWN => {
             @memcpy(buf[0..4], "\x1b[6~");
             len = 4;
         },
-        110 => { // Insert
+        Key.INSERT => {
             @memcpy(buf[0..4], "\x1b[2~");
             len = 4;
         },
-        111 => { // Delete
+        Key.DELETE => {
             @memcpy(buf[0..4], "\x1b[3~");
             len = 4;
         },
@@ -535,7 +605,7 @@ fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, mouse: client.protocol
             const cb: u8 = if (event_type == .release) 32 + 3 else 32 + btn;
             const cx: u8 = @intCast(@min(x + 32, 255));
             const cy: u8 = @intCast(@min(y + 32, 255));
-            buf[0] = 0x1B;
+            buf[0] = Ascii.ESC;
             buf[1] = '[';
             buf[2] = 'M';
             buf[3] = cb;
@@ -571,9 +641,9 @@ fn getButtonCode(button: client.protocol.MouseButtonId, modifiers: u8, is_motion
     };
 
     // Add modifier bits
-    if (modifiers & 0x01 != 0) code |= 4; // Shift
-    if (modifiers & 0x02 != 0) code |= 8; // Alt/Meta
-    if (modifiers & 0x04 != 0) code |= 16; // Ctrl
+    if (modifiers & Modifiers.SHIFT != 0) code |= 4; // Shift
+    if (modifiers & Modifiers.ALT != 0) code |= 8; // Alt/Meta
+    if (modifiers & Modifiers.CTRL != 0) code |= 16; // Ctrl
 
     // Add motion bit
     if (is_motion) code |= 32;
@@ -584,7 +654,7 @@ fn getButtonCode(button: client.protocol.MouseButtonId, modifiers: u8, is_motion
 fn formatSgrMouse(buf: []u8, btn: u8, x: u32, y: u32, terminator: u8) usize {
     // Format: CSI < btn ; x ; y M/m
     var i: usize = 0;
-    buf[i] = 0x1B;
+    buf[i] = Ascii.ESC;
     i += 1;
     buf[i] = '[';
     i += 1;
@@ -614,7 +684,7 @@ fn formatSgrMouse(buf: []u8, btn: u8, x: u32, y: u32, terminator: u8) usize {
 fn formatUrxvtMouse(buf: []u8, btn: u8, x: u32, y: u32) usize {
     // Format: CSI btn ; x ; y M
     var i: usize = 0;
-    buf[i] = 0x1B;
+    buf[i] = Ascii.ESC;
     i += 1;
     buf[i] = '[';
     i += 1;
