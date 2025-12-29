@@ -2,6 +2,7 @@ const std = @import("std");
 
 /// Terminal screen buffer
 /// Manages character grid with attributes, cursor, and scrolling
+/// Supports alternative screen buffer (mode 1049) for vim, htop, less, etc.
 pub const Screen = struct {
     allocator: std.mem.Allocator,
     cols: u32,
@@ -14,6 +15,15 @@ pub const Screen = struct {
     scroll_bottom: u32,
     current_attr: Attr,
     dirty: bool,
+
+    // Alternative screen buffer support
+    alt_cells: ?[]Cell,
+    using_alt_buffer: bool,
+
+    // Saved cursor state (for DECSC/DECRC and mode 1049)
+    saved_cursor_col: u32,
+    saved_cursor_row: u32,
+    saved_attr: Attr,
 
     const Self = @This();
 
@@ -35,11 +45,21 @@ pub const Screen = struct {
             .scroll_bottom = rows - 1,
             .current_attr = Attr.default(),
             .dirty = true,
+            // Alternative buffer initially not allocated
+            .alt_cells = null,
+            .using_alt_buffer = false,
+            // Saved cursor defaults
+            .saved_cursor_col = 0,
+            .saved_cursor_row = 0,
+            .saved_attr = Attr.default(),
         };
     }
 
     pub fn deinit(self: *Self) void {
         self.allocator.free(self.cells);
+        if (self.alt_cells) |alt| {
+            self.allocator.free(alt);
+        }
     }
 
     /// Get cell at position
@@ -352,6 +372,89 @@ pub const Screen = struct {
         self.scrollDown(n);
         self.scroll_top = old_top;
     }
+
+    // ========================================================================
+    // Alternative screen buffer support (DECSET/DECRST modes 47, 1047, 1049)
+    // ========================================================================
+
+    /// Switch to alternative screen buffer
+    /// If clear is true, clears the alt buffer (mode 1047/1049)
+    pub fn enterAltBuffer(self: *Self, clear: bool) !void {
+        if (self.using_alt_buffer) return;
+
+        // Allocate alt buffer if not already allocated
+        if (self.alt_cells == null) {
+            self.alt_cells = try self.allocator.alloc(Cell, self.cols * self.rows);
+        }
+
+        // Swap buffers
+        const temp = self.cells;
+        self.cells = self.alt_cells.?;
+        self.alt_cells = temp;
+
+        self.using_alt_buffer = true;
+
+        // Clear if requested (mode 1047/1049)
+        if (clear) {
+            for (self.cells) |*cell| {
+                cell.* = Cell.blank();
+            }
+        }
+
+        self.dirty = true;
+    }
+
+    /// Switch back to main screen buffer
+    pub fn exitAltBuffer(self: *Self) void {
+        if (!self.using_alt_buffer) return;
+
+        // Swap buffers back
+        const temp = self.cells;
+        self.cells = self.alt_cells.?;
+        self.alt_cells = temp;
+
+        self.using_alt_buffer = false;
+        self.dirty = true;
+    }
+
+    // ========================================================================
+    // Cursor save/restore (DECSC/DECRC - ESC 7/8, CSI s/u)
+    // ========================================================================
+
+    /// Save cursor position and attributes (DECSC)
+    pub fn saveCursor(self: *Self) void {
+        self.saved_cursor_col = self.cursor_col;
+        self.saved_cursor_row = self.cursor_row;
+        self.saved_attr = self.current_attr;
+    }
+
+    /// Restore cursor position and attributes (DECRC)
+    pub fn restoreCursor(self: *Self) void {
+        self.cursor_col = @min(self.saved_cursor_col, self.cols -| 1);
+        self.cursor_row = @min(self.saved_cursor_row, self.rows -| 1);
+        self.current_attr = self.saved_attr;
+        self.dirty = true;
+    }
+
+    /// Enter alternate screen with cursor save (mode 1049)
+    /// Saves cursor, switches to alt buffer, and clears it
+    pub fn enterAltBufferWithCursorSave(self: *Self) !void {
+        self.saveCursor();
+        try self.enterAltBuffer(true);
+    }
+
+    /// Exit alternate screen with cursor restore (mode 1049)
+    /// Switches back to main buffer and restores cursor
+    pub fn exitAltBufferWithCursorRestore(self: *Self) void {
+        self.exitAltBuffer();
+        self.restoreCursor();
+    }
+
+    /// Set cursor visibility
+    pub fn setCursorVisible(self: *Self, visible: bool) void {
+        self.cursor_visible = visible;
+        self.dirty = true;
+    }
 };
 
 /// Character cell
@@ -554,4 +657,92 @@ test "Color RGB conversion" {
     try std.testing.expectEqual(@as(u8, 255), white.r);
     try std.testing.expectEqual(@as(u8, 255), white.g);
     try std.testing.expectEqual(@as(u8, 255), white.b);
+}
+
+test "Screen alternative buffer" {
+    const allocator = std.testing.allocator;
+    var scr = try Screen.init(allocator, 80, 24);
+    defer scr.deinit();
+
+    // Write to main buffer
+    scr.putChar('M');
+    scr.putChar('a');
+    scr.putChar('i');
+    scr.putChar('n');
+    try std.testing.expectEqual(@as(u21, 'M'), scr.getCell(0, 0).char);
+    try std.testing.expect(!scr.using_alt_buffer);
+
+    // Switch to alt buffer (with clear)
+    try scr.enterAltBuffer(true);
+    try std.testing.expect(scr.using_alt_buffer);
+    try std.testing.expectEqual(@as(u21, ' '), scr.getCell(0, 0).char);
+
+    // Write to alt buffer
+    scr.putChar('A');
+    scr.putChar('l');
+    scr.putChar('t');
+    try std.testing.expectEqual(@as(u21, 'A'), scr.getCell(0, 0).char);
+
+    // Switch back to main buffer
+    scr.exitAltBuffer();
+    try std.testing.expect(!scr.using_alt_buffer);
+    try std.testing.expectEqual(@as(u21, 'M'), scr.getCell(0, 0).char);
+}
+
+test "Screen cursor save/restore" {
+    const allocator = std.testing.allocator;
+    var scr = try Screen.init(allocator, 80, 24);
+    defer scr.deinit();
+
+    // Move cursor and set attribute
+    scr.setCursor(10, 5);
+    scr.current_attr.bold = true;
+
+    // Save cursor
+    scr.saveCursor();
+
+    // Move cursor and change attribute
+    scr.setCursor(30, 20);
+    scr.current_attr.bold = false;
+    scr.current_attr.italic = true;
+
+    try std.testing.expectEqual(@as(u32, 30), scr.cursor_col);
+    try std.testing.expectEqual(@as(u32, 20), scr.cursor_row);
+
+    // Restore cursor
+    scr.restoreCursor();
+
+    try std.testing.expectEqual(@as(u32, 10), scr.cursor_col);
+    try std.testing.expectEqual(@as(u32, 5), scr.cursor_row);
+    try std.testing.expect(scr.current_attr.bold);
+    try std.testing.expect(!scr.current_attr.italic);
+}
+
+test "Screen mode 1049 (alt buffer with cursor save)" {
+    const allocator = std.testing.allocator;
+    var scr = try Screen.init(allocator, 80, 24);
+    defer scr.deinit();
+
+    // Set up initial state
+    scr.setCursor(15, 10);
+    scr.putChar('X');
+    scr.current_attr.underline = true;
+
+    // Enter alt buffer with cursor save (mode 1049)
+    try scr.enterAltBufferWithCursorSave();
+    try std.testing.expect(scr.using_alt_buffer);
+    try std.testing.expectEqual(@as(u21, ' '), scr.getCell(0, 0).char); // cleared
+
+    // Move cursor in alt buffer
+    scr.setCursor(5, 3);
+    scr.putChar('Y');
+    scr.current_attr.underline = false;
+
+    // Exit alt buffer with cursor restore (mode 1049)
+    scr.exitAltBufferWithCursorRestore();
+    try std.testing.expect(!scr.using_alt_buffer);
+    try std.testing.expectEqual(@as(u32, 16), scr.cursor_col); // restored after 'X' was written
+    try std.testing.expectEqual(@as(u32, 10), scr.cursor_row);
+    try std.testing.expect(scr.current_attr.underline);
+    try std.testing.expectEqual(@as(u21, 'X'), scr.getCell(15, 10).char); // main buffer preserved
 }

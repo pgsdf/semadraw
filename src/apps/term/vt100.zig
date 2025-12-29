@@ -16,6 +16,9 @@ pub const Parser = struct {
     utf8_len: u3, // bytes collected so far
     utf8_expected: u3, // total bytes expected
 
+    // Private mode flag (for CSI ? sequences like DECSET/DECRST)
+    private_mode: bool,
+
     const Self = @This();
 
     const State = enum {
@@ -42,6 +45,7 @@ pub const Parser = struct {
             .utf8_buf = undefined,
             .utf8_len = 0,
             .utf8_expected = 0,
+            .private_mode = false,
         };
     }
 
@@ -74,6 +78,7 @@ pub const Parser = struct {
         self.param_count = 0;
         self.intermediate = [_]u8{0} ** 4;
         self.intermediate_count = 0;
+        self.private_mode = false;
     }
 
     fn handleGround(self: *Self, c: u8) void {
@@ -225,21 +230,58 @@ pub const Parser = struct {
     }
 
     fn handleEscapeSequence(self: *Self, c: u8) void {
-        _ = self;
         switch (c) {
-            'c' => {}, // RIS - Full reset (TODO)
-            'D' => {}, // IND - Index (TODO)
-            'E' => {}, // NEL - Next line (TODO)
+            'c' => {
+                // RIS - Full reset
+                self.scr.eraseScreen();
+                self.scr.setCursor(0, 0);
+                self.scr.current_attr = screen.Attr.default();
+                self.scr.setScrollRegion(0, self.scr.rows - 1);
+            },
+            'D' => {
+                // IND - Index (move cursor down, scroll if at bottom)
+                if (self.scr.cursor_row >= self.scr.scroll_bottom) {
+                    self.scr.scrollUp(1);
+                } else {
+                    self.scr.cursorDown(1);
+                }
+            },
+            'E' => {
+                // NEL - Next line (CR + IND)
+                self.scr.carriageReturn();
+                if (self.scr.cursor_row >= self.scr.scroll_bottom) {
+                    self.scr.scrollUp(1);
+                } else {
+                    self.scr.cursorDown(1);
+                }
+            },
             'H' => {}, // HTS - Tab set (TODO)
-            'M' => {}, // RI - Reverse index (TODO)
-            '7' => {}, // DECSC - Save cursor (TODO)
-            '8' => {}, // DECRC - Restore cursor (TODO)
+            'M' => {
+                // RI - Reverse index (move cursor up, scroll if at top)
+                if (self.scr.cursor_row <= self.scr.scroll_top) {
+                    self.scr.scrollDown(1);
+                } else {
+                    self.scr.cursorUp(1);
+                }
+            },
+            '7' => {
+                // DECSC - Save cursor position and attributes
+                self.scr.saveCursor();
+            },
+            '8' => {
+                // DECRC - Restore cursor position and attributes
+                self.scr.restoreCursor();
+            },
             else => {},
         }
     }
 
     fn handleCsiEntry(self: *Self, c: u8) void {
-        if (c >= '0' and c <= '9') {
+        if (c == '?') {
+            // Private mode indicator (for DECSET/DECRST)
+            self.private_mode = true;
+            self.state = .csi_param;
+        } else if (c >= '0' and c <= '9') {
             self.state = .csi_param;
             self.params[0] = c - '0';
             self.param_count = 1;
@@ -444,12 +486,81 @@ pub const Parser = struct {
                 self.scr.setScrollRegion(top -| 1, bottom -| 1);
             },
             's' => {
-                // SCP - Save cursor position (TODO)
+                // SCP - Save cursor position (ANSI.SYS)
+                self.scr.saveCursor();
             },
             'u' => {
-                // RCP - Restore cursor position (TODO)
+                // RCP - Restore cursor position (ANSI.SYS)
+                self.scr.restoreCursor();
+            },
+            'h' => {
+                // SM - Set mode (or DECSET for private modes)
+                if (self.private_mode) {
+                    self.executeDecset();
+                }
+            },
+            'l' => {
+                // RM - Reset mode (or DECRST for private modes)
+                if (self.private_mode) {
+                    self.executeDecrst();
+                }
             },
             else => {},
+        }
+    }
+
+    /// Execute DECSET (CSI ? Ps h) - Set private mode
+    fn executeDecset(self: *Self) void {
+        var i: usize = 0;
+        while (i < self.param_count) : (i += 1) {
+            const mode = self.params[i];
+            switch (mode) {
+                25 => {
+                    // DECTCEM - Show cursor
+                    self.scr.setCursorVisible(true);
+                },
+                47 => {
+                    // Use alternate screen buffer (no clear)
+                    self.scr.enterAltBuffer(false) catch {};
+                },
+                1047 => {
+                    // Use alternate screen buffer (with clear)
+                    self.scr.enterAltBuffer(true) catch {};
+                },
+                1049 => {
+                    // Save cursor, use alternate screen buffer, clear
+                    self.scr.enterAltBufferWithCursorSave() catch {};
+                },
+                else => {},
+            }
+        }
+    }
+
+    /// Execute DECRST (CSI ? Ps l) - Reset private mode
+    fn executeDecrst(self: *Self) void {
+        var i: usize = 0;
+        while (i < self.param_count) : (i += 1) {
+            const mode = self.params[i];
+            switch (mode) {
+                25 => {
+                    // DECTCEM - Hide cursor
+                    self.scr.setCursorVisible(false);
+                },
+                47 => {
+                    // Use normal screen buffer
+                    self.scr.exitAltBuffer();
+                },
+                1047 => {
+                    // Use normal screen buffer (clear alt on exit)
+                    // Note: Some terminals clear alt buffer on exit, we just switch
+                    self.scr.exitAltBuffer();
+                },
+                1049 => {
+                    // Use normal screen buffer, restore cursor
+                    self.scr.exitAltBufferWithCursorRestore();
+                },
+                else => {},
+            }
         }
     }
 
@@ -667,4 +778,97 @@ test "Parser UTF-8 mixed" {
     try std.testing.expectEqual(@as(u21, 'l'), scr.getCell(2, 0).char);
     try std.testing.expectEqual(@as(u21, 'l'), scr.getCell(3, 0).char);
     try std.testing.expectEqual(@as(u21, 'o'), scr.getCell(4, 0).char);
+}
+
+test "Parser DECSC/DECRC (ESC 7/8)" {
+    const allocator = std.testing.allocator;
+    var scr = try screen.Screen.init(allocator, 80, 24);
+    defer scr.deinit();
+
+    var parser = Parser.init(&scr);
+
+    // Move cursor and save
+    parser.feedSlice("\x1b[10;20H"); // Move to row 10, col 20
+    parser.feedSlice("\x1b7"); // Save cursor (DECSC)
+
+    try std.testing.expectEqual(@as(u32, 19), scr.cursor_col); // 0-indexed
+    try std.testing.expectEqual(@as(u32, 9), scr.cursor_row);
+
+    // Move cursor elsewhere
+    parser.feedSlice("\x1b[1;1H"); // Move to row 1, col 1
+    try std.testing.expectEqual(@as(u32, 0), scr.cursor_col);
+    try std.testing.expectEqual(@as(u32, 0), scr.cursor_row);
+
+    // Restore cursor
+    parser.feedSlice("\x1b8"); // Restore cursor (DECRC)
+    try std.testing.expectEqual(@as(u32, 19), scr.cursor_col);
+    try std.testing.expectEqual(@as(u32, 9), scr.cursor_row);
+}
+
+test "Parser CSI s/u cursor save/restore" {
+    const allocator = std.testing.allocator;
+    var scr = try screen.Screen.init(allocator, 80, 24);
+    defer scr.deinit();
+
+    var parser = Parser.init(&scr);
+
+    // Move cursor and save with CSI s
+    parser.feedSlice("\x1b[5;15H"); // Move to row 5, col 15
+    parser.feedSlice("\x1b[s"); // Save cursor
+
+    // Move cursor elsewhere
+    parser.feedSlice("\x1b[20;70H");
+
+    // Restore cursor with CSI u
+    parser.feedSlice("\x1b[u");
+    try std.testing.expectEqual(@as(u32, 14), scr.cursor_col); // 0-indexed
+    try std.testing.expectEqual(@as(u32, 4), scr.cursor_row);
+}
+
+test "Parser DECSET/DECRST mode 1049 (alt screen)" {
+    const allocator = std.testing.allocator;
+    var scr = try screen.Screen.init(allocator, 80, 24);
+    defer scr.deinit();
+
+    var parser = Parser.init(&scr);
+
+    // Write to main screen
+    parser.feedSlice("Main");
+    parser.feedSlice("\x1b[5;10H"); // Position cursor
+    try std.testing.expectEqual(@as(u21, 'M'), scr.getCell(0, 0).char);
+    try std.testing.expect(!scr.using_alt_buffer);
+
+    // Enter alt screen (mode 1049 = save cursor + switch + clear)
+    parser.feedSlice("\x1b[?1049h");
+    try std.testing.expect(scr.using_alt_buffer);
+    try std.testing.expectEqual(@as(u21, ' '), scr.getCell(0, 0).char); // cleared
+
+    // Write to alt screen
+    parser.feedSlice("Alt");
+    try std.testing.expectEqual(@as(u21, 'A'), scr.getCell(0, 0).char);
+
+    // Exit alt screen (mode 1049 = restore cursor + switch)
+    parser.feedSlice("\x1b[?1049l");
+    try std.testing.expect(!scr.using_alt_buffer);
+    try std.testing.expectEqual(@as(u21, 'M'), scr.getCell(0, 0).char); // main restored
+    try std.testing.expectEqual(@as(u32, 9), scr.cursor_col); // cursor restored
+    try std.testing.expectEqual(@as(u32, 4), scr.cursor_row);
+}
+
+test "Parser DECSET/DECRST mode 25 (cursor visibility)" {
+    const allocator = std.testing.allocator;
+    var scr = try screen.Screen.init(allocator, 80, 24);
+    defer scr.deinit();
+
+    var parser = Parser.init(&scr);
+
+    try std.testing.expect(scr.cursor_visible);
+
+    // Hide cursor
+    parser.feedSlice("\x1b[?25l");
+    try std.testing.expect(!scr.cursor_visible);
+
+    // Show cursor
+    parser.feedSlice("\x1b[?25h");
+    try std.testing.expect(scr.cursor_visible);
 }
