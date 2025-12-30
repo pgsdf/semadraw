@@ -340,6 +340,7 @@ semadraw-term [OPTIONS]
 - Text decorations (bold, italic, underline, strikethrough)
 
 **Keyboard shortcuts:**
+- Ctrl+Shift+V: Paste from system clipboard
 - Shift+PageUp: Scroll up in history
 - Shift+PageDown: Scroll down in history
 
