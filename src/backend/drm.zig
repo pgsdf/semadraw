@@ -416,14 +416,11 @@ pub const DrmBackend = struct {
         // Scan /dev/input/event* for keyboards and mice
         var i: usize = 0;
         while (i < 32 and self.input_count < MAX_INPUT_DEVICES) : (i += 1) {
-            var path_buf: [32]u8 = undefined;
-            const path = std.fmt.bufPrint(&path_buf, "/dev/input/event{}", .{i}) catch continue;
-            // Null-terminate for open
-            const path_z = path_buf[0..path.len];
-            path_buf[path.len] = 0;
+            var path_buf: [32:0]u8 = undefined;
+            const path = std.fmt.bufPrintZ(&path_buf, "/dev/input/event{}", .{i}) catch continue;
 
             const fd = posix.open(
-                @ptrCast(path_z.ptr),
+                path,
                 .{ .ACCMODE = .RDONLY, .NONBLOCK = true },
                 0,
             ) catch continue;
