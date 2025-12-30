@@ -401,12 +401,23 @@ pub fn build(b: *std.Build) void {
     // Add software import to backend module for createBackend
     backend_mod.addImport("software", software_backend_mod);
 
+    // Evdev input module (shared by DRM and future Vulkan console backends)
+    const evdev_mod = b.createModule(.{
+        .root_source_file = b.path("src/backend/evdev.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "backend", .module = backend_mod },
+        },
+    });
+
     const drm_backend_mod = b.createModule(.{
         .root_source_file = b.path("src/backend/drm.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
             .{ .name = "backend", .module = backend_mod },
+            .{ .name = "evdev", .module = evdev_mod },
         },
     });
 
