@@ -154,6 +154,14 @@ pub const Backend = struct {
         /// Get pending mouse events (empties the queue)
         /// Returns slice of events, caller should not free
         getMouseEvents: ?*const fn (ctx: *anyopaque) []const MouseEvent = null,
+        /// Set clipboard content (selection: 0=CLIPBOARD, 1=PRIMARY)
+        setClipboard: ?*const fn (ctx: *anyopaque, selection: u8, text: []const u8) anyerror!void = null,
+        /// Request clipboard content (async - data available after pollEvents)
+        requestClipboard: ?*const fn (ctx: *anyopaque, selection: u8) void = null,
+        /// Get clipboard data (returns null if not available or not supported)
+        getClipboardData: ?*const fn (ctx: *anyopaque, selection: u8) ?[]const u8 = null,
+        /// Check if clipboard request is pending
+        isClipboardPending: ?*const fn (ctx: *anyopaque) bool = null,
         /// Cleanup and free resources
         deinit: *const fn (ctx: *anyopaque) void,
     };
@@ -200,6 +208,37 @@ pub const Backend = struct {
             return func(self.ptr);
         }
         return &[_]MouseEvent{};
+    }
+
+    /// Set clipboard content (selection: 0=CLIPBOARD, 1=PRIMARY)
+    pub fn setClipboard(self: Backend, selection: u8, text: []const u8) !void {
+        if (self.vtable.setClipboard) |func| {
+            return func(self.ptr, selection, text);
+        }
+        return error.ClipboardNotSupported;
+    }
+
+    /// Request clipboard content (async - data available after pollEvents)
+    pub fn requestClipboard(self: Backend, selection: u8) void {
+        if (self.vtable.requestClipboard) |func| {
+            func(self.ptr, selection);
+        }
+    }
+
+    /// Get clipboard data (returns null if not available or not supported)
+    pub fn getClipboardData(self: Backend, selection: u8) ?[]const u8 {
+        if (self.vtable.getClipboardData) |func| {
+            return func(self.ptr, selection);
+        }
+        return null;
+    }
+
+    /// Check if clipboard request is pending
+    pub fn isClipboardPending(self: Backend) bool {
+        if (self.vtable.isClipboardPending) |func| {
+            return func(self.ptr);
+        }
+        return false;
     }
 
     pub fn deinit(self: Backend) void {

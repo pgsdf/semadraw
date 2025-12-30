@@ -308,6 +308,37 @@ pub const Compositor = struct {
         }
         return &[_]backend_mod.MouseEvent{};
     }
+
+    /// Set clipboard content (selection: 0=CLIPBOARD, 1=PRIMARY)
+    pub fn setClipboard(self: *Self, selection: u8, text: []const u8) !void {
+        if (self.output) |*out| {
+            return out.be.setClipboard(selection, text);
+        }
+        return error.NoOutput;
+    }
+
+    /// Request clipboard content (async - data available after pollEvents)
+    pub fn requestClipboard(self: *Self, selection: u8) void {
+        if (self.output) |*out| {
+            out.be.requestClipboard(selection);
+        }
+    }
+
+    /// Get clipboard data (returns null if not available)
+    pub fn getClipboardData(self: *Self, selection: u8) ?[]const u8 {
+        if (self.output) |*out| {
+            return out.be.getClipboardData(selection);
+        }
+        return null;
+    }
+
+    /// Check if clipboard request is pending
+    pub fn isClipboardPending(self: *Self) bool {
+        if (self.output) |*out| {
+            return out.be.isClipboardPending();
+        }
+        return false;
+    }
 };
 
 /// Result of a composite operation

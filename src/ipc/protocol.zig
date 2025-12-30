@@ -46,9 +46,16 @@ pub const MsgType = enum(u16) {
     sync_done = 0x8040,
     error_reply = 0x80F0,
 
+    // Clipboard operations (0x005x)
+    clipboard_set = 0x0050, // Client -> Daemon: set clipboard content
+    clipboard_request = 0x0051, // Client -> Daemon: request clipboard content
+
     // Daemon -> Client input events (0x9xxx)
     key_press = 0x9001,
     mouse_event = 0x9002,
+
+    // Daemon -> Client clipboard events (0x905x)
+    clipboard_data = 0x9050, // Daemon -> Client: clipboard content
 };
 
 /// Message header (8 bytes, always present)
@@ -569,6 +576,96 @@ pub const MouseEventMsg = extern struct {
             .event_type = @enumFromInt(buf[13]),
             .modifiers = buf[14],
             ._reserved = buf[15],
+        };
+    }
+};
+
+// ============================================================================
+// Clipboard Messages
+// ============================================================================
+
+/// Clipboard selection type
+pub const ClipboardSelection = enum(u8) {
+    clipboard = 0, // CLIPBOARD (Ctrl+C/V)
+    primary = 1, // PRIMARY (mouse selection)
+};
+
+/// Clipboard set message - client sets clipboard content
+/// Variable length: header followed by text data
+pub const ClipboardSetMsg = extern struct {
+    selection: ClipboardSelection,
+    _reserved: [3]u8 = .{ 0, 0, 0 },
+    length: u32, // Length of text data that follows
+
+    pub const HEADER_SIZE: usize = 8;
+
+    pub fn serialize(self: ClipboardSetMsg, buf: []u8) void {
+        std.debug.assert(buf.len >= HEADER_SIZE);
+        buf[0] = @intFromEnum(self.selection);
+        buf[1] = 0;
+        buf[2] = 0;
+        buf[3] = 0;
+        std.mem.writeInt(u32, buf[4..8], self.length, .little);
+    }
+
+    pub fn deserialize(buf: []const u8) !ClipboardSetMsg {
+        if (buf.len < HEADER_SIZE) return error.BufferTooSmall;
+        return .{
+            .selection = @enumFromInt(buf[0]),
+            ._reserved = .{ buf[1], buf[2], buf[3] },
+            .length = std.mem.readInt(u32, buf[4..8], .little),
+        };
+    }
+};
+
+/// Clipboard request message - client requests clipboard content
+pub const ClipboardRequestMsg = extern struct {
+    selection: ClipboardSelection,
+    _reserved: [3]u8 = .{ 0, 0, 0 },
+
+    pub const SIZE: usize = 4;
+
+    pub fn serialize(self: ClipboardRequestMsg, buf: []u8) void {
+        std.debug.assert(buf.len >= SIZE);
+        buf[0] = @intFromEnum(self.selection);
+        buf[1] = 0;
+        buf[2] = 0;
+        buf[3] = 0;
+    }
+
+    pub fn deserialize(buf: []const u8) !ClipboardRequestMsg {
+        if (buf.len < SIZE) return error.BufferTooSmall;
+        return .{
+            .selection = @enumFromInt(buf[0]),
+            ._reserved = .{ buf[1], buf[2], buf[3] },
+        };
+    }
+};
+
+/// Clipboard data message - daemon sends clipboard content to client
+/// Variable length: header followed by text data
+pub const ClipboardDataMsg = extern struct {
+    selection: ClipboardSelection,
+    _reserved: [3]u8 = .{ 0, 0, 0 },
+    length: u32, // Length of text data that follows
+
+    pub const HEADER_SIZE: usize = 8;
+
+    pub fn serialize(self: ClipboardDataMsg, buf: []u8) void {
+        std.debug.assert(buf.len >= HEADER_SIZE);
+        buf[0] = @intFromEnum(self.selection);
+        buf[1] = 0;
+        buf[2] = 0;
+        buf[3] = 0;
+        std.mem.writeInt(u32, buf[4..8], self.length, .little);
+    }
+
+    pub fn deserialize(buf: []const u8) !ClipboardDataMsg {
+        if (buf.len < HEADER_SIZE) return error.BufferTooSmall;
+        return .{
+            .selection = @enumFromInt(buf[0]),
+            ._reserved = .{ buf[1], buf[2], buf[3] },
+            .length = std.mem.readInt(u32, buf[4..8], .little),
         };
     }
 };
