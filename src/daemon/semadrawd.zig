@@ -853,6 +853,8 @@ pub const Daemon = struct {
         // Clean up surfaces owned by this client
         self.surfaces.removeClientSurfaces(client_id);
         self.clients.destroySession(client_id);
+        // Trigger full repaint to clear any remnants of destroyed surfaces
+        self.comp.damageAll();
     }
 
     pub fn stop(self: *Daemon) void {
