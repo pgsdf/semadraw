@@ -360,6 +360,15 @@ pub const DrmBackend = struct {
     mouse_events: [backend.MAX_MOUSE_EVENTS]backend.MouseEvent,
     mouse_event_count: usize,
 
+    // Clipboard storage (file-based for console use)
+    // Selection 0 = CLIPBOARD, Selection 1 = PRIMARY
+    clipboard_data: [2]?[]u8,
+    clipboard_pending: [2]bool,
+
+    // File paths for clipboard persistence
+    const CLIPBOARD_PATH = "/tmp/.semadraw-clipboard";
+    const PRIMARY_PATH = "/tmp/.semadraw-primary";
+
     const Self = @This();
 
     /// Open DRM device and set up display
@@ -391,6 +400,9 @@ pub const DrmBackend = struct {
             .key_event_count = 0,
             .mouse_events = undefined,
             .mouse_event_count = 0,
+            // Clipboard initialization
+            .clipboard_data = .{ null, null },
+            .clipboard_pending = .{ false, false },
         };
 
         // Open device
@@ -608,6 +620,14 @@ pub const DrmBackend = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        // Free clipboard data
+        for (&self.clipboard_data) |*data| {
+            if (data.*) |d| {
+                self.allocator.free(d);
+                data.* = null;
+            }
+        }
+
         // Close input devices
         for (self.input_fds[0..self.input_count]) |fd| {
             if (fd >= 0) {
@@ -721,6 +741,96 @@ pub const DrmBackend = struct {
             var buf: [256]u8 = undefined;
             _ = posix.read(self.fd, &buf) catch {};
         }
+    }
+
+    // ========================================================================
+    // Clipboard support (file-based for console use)
+    // ========================================================================
+
+    fn getClipboardPath(selection: u8) [:0]const u8 {
+        return if (selection == 0) CLIPBOARD_PATH else PRIMARY_PATH;
+    }
+
+    /// Set clipboard content and persist to file
+    pub fn setClipboard(self: *Self, selection: u8, text: []const u8) !void {
+        if (selection > 1) return error.InvalidSelection;
+
+        // Free existing data
+        if (self.clipboard_data[selection]) |old| {
+            self.allocator.free(old);
+        }
+
+        // Copy to internal buffer
+        const data = try self.allocator.alloc(u8, text.len);
+        @memcpy(data, text);
+        self.clipboard_data[selection] = data;
+
+        // Persist to file for cross-process sharing
+        const path = getClipboardPath(selection);
+        const file = std.fs.createFileAbsolute(path, .{ .truncate = true }) catch |err| {
+            log.warn("failed to persist clipboard to {s}: {}", .{ path, err });
+            return; // Still keep in memory even if file write fails
+        };
+        defer file.close();
+        file.writeAll(text) catch |err| {
+            log.warn("failed to write clipboard data: {}", .{err});
+        };
+
+        log.debug("clipboard set: {} bytes to selection {}", .{ text.len, selection });
+    }
+
+    /// Request clipboard content (loads from file if not in memory)
+    pub fn requestClipboard(self: *Self, selection: u8) void {
+        if (selection > 1) return;
+
+        // If we don't have data in memory, try to load from file
+        if (self.clipboard_data[selection] == null) {
+            const path = getClipboardPath(selection);
+            const file = std.fs.openFileAbsolute(path, .{}) catch {
+                self.clipboard_pending[selection] = true;
+                return;
+            };
+            defer file.close();
+
+            const stat = file.stat() catch {
+                self.clipboard_pending[selection] = true;
+                return;
+            };
+
+            if (stat.size > 0 and stat.size < 1024 * 1024) { // Max 1MB
+                const data = self.allocator.alloc(u8, @intCast(stat.size)) catch {
+                    self.clipboard_pending[selection] = true;
+                    return;
+                };
+                const bytes_read = file.readAll(data) catch {
+                    self.allocator.free(data);
+                    self.clipboard_pending[selection] = true;
+                    return;
+                };
+                if (bytes_read == data.len) {
+                    self.clipboard_data[selection] = data;
+                } else {
+                    self.allocator.free(data);
+                }
+            }
+        }
+
+        self.clipboard_pending[selection] = true;
+    }
+
+    /// Get clipboard data (returns null if not available)
+    pub fn getClipboardData(self: *Self, selection: u8) ?[]const u8 {
+        if (selection > 1) return null;
+        return self.clipboard_data[selection];
+    }
+
+    /// Check if clipboard request is pending
+    pub fn isClipboardPending(self: *Self) bool {
+        const pending = self.clipboard_pending[0] or self.clipboard_pending[1];
+        // Clear pending flags after check
+        self.clipboard_pending[0] = false;
+        self.clipboard_pending[1] = false;
+        return pending;
     }
 
     // ========================================================================
@@ -981,6 +1091,26 @@ pub const DrmBackend = struct {
         return self.mouse_events[0..self.mouse_event_count];
     }
 
+    fn setClipboardImpl(ctx: *anyopaque, selection: u8, text: []const u8) anyerror!void {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        return self.setClipboard(selection, text);
+    }
+
+    fn requestClipboardImpl(ctx: *anyopaque, selection: u8) void {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        self.requestClipboard(selection);
+    }
+
+    fn getClipboardDataImpl(ctx: *anyopaque, selection: u8) ?[]const u8 {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        return self.getClipboardData(selection);
+    }
+
+    fn isClipboardPendingImpl(ctx: *anyopaque) bool {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        return self.isClipboardPending();
+    }
+
     fn deinitImpl(ctx: *anyopaque) void {
         const self: *Self = @ptrCast(@alignCast(ctx));
         self.deinit();
@@ -995,6 +1125,10 @@ pub const DrmBackend = struct {
         .pollEvents = pollEventsImpl,
         .getKeyEvents = getKeyEventsImpl,
         .getMouseEvents = getMouseEventsImpl,
+        .setClipboard = setClipboardImpl,
+        .requestClipboard = requestClipboardImpl,
+        .getClipboardData = getClipboardDataImpl,
+        .isClipboardPending = isClipboardPendingImpl,
         .deinit = deinitImpl,
     };
 

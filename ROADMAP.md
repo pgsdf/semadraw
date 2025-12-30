@@ -94,14 +94,15 @@ Current implementation status for input and clipboard across backends:
 |-------------------|-----|---------|---------|--------|----------|
 | Keyboard Input    | ✓   | ✓       | ✓       | ✗      | N/A      |
 | Mouse Input       | ✓   | ✓       | ✓       | ✗      | N/A      |
-| Clipboard Set     | ✓   | ✗       | ✗       | ✗      | N/A      |
-| Clipboard Get     | ✓   | ✗       | ✗       | ✗      | N/A      |
-| Clipboard Pending | ✓   | ✗       | ✗       | ✗      | N/A      |
+| Clipboard Set     | ✓   | ✗       | ✓*      | ✗      | N/A      |
+| Clipboard Get     | ✓   | ✗       | ✓*      | ✗      | N/A      |
+| Clipboard Pending | ✓   | ✗       | ✓*      | ✗      | N/A      |
 
 Notes:
 - Software backend is headless (no display) - input not applicable
 - Vulkan uses X11 window for presentation but lacks input passthrough
-- KMS/DRM has evdev input but no clipboard (no display server)
+- KMS/DRM uses file-based clipboard (/tmp/.semadraw-clipboard, /tmp/.semadraw-primary)
+  - *Works within semadraw sessions, not shared with other applications
 - Wayland has input but clipboard requires wl_data_device protocol
 
 ### Backend Feature Gaps (To Be Implemented)
@@ -117,14 +118,6 @@ Notes:
   - Currently creates X11 window but doesn't read X11 input events
   - Option A: Add X11 event reading (XPending, XNextEvent) in pollEvents
   - Option B: Inherit input handling from X11 backend via composition
-
-#### Medium Priority
-
-* **KMS/DRM Clipboard Emulation**
-  - No native clipboard without display server
-  - Option A: Use a file-based clipboard (/tmp/.semadraw-clipboard)
-  - Option B: Use D-Bus/portal if available
-  - Option C: Document as unsupported for console use
 
 #### Low Priority
 
