@@ -119,6 +119,13 @@ pub const Surface = struct {
         self.z_order = z_order;
     }
 
+    /// Set position (in pixels)
+    pub fn setPosition(self: *Self, x: f32, y: f32) !void {
+        if (self.state == .destroyed) return error.SurfaceDestroyed;
+
+        try self.connection.setPosition(self.id, x, y);
+    }
+
     /// Set frame callback for animation
     pub fn setFrameCallback(self: *Self, callback: ?FrameCallback) void {
         self.frame_callback = callback;

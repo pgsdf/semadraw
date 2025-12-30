@@ -45,6 +45,9 @@ pub const RenderRequest = struct {
     framebuffer: FramebufferConfig,
     /// Clear color before rendering (null = don't clear)
     clear_color: ?[4]f32 = null,
+    /// Surface position offset in pixels (where to render in framebuffer)
+    offset_x: i32 = 0,
+    offset_y: i32 = 0,
 };
 
 /// Render result returned from backend

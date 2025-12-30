@@ -52,6 +52,9 @@ pub const X11Backend = struct {
     mouse_event_count: usize,
     // Modifier state tracking
     modifier_state: u8,
+    // Current render offset (for surface positioning)
+    render_offset_x: i32,
+    render_offset_y: i32,
 
     const Self = @This();
 
@@ -82,6 +85,8 @@ pub const X11Backend = struct {
             .mouse_events = undefined,
             .mouse_event_count = 0,
             .modifier_state = 0,
+            .render_offset_x = 0,
+            .render_offset_y = 0,
         };
 
         // Open display
@@ -599,12 +604,16 @@ pub const X11Backend = struct {
         const fb_w = self.width;
         const fb_h = self.height;
 
+        // Apply surface position offset
+        const offset_dst_x = dst_x + @as(f32, @floatFromInt(self.render_offset_x));
+        const offset_dst_y = dst_y + @as(f32, @floatFromInt(self.render_offset_y));
+
         var cy: u32 = 0;
         while (cy < cell_h) : (cy += 1) {
             var cx: u32 = 0;
             while (cx < cell_w) : (cx += 1) {
-                const px: i32 = @as(i32, @intFromFloat(dst_x)) + @as(i32, @intCast(cx));
-                const py: i32 = @as(i32, @intFromFloat(dst_y)) + @as(i32, @intCast(cy));
+                const px: i32 = @as(i32, @intFromFloat(offset_dst_x)) + @as(i32, @intCast(cx));
+                const py: i32 = @as(i32, @intFromFloat(offset_dst_y)) + @as(i32, @intCast(cy));
 
                 if (px < 0 or py < 0) continue;
                 if (px >= @as(i32, @intCast(fb_w)) or py >= @as(i32, @intCast(fb_h))) continue;
@@ -653,11 +662,15 @@ pub const X11Backend = struct {
         const fb_w = self.width;
         const fb_h = self.height;
 
+        // Apply surface position offset
+        const ox = x + @as(f32, @floatFromInt(self.render_offset_x));
+        const oy = y + @as(f32, @floatFromInt(self.render_offset_y));
+
         // Clamp to framebuffer bounds
-        const x0: i32 = @intFromFloat(@max(0, x));
-        const y0: i32 = @intFromFloat(@max(0, y));
-        const x1: i32 = @intFromFloat(@min(@as(f32, @floatFromInt(fb_w)), x + w));
-        const y1: i32 = @intFromFloat(@min(@as(f32, @floatFromInt(fb_h)), y + h));
+        const x0: i32 = @intFromFloat(@max(0, ox));
+        const y0: i32 = @intFromFloat(@max(0, oy));
+        const x1: i32 = @intFromFloat(@min(@as(f32, @floatFromInt(fb_w)), ox + w));
+        const y1: i32 = @intFromFloat(@min(@as(f32, @floatFromInt(fb_h)), oy + h));
 
         if (x0 >= x1 or y0 >= y1) return;
 
@@ -768,6 +781,10 @@ pub const X11Backend = struct {
                 buffer[i + 3] = a; // Alpha
             }
         }
+
+        // Set render offset for surface positioning
+        self.render_offset_x = request.offset_x;
+        self.render_offset_y = request.offset_y;
 
         // Execute SDCS commands
         self.executeSdcs(buffer, request.sdcs_data) catch |err| {
