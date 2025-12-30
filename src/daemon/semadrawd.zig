@@ -27,6 +27,8 @@ pub const Config = struct {
     max_clients: u32 = 256,
     log_level: std.log.Level = .info,
     backend_type: backend.BackendType = .software,
+    width: u32 = 1920, // Display width in pixels
+    height: u32 = 1080, // Display height in pixels
 };
 
 /// Remote client session wrapper
@@ -88,10 +90,10 @@ pub const Daemon = struct {
     pub fn initCompositor(self: *Daemon) !void {
         self.comp = compositor.Compositor.init(self.allocator, &self.surfaces);
 
-        // Initialize output with default 1920x1080
+        // Initialize output with configured resolution
         try self.comp.initOutput(0, .{
-            .width = 1920,
-            .height = 1080,
+            .width = self.config.width,
+            .height = self.config.height,
             .format = .rgba8,
             .refresh_hz = 60,
             .backend_type = self.config.backend_type,
@@ -1115,12 +1117,45 @@ pub fn main() !void {
                 return error.InvalidArgument;
             }
             config.tcp_addr = parts;
+        } else if (std.mem.eql(u8, arg, "-r") or std.mem.eql(u8, arg, "--resolution")) {
+            i += 1;
+            if (i >= args.len) {
+                log.err("missing argument for {s}", .{arg});
+                return error.InvalidArgument;
+            }
+            // Parse resolution in WIDTHxHEIGHT format
+            var res_iter = std.mem.splitScalar(u8, args[i], 'x');
+            const width_str = res_iter.next() orelse {
+                log.err("invalid resolution format: {s} (expected WIDTHxHEIGHT)", .{args[i]});
+                return error.InvalidArgument;
+            };
+            const height_str = res_iter.next() orelse {
+                log.err("invalid resolution format: {s} (expected WIDTHxHEIGHT)", .{args[i]});
+                return error.InvalidArgument;
+            };
+            config.width = std.fmt.parseInt(u32, width_str, 10) catch {
+                log.err("invalid width in resolution: {s}", .{args[i]});
+                return error.InvalidArgument;
+            };
+            config.height = std.fmt.parseInt(u32, height_str, 10) catch {
+                log.err("invalid height in resolution: {s}", .{args[i]});
+                return error.InvalidArgument;
+            };
+            if (config.width < 320 or config.height < 200) {
+                log.err("resolution too small (minimum 320x200)", .{});
+                return error.InvalidArgument;
+            }
+            if (config.width > 7680 or config.height > 4320) {
+                log.err("resolution too large (maximum 7680x4320)", .{});
+                return error.InvalidArgument;
+            }
         } else if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
             log.info("semadrawd - SemaDraw compositor daemon", .{});
             log.info("Usage: semadrawd [OPTIONS]", .{});
             log.info("Options:", .{});
             log.info("  -s, --socket PATH     Socket path (default: {s})", .{protocol.DEFAULT_SOCKET_PATH});
             log.info("  -b, --backend TYPE    Backend type: software, headless, kms, x11, vulkan, vulkan_console, wayland (default: software)", .{});
+            log.info("  -r, --resolution WxH  Display resolution (default: 1920x1080)", .{});
             log.info("  -t, --tcp PORT        Enable TCP remote connections on PORT (default: disabled)", .{});
             log.info("  --tcp-addr ADDR       TCP bind address (default: 0.0.0.0)", .{});
             log.info("  -h, --help            Show this help", .{});
