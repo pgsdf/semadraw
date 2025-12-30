@@ -427,9 +427,30 @@ semadraw-term [OPTIONS]
 |--------|-------------|
 | `-c, --cols N` | Terminal columns (default: 80) |
 | `-r, --rows N` | Terminal rows (default: 24) |
+| `-z, --scale N` | Font scale multiplier 1-4 (default: 1) |
 | `-e, --shell PATH` | Shell to execute (default: $SHELL or /bin/sh) |
 | `-s, --socket PATH` | Daemon socket path |
 | `-h, --help` | Show help |
+
+**Font Scaling:**
+
+The `-z/--scale` option multiplies all font and cell dimensions for larger text without changing the terminal's logical dimensions:
+
+```sh
+# Normal size (8x16 pixel cells)
+semadraw-term
+
+# 2x scale (16x32 pixel cells) - good for HiDPI or accessibility
+semadraw-term --scale 2
+
+# 3x scale (24x48 pixel cells)
+semadraw-term -z 3
+
+# Combine with fewer columns for very large text
+semadraw-term --cols 40 --rows 12 --scale 2
+```
+
+This respects SemaDraw's resolution-independent design - the SDCS command stream uses semantic coordinates that scale with the font.
 
 **Features:**
 - VT100/ANSI escape sequence support

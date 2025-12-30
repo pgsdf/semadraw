@@ -77,15 +77,20 @@ pub const ChordMenu = struct {
         };
     }
 
-    /// Update selection based on mouse position
-    pub fn updateSelection(self: *ChordMenu, px: i32, py: i32) void {
+    /// Update selection based on mouse position (with scaled dimensions)
+    pub fn updateSelectionScaled(self: *ChordMenu, px: i32, py: i32, cell_w: u32, cell_h: u32, scale: u32) void {
         if (!self.visible) return;
+
+        // Compute scaled menu dimensions
+        const item_h: i32 = @intCast(cell_h + 4 * scale);
+        const item_w: i32 = @intCast(cell_w * 14);
+        const menu_w: i32 = @intCast(item_w + 4 * scale);
+        const menu_h: i32 = @intCast(item_h * 2 + 4 * scale);
+        const border: i32 = @intCast(2 * scale);
 
         // Check if mouse is within menu bounds
         const menu_x = self.x;
         const menu_y = self.y;
-        const menu_w: i32 = @intCast(MENU_WIDTH);
-        const menu_h: i32 = @intCast(MENU_HEIGHT);
 
         if (px < menu_x or px >= menu_x + menu_w or
             py < menu_y or py >= menu_y + menu_h)
@@ -95,8 +100,7 @@ pub const ChordMenu = struct {
         }
 
         // Determine which item is hovered
-        const rel_y = py - menu_y - 2; // Subtract border
-        const item_h: i32 = @intCast(ITEM_HEIGHT);
+        const rel_y = py - menu_y - border;
         if (rel_y >= 0 and rel_y < item_h) {
             self.selected = 0;
         } else if (rel_y >= item_h and rel_y < item_h * 2) {
@@ -104,6 +108,11 @@ pub const ChordMenu = struct {
         } else {
             self.selected = null;
         }
+    }
+
+    /// Update selection based on mouse position (unscaled, for compatibility)
+    pub fn updateSelection(self: *ChordMenu, px: i32, py: i32) void {
+        self.updateSelectionScaled(px, py, font.Font.GLYPH_WIDTH, font.Font.GLYPH_HEIGHT, 1);
     }
 };
 
@@ -113,6 +122,7 @@ var chord_menu = ChordMenu{};
 const Config = struct {
     cols: u32 = 80,
     rows: u32 = 24,
+    scale: u32 = 1, // Font scale multiplier (1-4)
     shell: ?[]const u8 = null,
     socket_path: ?[]const u8 = null,
 };
@@ -246,6 +256,20 @@ pub fn main() !void {
                 return error.InvalidArgument;
             }
             config.socket_path = args[i];
+        } else if (std.mem.eql(u8, arg, "-z") or std.mem.eql(u8, arg, "--scale")) {
+            i += 1;
+            if (i >= args.len) {
+                log.err("missing argument for {s}", .{arg});
+                return error.InvalidArgument;
+            }
+            config.scale = std.fmt.parseInt(u32, args[i], 10) catch {
+                log.err("invalid scale: {s}", .{args[i]});
+                return error.InvalidArgument;
+            };
+            if (config.scale < 1 or config.scale > 4) {
+                log.err("scale must be 1-4", .{});
+                return error.InvalidArgument;
+            }
         } else if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
             const stdout_file = std.fs.File{ .handle = posix.STDOUT_FILENO };
             stdout_file.writeAll(
@@ -256,6 +280,7 @@ pub fn main() !void {
                 \\Options:
                 \\  -c, --cols N      Terminal columns (default: 80)
                 \\  -r, --rows N      Terminal rows (default: 24)
+                \\  -z, --scale N     Font scale multiplier 1-4 (default: 1)
                 \\  -e, --shell PATH  Shell to execute (default: $SHELL or /bin/sh)
                 \\  -s, --socket PATH Socket path (default: /var/run/semadraw.sock)
                 \\  -h, --help        Show this help
@@ -272,11 +297,13 @@ pub fn main() !void {
 }
 
 fn run(allocator: std.mem.Allocator, config: Config) !void {
-    log.info("starting semadraw-term {}x{}", .{ config.cols, config.rows });
+    log.info("starting semadraw-term {}x{} scale={}", .{ config.cols, config.rows, config.scale });
 
-    // Calculate pixel dimensions
-    const width_px = config.cols * font.Font.GLYPH_WIDTH;
-    const height_px = config.rows * font.Font.GLYPH_HEIGHT;
+    // Calculate pixel dimensions (scaled)
+    const cell_width = font.Font.GLYPH_WIDTH * config.scale;
+    const cell_height = font.Font.GLYPH_HEIGHT * config.scale;
+    const width_px = config.cols * cell_width;
+    const height_px = config.rows * cell_height;
 
     // Connect to semadrawd
     var conn = if (config.socket_path) |path|
@@ -299,7 +326,7 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
     defer scr.deinit();
 
     var parser = vt100.Parser.init(&scr);
-    var rend = renderer.Renderer.init(allocator, &scr);
+    var rend = renderer.Renderer.initWithScale(allocator, &scr, config.scale);
     defer rend.deinit();
 
     // Spawn shell
@@ -430,7 +457,7 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
                         }
                     },
                     .mouse_event => |mouse| {
-                        handleMouseEvent(&shell, &scr, conn, mouse);
+                        handleMouseEvent(&shell, &scr, conn, mouse, &rend);
                         // Force immediate render when chord menu becomes visible
                         // This ensures the menu is displayed before more events can hide it
                         if (chord_menu.visible and scr.dirty) {
@@ -481,15 +508,20 @@ fn renderAndCommitWithBlink(allocator: std.mem.Allocator, rend: *renderer.Render
 
     log.debug("renderAndCommitWithBlink: calling rend.render()", .{});
 
-    // Build menu overlay if chord menu is visible
+    // Build menu overlay if chord menu is visible (with scaled dimensions)
     const menu_overlay: ?renderer.Renderer.MenuOverlay = if (chord_menu.visible) blk: {
         log.info("rendering with {s} menu at ({}, {})", .{ @tagName(chord_menu.menu_type), chord_menu.x, chord_menu.y });
+        // Scale menu dimensions based on font scale
+        const item_h = rend.getCellHeight() + 4 * rend.scale;
+        const item_w = rend.getCellWidth() * 14; // "Paste Primary" length
+        const menu_w = item_w + 4 * rend.scale;
+        const menu_h = item_h * 2 + 4 * rend.scale;
         break :blk .{
             .x = chord_menu.x,
             .y = chord_menu.y,
-            .width = ChordMenu.MENU_WIDTH,
-            .height = ChordMenu.MENU_HEIGHT,
-            .item_height = ChordMenu.ITEM_HEIGHT,
+            .width = menu_w,
+            .height = menu_h,
+            .item_height = item_h,
             .labels = chord_menu.getLabels(),
             .selected_idx = chord_menu.selected,
         };
@@ -845,7 +877,7 @@ fn handleKeyPress(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connection
     }
 }
 
-fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connection, mouse: client.protocol.MouseEventMsg) void {
+fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connection, mouse: client.protocol.MouseEventMsg, rend: *renderer.Renderer) void {
     const event_type = mouse.event_type;
 
     // Debug: log all mouse events
@@ -857,8 +889,9 @@ fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connecti
     });
 
     // Convert pixel coordinates to cell coordinates (0-based for selection)
-    const cell_x = @divFloor(mouse.x, @as(i32, font.Font.GLYPH_WIDTH));
-    const cell_y = @divFloor(mouse.y, @as(i32, font.Font.GLYPH_HEIGHT));
+    // Use scaled cell dimensions from renderer
+    const cell_x = @divFloor(mouse.x, @as(i32, rend.getCellWidth()));
+    const cell_y = @divFloor(mouse.y, @as(i32, rend.getCellHeight()));
     const col: u32 = @intCast(@max(0, @min(cell_x, @as(i32, @intCast(scr.cols)) - 1)));
     const row: u32 = @intCast(@max(0, @min(cell_y, @as(i32, @intCast(scr.rows)) - 1)));
 
@@ -897,7 +930,7 @@ fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connecti
             const menu_type: ChordMenu.MenuType = if (mouse.button == .middle) .edit else .paste;
             log.info("CHORD DETECTED: showing {s} menu at ({}, {})", .{ @tagName(menu_type), mouse.x, mouse.y });
             chord_menu.show(mouse.x, mouse.y, menu_type);
-            chord_menu.updateSelection(mouse.x, mouse.y);
+            chord_menu.updateSelectionScaled(mouse.x, mouse.y, rend.getCellWidth(), rend.getCellHeight(), rend.scale);
             mouse_state.chord_handled = true;
             // Mark all rows dirty to ensure selection highlight is preserved in render
             scr.markAllRowsDirty();
@@ -907,7 +940,7 @@ fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connecti
 
         // Update menu selection on mouse motion while menu is visible
         if (chord_menu.visible and event_type == .motion) {
-            chord_menu.updateSelection(mouse.x, mouse.y);
+            chord_menu.updateSelectionScaled(mouse.x, mouse.y, rend.getCellWidth(), rend.getCellHeight(), rend.scale);
             scr.dirty = true;
             return;
         }

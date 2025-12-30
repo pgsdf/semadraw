@@ -12,19 +12,32 @@ pub const Renderer = struct {
     scr: *screen.Screen,
     width_px: u32,
     height_px: u32,
+    scale: u32, // Font scale multiplier
+    cell_width: u32, // Scaled cell width
+    cell_height: u32, // Scaled cell height
     // Reusable buffer for glyph runs to avoid per-row allocations
     glyph_buffer: std.ArrayList(semadraw.Encoder.Glyph),
 
     const Self = @This();
 
     pub fn init(allocator: std.mem.Allocator, scr: *screen.Screen) Self {
+        return initWithScale(allocator, scr, 1);
+    }
+
+    pub fn initWithScale(allocator: std.mem.Allocator, scr: *screen.Screen, scale: u32) Self {
+        const s = if (scale < 1) 1 else if (scale > 4) 4 else scale;
+        const cell_w = font.Font.GLYPH_WIDTH * s;
+        const cell_h = font.Font.GLYPH_HEIGHT * s;
         return .{
             .allocator = allocator,
             .encoder = semadraw.Encoder.init(allocator),
             .atlas = &font.Font.ATLAS,
             .scr = scr,
-            .width_px = scr.cols * font.Font.GLYPH_WIDTH,
-            .height_px = scr.rows * font.Font.GLYPH_HEIGHT,
+            .width_px = scr.cols * cell_w,
+            .height_px = scr.rows * cell_h,
+            .scale = s,
+            .cell_width = cell_w,
+            .cell_height = cell_h,
             .glyph_buffer = .empty,
         };
     }
@@ -192,7 +205,7 @@ pub const Renderer = struct {
                     // Use cached glyph index from cell (computed once when character was written)
                     try self.glyph_buffer.append(self.allocator, .{
                         .index = cell.glyph_idx,
-                        .x_offset = @floatFromInt((col - start_col) * font.Font.GLYPH_WIDTH),
+                        .x_offset = @floatFromInt((col - start_col) * self.cell_width),
                         .y_offset = 0,
                     });
                 }
@@ -205,12 +218,12 @@ pub const Renderer = struct {
             // Draw background if not default
             if (!colorEqual(start_bg, screen.Color.default_bg)) {
                 const bg_rgb = start_bg.toRgb();
-                const run_width = (col - start_col) * font.Font.GLYPH_WIDTH;
+                const run_width = (col - start_col) * self.cell_width;
                 try self.encoder.fillRect(
-                    @floatFromInt(start_col * font.Font.GLYPH_WIDTH),
-                    @floatFromInt(row * font.Font.GLYPH_HEIGHT),
+                    @floatFromInt(start_col * self.cell_width),
+                    @floatFromInt(row * self.cell_height),
                     @floatFromInt(run_width),
-                    @floatFromInt(font.Font.GLYPH_HEIGHT),
+                    @floatFromInt(self.cell_height),
                     @as(f32, @floatFromInt(bg_rgb.r)) / 255.0,
                     @as(f32, @floatFromInt(bg_rgb.g)) / 255.0,
                     @as(f32, @floatFromInt(bg_rgb.b)) / 255.0,
@@ -218,17 +231,17 @@ pub const Renderer = struct {
                 );
             }
 
-            // Draw glyphs
+            // Draw glyphs (scaled)
             const fg_rgb = start_fg.toRgb();
             try self.encoder.drawGlyphRun(
-                @floatFromInt(start_col * font.Font.GLYPH_WIDTH),
-                @floatFromInt(row * font.Font.GLYPH_HEIGHT),
+                @floatFromInt(start_col * self.cell_width),
+                @floatFromInt(row * self.cell_height),
                 @as(f32, @floatFromInt(fg_rgb.r)) / 255.0,
                 @as(f32, @floatFromInt(fg_rgb.g)) / 255.0,
                 @as(f32, @floatFromInt(fg_rgb.b)) / 255.0,
                 1.0,
-                font.Font.GLYPH_WIDTH,
-                font.Font.GLYPH_HEIGHT,
+                self.cell_width,
+                self.cell_height,
                 font.Font.ATLAS_COLS,
                 font.Font.ATLAS_WIDTH,
                 font.Font.ATLAS_HEIGHT,
@@ -237,47 +250,47 @@ pub const Renderer = struct {
             );
 
             // Draw text decorations
-            const x1: f32 = @floatFromInt(start_col * font.Font.GLYPH_WIDTH);
-            const x2: f32 = @floatFromInt(col * font.Font.GLYPH_WIDTH);
-            const row_y: f32 = @floatFromInt(row * font.Font.GLYPH_HEIGHT);
+            const x1: f32 = @floatFromInt(start_col * self.cell_width);
+            const x2: f32 = @floatFromInt(col * self.cell_width);
+            const row_y: f32 = @floatFromInt(row * self.cell_height);
             const dec_r = @as(f32, @floatFromInt(fg_rgb.r)) / 255.0;
             const dec_g = @as(f32, @floatFromInt(fg_rgb.g)) / 255.0;
             const dec_b = @as(f32, @floatFromInt(fg_rgb.b)) / 255.0;
 
-            // Line thickness (1 pixel for decorations)
-            const line_thickness: f32 = 1.0;
+            // Line thickness (scaled with font)
+            const line_thickness: f32 = @floatFromInt(self.scale);
 
             // Underline: draw at bottom of cell
             if (start_underline != .none) {
-                const underline_y = row_y + @as(f32, @floatFromInt(font.Font.GLYPH_HEIGHT)) - 1.0;
+                const underline_y = row_y + @as(f32, @floatFromInt(self.cell_height)) - @as(f32, @floatFromInt(self.scale));
                 try self.encoder.strokeLine(x1, underline_y, x2, underline_y, line_thickness, dec_r, dec_g, dec_b, 1.0);
 
-                // Double underline: draw second line 2 pixels above
+                // Double underline: draw second line 2 pixels above (scaled)
                 if (start_underline == .double) {
-                    const underline_y2 = underline_y - 2.0;
+                    const underline_y2 = underline_y - @as(f32, @floatFromInt(2 * self.scale));
                     try self.encoder.strokeLine(x1, underline_y2, x2, underline_y2, line_thickness, dec_r, dec_g, dec_b, 1.0);
                 }
             }
 
             // Strikethrough: draw at middle of cell
             if (start_strikethrough) {
-                const strike_y = row_y + @as(f32, @floatFromInt(font.Font.GLYPH_HEIGHT)) / 2.0;
+                const strike_y = row_y + @as(f32, @floatFromInt(self.cell_height)) / 2.0;
                 try self.encoder.strokeLine(x1, strike_y, x2, strike_y, line_thickness, dec_r, dec_g, dec_b, 1.0);
             }
 
             // Overline: draw at top of cell
             if (start_overline) {
-                const overline_y = row_y + 1.0;
+                const overline_y = row_y + @as(f32, @floatFromInt(self.scale));
                 try self.encoder.strokeLine(x1, overline_y, x2, overline_y, line_thickness, dec_r, dec_g, dec_b, 1.0);
             }
         }
     }
 
     fn renderCursor(self: *Self) !void {
-        const cursor_x: f32 = @floatFromInt(self.scr.cursor_col * font.Font.GLYPH_WIDTH);
-        const cursor_y: f32 = @floatFromInt(self.scr.cursor_row * font.Font.GLYPH_HEIGHT);
-        const glyph_w: f32 = @floatFromInt(font.Font.GLYPH_WIDTH);
-        const glyph_h: f32 = @floatFromInt(font.Font.GLYPH_HEIGHT);
+        const cursor_x: f32 = @floatFromInt(self.scr.cursor_col * self.cell_width);
+        const cursor_y: f32 = @floatFromInt(self.scr.cursor_row * self.cell_height);
+        const glyph_w: f32 = @floatFromInt(self.cell_width);
+        const glyph_h: f32 = @floatFromInt(self.cell_height);
 
         // Cursor color (semi-transparent white)
         const r: f32 = 0.7;
@@ -359,28 +372,28 @@ pub const Renderer = struct {
                 }
             }
 
-            // Draw text - build glyph run for the label
+            // Draw text - build glyph run for the label (scaled)
             self.glyph_buffer.clearRetainingCapacity();
             for (label, 0..) |char, ci| {
                 const glyph_idx = font.Font.charToIndexWithFallback(char);
                 try self.glyph_buffer.append(self.allocator, .{
                     .index = glyph_idx,
-                    .x_offset = @floatFromInt(ci * font.Font.GLYPH_WIDTH),
+                    .x_offset = @floatFromInt(ci * self.cell_width),
                     .y_offset = 0,
                 });
             }
 
-            // Draw the text (white)
-            const text_y = item_y + 2;
+            // Draw the text (white, scaled)
+            const text_y = item_y + @as(f32, @floatFromInt(2 * self.scale));
             try self.encoder.drawGlyphRun(
-                x + 4,
+                x + @as(f32, @floatFromInt(4 * self.scale)),
                 text_y,
                 1.0,
                 1.0,
                 1.0,
                 1.0, // White text
-                font.Font.GLYPH_WIDTH,
-                font.Font.GLYPH_HEIGHT,
+                self.cell_width,
+                self.cell_height,
                 font.Font.ATLAS_COLS,
                 font.Font.ATLAS_WIDTH,
                 font.Font.ATLAS_HEIGHT,
@@ -388,6 +401,16 @@ pub const Renderer = struct {
                 self.atlas,
             );
         }
+    }
+
+    /// Get the scaled cell width
+    pub fn getCellWidth(self: *const Self) u32 {
+        return self.cell_width;
+    }
+
+    /// Get the scaled cell height
+    pub fn getCellHeight(self: *const Self) u32 {
+        return self.cell_height;
     }
 };
 
