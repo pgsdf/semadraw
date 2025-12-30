@@ -34,8 +34,8 @@ pub fn main() !void {
             }
             socket_path = args[i];
         } else if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
-            const stdout = std.io.getStdOut().writer();
-            try stdout.writeAll(
+            const stdout_file = std.fs.File{ .handle = posix.STDOUT_FILENO };
+            try stdout_file.writeAll(
                 \\semadraw-demo - Graphics demo for SemaDraw
                 \\
                 \\Usage: semadraw-demo [OPTIONS]
