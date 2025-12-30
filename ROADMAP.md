@@ -108,10 +108,18 @@ Notes:
 
 ### Backend Feature Gaps (To Be Implemented)
 
+#### Medium Priority
+
+* **Vulkan Console Backend**
+  - GPU-accelerated rendering directly to DRM/KMS (no X11/Wayland)
+  - Use VK_KHR_display extension for direct display output
+  - Reuse evdev input handling from KMS backend
+  - Would provide GPU acceleration for console/TTY environments
+
 #### Low Priority
 
 * **Input Abstraction Layer**
   - Consider factoring out common evdev handling from KMS backend
-  - Could be reused by Vulkan when running without X11
+  - Could be reused by Vulkan console backend
   - Would enable future DirectFB or fbdev backends
 
