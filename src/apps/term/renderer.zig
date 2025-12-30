@@ -53,8 +53,9 @@ pub const Renderer = struct {
 
         try self.encoder.setBlend(semadraw.Encoder.BlendMode.SrcOver);
 
-        // Render only dirty rows for efficiency
-        try self.renderDirtyCells();
+        // Render all cells - each SDCS frame replaces surface content entirely,
+        // so dirty row optimization cannot be used (content is not preserved between commits)
+        try self.renderCells();
 
         // Draw cursor (hidden when viewing scrollback history)
         if (self.scr.cursor_visible and !self.scr.isViewingScrollback()) {
