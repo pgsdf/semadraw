@@ -899,6 +899,8 @@ fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connecti
             chord_menu.show(mouse.x, mouse.y, menu_type);
             chord_menu.updateSelection(mouse.x, mouse.y);
             mouse_state.chord_handled = true;
+            // Mark all rows dirty to ensure selection highlight is preserved in render
+            scr.markAllRowsDirty();
             scr.dirty = true;
             return;
         }
@@ -995,7 +997,7 @@ fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connecti
 
         // Normal left-button selection handling
         // We delay selection start until drag to preserve existing selection for chords
-        if (mouse.button == .left) {
+        if (mouse.button == .left or (event_type == .motion and mouse_state.left_down)) {
             if (event_type == .press) {
                 // Don't start selection immediately - save position for potential drag
                 // This preserves existing selection in case user is initiating a chord
@@ -1003,14 +1005,24 @@ fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connecti
                 mouse_state.left_press_row = row;
                 mouse_state.drag_started = false;
             } else if (event_type == .motion and mouse_state.left_down) {
-                // User is dragging - now we can start/update selection
+                // User is dragging - check if we should start new selection or preserve existing
                 if (!mouse_state.drag_started) {
-                    // First motion after press - start selection from press position
-                    scr.startSelection(mouse_state.left_press_col, mouse_state.left_press_row);
-                    mouse_state.drag_started = true;
+                    // Calculate distance from press point to detect intentional drag
+                    const dx = @as(i32, @intCast(col)) - @as(i32, @intCast(mouse_state.left_press_col));
+                    const dy = @as(i32, @intCast(row)) - @as(i32, @intCast(mouse_state.left_press_row));
+                    const dist_sq = dx * dx + dy * dy;
+
+                    // Require minimum movement (2 cells) to start new selection
+                    // This prevents accidental selection reset during chord initiation
+                    if (dist_sq >= 4) {
+                        scr.startSelection(mouse_state.left_press_col, mouse_state.left_press_row);
+                        mouse_state.drag_started = true;
+                    }
                 }
-                scr.updateSelection(col, row);
-            } else if (event_type == .release) {
+                if (mouse_state.drag_started) {
+                    scr.updateSelection(col, row);
+                }
+            } else if (event_type == .release and mouse.button == .left) {
                 // End selection and copy to PRIMARY clipboard
                 if (mouse_state.drag_started) {
                     scr.endSelection();
