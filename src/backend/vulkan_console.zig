@@ -323,7 +323,8 @@ pub const VulkanConsoleBackend = struct {
 
         // Use the first available display
         self.display = displays[0].display;
-        log.info("using display: {s}", .{std.mem.sliceTo(&displays[0].displayName, 0)});
+        const display_name: [*:0]const u8 = displays[0].displayName orelse "unknown";
+        log.info("using display: {s}", .{display_name});
 
         // Get display mode properties
         var mode_count: u32 = 0;
