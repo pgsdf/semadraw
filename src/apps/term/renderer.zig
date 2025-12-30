@@ -115,8 +115,18 @@ pub const Renderer = struct {
                 continue;
             }
 
-            const start_fg = start_cell.attr.effectiveFg();
-            const start_bg = start_cell.attr.effectiveBg();
+            // Check if this cell is selected (for highlight)
+            const start_selected = self.scr.isCellSelected(col, row);
+
+            // Get effective colors (swap if selected for highlight effect)
+            var start_fg = start_cell.attr.effectiveFg();
+            var start_bg = start_cell.attr.effectiveBg();
+            if (start_selected) {
+                const tmp = start_fg;
+                start_fg = start_bg;
+                start_bg = tmp;
+            }
+
             const start_underline = start_cell.attr.underline;
             const start_strikethrough = start_cell.attr.strikethrough;
             const start_overline = start_cell.attr.overline;
@@ -134,14 +144,24 @@ pub const Renderer = struct {
                     continue;
                 }
 
-                const fg = cell.attr.effectiveFg();
-                const bg = cell.attr.effectiveBg();
+                // Check selection state
+                const selected = self.scr.isCellSelected(col, row);
 
-                // Check if attributes match (including text decorations)
+                // Get effective colors (swap if selected)
+                var fg = cell.attr.effectiveFg();
+                var bg = cell.attr.effectiveBg();
+                if (selected) {
+                    const tmp = fg;
+                    fg = bg;
+                    bg = tmp;
+                }
+
+                // Check if attributes match (including text decorations and selection state)
                 if (!colorEqual(fg, start_fg) or !colorEqual(bg, start_bg) or
                     cell.attr.underline != start_underline or
                     cell.attr.strikethrough != start_strikethrough or
-                    cell.attr.overline != start_overline)
+                    cell.attr.overline != start_overline or
+                    selected != start_selected)
                 {
                     break;
                 }

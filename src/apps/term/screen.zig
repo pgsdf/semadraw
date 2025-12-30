@@ -53,6 +53,54 @@ pub const Screen = struct {
     mouse_encoding: MouseEncodingMode,
     mouse_focus_events: bool, // Mode 1004: Report focus in/out
 
+    // Text selection state
+    selection: Selection,
+
+    /// Text selection state
+    pub const Selection = struct {
+        active: bool, // Whether there's an active selection
+        selecting: bool, // Whether we're currently dragging to select
+        start_col: u32,
+        start_row: u32,
+        end_col: u32,
+        end_row: u32,
+
+        pub fn none() Selection {
+            return .{
+                .active = false,
+                .selecting = false,
+                .start_col = 0,
+                .start_row = 0,
+                .end_col = 0,
+                .end_row = 0,
+            };
+        }
+
+        /// Get normalized selection (start before end)
+        pub fn normalized(self: Selection) struct { start_col: u32, start_row: u32, end_col: u32, end_row: u32 } {
+            if (self.start_row < self.end_row or (self.start_row == self.end_row and self.start_col <= self.end_col)) {
+                return .{ .start_col = self.start_col, .start_row = self.start_row, .end_col = self.end_col, .end_row = self.end_row };
+            } else {
+                return .{ .start_col = self.end_col, .start_row = self.end_row, .end_col = self.start_col, .end_row = self.start_row };
+            }
+        }
+
+        /// Check if a cell is within the selection
+        pub fn contains(self: Selection, col: u32, row: u32) bool {
+            if (!self.active) return false;
+            const n = self.normalized();
+            if (row < n.start_row or row > n.end_row) return false;
+            if (row == n.start_row and row == n.end_row) {
+                return col >= n.start_col and col <= n.end_col;
+            } else if (row == n.start_row) {
+                return col >= n.start_col;
+            } else if (row == n.end_row) {
+                return col <= n.end_col;
+            }
+            return true; // Middle row - fully selected
+        }
+    };
+
     /// Mouse tracking modes
     pub const MouseTrackingMode = enum(u16) {
         none = 0, // No mouse tracking
@@ -170,6 +218,8 @@ pub const Screen = struct {
             .mouse_tracking = .none,
             .mouse_encoding = .x10,
             .mouse_focus_events = false,
+            // Text selection
+            .selection = Selection.none(),
         };
     }
 
@@ -202,6 +252,95 @@ pub const Screen = struct {
     /// Get mutable cell at position
     fn getCellMut(self: *Self, col: u32, row: u32) *Cell {
         return &self.cells[row * self.cols + col];
+    }
+
+    // ========================================================================
+    // Text selection
+    // ========================================================================
+
+    /// Start a new selection at the given position
+    pub fn startSelection(self: *Self, col: u32, row: u32) void {
+        self.selection = .{
+            .active = true,
+            .selecting = true,
+            .start_col = @min(col, self.cols - 1),
+            .start_row = @min(row, self.rows - 1),
+            .end_col = @min(col, self.cols - 1),
+            .end_row = @min(row, self.rows - 1),
+        };
+        self.markAllRowsDirty();
+    }
+
+    /// Update selection end position (while dragging)
+    pub fn updateSelection(self: *Self, col: u32, row: u32) void {
+        if (self.selection.selecting) {
+            self.selection.end_col = @min(col, self.cols - 1);
+            self.selection.end_row = @min(row, self.rows - 1);
+            self.selection.active = true;
+            self.markAllRowsDirty();
+        }
+    }
+
+    /// End selection (stop dragging)
+    pub fn endSelection(self: *Self) void {
+        self.selection.selecting = false;
+    }
+
+    /// Clear selection
+    pub fn clearSelection(self: *Self) void {
+        if (self.selection.active) {
+            self.selection = Selection.none();
+            self.markAllRowsDirty();
+        }
+    }
+
+    /// Check if a cell is selected
+    pub fn isCellSelected(self: *const Self, col: u32, row: u32) bool {
+        return self.selection.contains(col, row);
+    }
+
+    /// Get selected text as a string (caller must free)
+    pub fn getSelectedText(self: *const Self, allocator: std.mem.Allocator) !?[]u8 {
+        if (!self.selection.active) return null;
+
+        const n = self.selection.normalized();
+        var result = std.ArrayList(u8).init(allocator);
+        errdefer result.deinit();
+
+        var row = n.start_row;
+        while (row <= n.end_row) : (row += 1) {
+            const start_col = if (row == n.start_row) n.start_col else 0;
+            const end_col = if (row == n.end_row) n.end_col else self.cols - 1;
+
+            // Find last non-blank cell in the row to trim trailing spaces
+            var last_non_blank: u32 = start_col;
+            var col = start_col;
+            while (col <= end_col) : (col += 1) {
+                const cell = self.getCell(col, row);
+                if (cell.char != ' ' and cell.char != 0) {
+                    last_non_blank = col;
+                }
+            }
+
+            // Copy characters from the row
+            col = start_col;
+            while (col <= @min(end_col, last_non_blank)) : (col += 1) {
+                const cell = self.getCell(col, row);
+                const char = if (cell.char == 0) ' ' else cell.char;
+
+                // Encode as UTF-8
+                var buf: [4]u8 = undefined;
+                const len = std.unicode.utf8Encode(char, &buf) catch 1;
+                try result.appendSlice(buf[0..len]);
+            }
+
+            // Add newline between rows (but not after last row)
+            if (row < n.end_row) {
+                try result.append('\n');
+            }
+        }
+
+        return try result.toOwnedSlice();
     }
 
     // ========================================================================
