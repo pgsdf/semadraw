@@ -65,19 +65,32 @@ pub const ClientSocket = struct {
     fd: posix.socket_t,
     recv_buf: [8192]u8,
     recv_len: usize,
+    large_buf: ?[]u8, // Dynamically allocated buffer for large messages
+    large_buf_len: usize,
+    allocator: ?std.mem.Allocator,
 
     pub fn init(fd: posix.socket_t) ClientSocket {
         return .{
             .fd = fd,
             .recv_buf = undefined,
             .recv_len = 0,
+            .large_buf = null,
+            .large_buf_len = 0,
+            .allocator = null,
         };
     }
 
     /// Read a complete message (header + payload)
     /// Returns null if not enough data available yet
     pub fn readMessage(self: *ClientSocket, allocator: std.mem.Allocator) !?Message {
-        // Try to read more data
+        self.allocator = allocator;
+
+        // If we're in the middle of reading a large message, continue reading into large_buf
+        if (self.large_buf) |buf| {
+            return self.readLargeMessage(buf);
+        }
+
+        // Try to read more data into small buffer
         const space = self.recv_buf.len - self.recv_len;
         if (space > 0) {
             const n = posix.read(self.fd, self.recv_buf[self.recv_len..]) catch |err| switch (err) {
@@ -94,21 +107,81 @@ pub const ClientSocket = struct {
         const header = try protocol.MsgHeader.deserialize(self.recv_buf[0..protocol.MsgHeader.SIZE]);
         const total_len = protocol.MsgHeader.SIZE + header.length;
 
-        // Check if we have the complete message
-        if (self.recv_len < total_len) return null;
+        // Check if message fits in small buffer
+        if (total_len <= self.recv_buf.len) {
+            // Check if we have the complete message
+            if (self.recv_len < total_len) return null;
+
+            // Extract payload
+            var payload: ?[]u8 = null;
+            if (header.length > 0) {
+                payload = try allocator.alloc(u8, header.length);
+                @memcpy(payload.?, self.recv_buf[protocol.MsgHeader.SIZE..total_len]);
+            }
+
+            // Shift remaining data
+            if (self.recv_len > total_len) {
+                std.mem.copyForwards(u8, self.recv_buf[0..], self.recv_buf[total_len..self.recv_len]);
+            }
+            self.recv_len -= total_len;
+
+            return .{
+                .header = header,
+                .payload = payload,
+            };
+        }
+
+        // Large message - allocate buffer and copy what we have
+        const large_buf = try allocator.alloc(u8, total_len);
+        @memcpy(large_buf[0..self.recv_len], self.recv_buf[0..self.recv_len]);
+        self.large_buf = large_buf;
+        self.large_buf_len = self.recv_len;
+        self.recv_len = 0;
+
+        return self.readLargeMessage(large_buf);
+    }
+
+    /// Continue reading a large message
+    fn readLargeMessage(self: *ClientSocket, buf: []u8) !?Message {
+        const allocator = self.allocator orelse return error.Unexpected;
+
+        // Read more data
+        if (self.large_buf_len < buf.len) {
+            const n = posix.read(self.fd, buf[self.large_buf_len..]) catch |err| switch (err) {
+                error.WouldBlock => 0,
+                else => {
+                    allocator.free(buf);
+                    self.large_buf = null;
+                    self.large_buf_len = 0;
+                    return err;
+                },
+            };
+            if (n == 0) {
+                allocator.free(buf);
+                self.large_buf = null;
+                self.large_buf_len = 0;
+                return error.ConnectionClosed;
+            }
+            self.large_buf_len += n;
+        }
+
+        // Check if complete
+        if (self.large_buf_len < buf.len) return null;
+
+        // Parse header
+        const header = try protocol.MsgHeader.deserialize(buf[0..protocol.MsgHeader.SIZE]);
 
         // Extract payload
         var payload: ?[]u8 = null;
         if (header.length > 0) {
             payload = try allocator.alloc(u8, header.length);
-            @memcpy(payload.?, self.recv_buf[protocol.MsgHeader.SIZE..total_len]);
+            @memcpy(payload.?, buf[protocol.MsgHeader.SIZE..]);
         }
 
-        // Shift remaining data
-        if (self.recv_len > total_len) {
-            std.mem.copyForwards(u8, self.recv_buf[0..], self.recv_buf[total_len..self.recv_len]);
-        }
-        self.recv_len -= total_len;
+        // Free large buffer
+        allocator.free(buf);
+        self.large_buf = null;
+        self.large_buf_len = 0;
 
         return .{
             .header = header,
@@ -191,6 +264,14 @@ pub const ClientSocket = struct {
     }
 
     pub fn close(self: *ClientSocket) void {
+        // Free any pending large buffer
+        if (self.large_buf) |buf| {
+            if (self.allocator) |alloc| {
+                alloc.free(buf);
+            }
+        }
+        self.large_buf = null;
+        self.large_buf_len = 0;
         posix.close(self.fd);
     }
 
