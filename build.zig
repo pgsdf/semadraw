@@ -628,6 +628,21 @@ pub fn build(b: *std.Build) void {
     semadraw_term.root_module.link_libc = true;
     b.installArtifact(semadraw_term);
 
+    // semadraw-demo graphics demo
+    const semadraw_demo = b.addExecutable(.{
+        .name = "semadraw-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/apps/graphics_demo/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "semadraw_client", .module = client_mod },
+                .{ .name = "semadraw", .module = semadraw_mod },
+            },
+        }),
+    });
+    b.installArtifact(semadraw_demo);
+
     // Unit tests
     const tests = b.addTest(.{
         .root_module = b.createModule(.{

@@ -32,8 +32,11 @@ SemaDraw is a foundation.
 4. Backends  
    Software, Vulkan, DRM KMS, and host bridges
 
-5. Tooling  
+5. Tooling
    Command recording, dumping, replay, and golden image testing
+
+6. Applications
+   Terminal emulator (semadraw-term), graphics demo (semadraw-demo)
 
 ## Build
 
@@ -53,6 +56,7 @@ Tools and libraries produced:
 5. sdcs_make_demo - Demo showcase generator
 6. sdcs_make_* - Various test generators
 7. semadraw-term - VT100 terminal emulator
+8. semadraw-demo - Animated graphics demo
 
 Rendering options supported by the encoder and replay tool:
 
@@ -101,6 +105,7 @@ zig build install --prefix ~/.local
 This installs:
 - `/usr/local/bin/semadrawd` - Compositor daemon
 - `/usr/local/bin/semadraw-term` - Terminal emulator
+- `/usr/local/bin/semadraw-demo` - Animated graphics demo
 - `/usr/local/bin/sdcs_dump` - SDCS file inspector
 - `/usr/local/bin/sdcs_replay` - Software renderer
 - `/usr/local/lib/libsemadraw_client.a` - Client library
@@ -244,7 +249,16 @@ semadrawd --backend wayland
 semadraw-term
 ```
 
-**Example 3: Headless testing**
+**Example 3: Graphics demo on X11**
+```sh
+# Terminal 1: Start daemon
+semadrawd --backend x11
+
+# Terminal 2: Run animated graphics demo
+semadraw-demo
+```
+
+**Example 4: Headless testing**
 ```sh
 # Start headless (no display output)
 semadrawd --backend headless
@@ -328,6 +342,39 @@ semadraw-term [OPTIONS]
 **Keyboard shortcuts:**
 - Shift+PageUp: Scroll up in history
 - Shift+PageDown: Scroll down in history
+
+## semadraw-demo Reference
+
+Animated graphics demonstration:
+
+```sh
+semadraw-demo [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `-s, --socket PATH` | Daemon socket path |
+| `-h, --help` | Show help |
+
+**Features:**
+- Real-time animated graphics using SemaDraw API
+- Rotating bezier curves with rainbow colors
+- Orbiting shapes with alpha blending
+- Pulsing center with additive blend mode
+- Anti-aliased rendering
+
+**Controls:**
+- ESC or Q: Quit the demo
+- Close window: Quit the demo
+
+This demo showcases SemaDraw's immediate-mode graphics API including:
+- Quadratic bezier curves
+- Alpha blending and additive blending
+- Anti-aliased rendering
+- Real-time animation at ~30 FPS
+- Resolution-independent graphics
 
 ## License
 
