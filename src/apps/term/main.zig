@@ -334,7 +334,7 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
                         }
                     },
                     .mouse_event => |mouse| {
-                        handleMouseEvent(&shell, &scr, mouse);
+                        handleMouseEvent(&shell, &scr, conn, mouse);
                     },
                     .clipboard_data => |clip| {
                         // Paste clipboard data to the shell
@@ -388,9 +388,21 @@ fn handleKeyPress(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connection
     const ctrl = (modifiers & Modifiers.CTRL) != 0;
     const shift = (modifiers & Modifiers.SHIFT) != 0;
 
-    // Handle clipboard shortcuts (Ctrl+Shift+V for paste)
+    // Handle clipboard shortcuts (Ctrl+Shift+C for copy, Ctrl+Shift+V for paste)
     if (ctrl and shift) {
         switch (key_code) {
+            Key.C => {
+                // Copy selection to clipboard
+                if (scr.selection.active) {
+                    if (scr.getSelectedText(scr.allocator)) |text| {
+                        conn.setClipboard(.clipboard, text) catch |err| {
+                            log.warn("clipboard copy failed: {}", .{err});
+                        };
+                        scr.allocator.free(text);
+                    } else |_| {}
+                }
+                return;
+            },
             Key.V => {
                 // Request clipboard paste
                 conn.requestClipboard(.clipboard) catch |err| {
@@ -715,13 +727,44 @@ fn handleKeyPress(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connection
     }
 }
 
-fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, mouse: client.protocol.MouseEventMsg) void {
+fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connection, mouse: client.protocol.MouseEventMsg) void {
+    const event_type = mouse.event_type;
+
+    // Convert pixel coordinates to cell coordinates (0-based for selection)
+    const cell_x = @divFloor(mouse.x, @as(i32, font.Font.GLYPH_WIDTH));
+    const cell_y = @divFloor(mouse.y, @as(i32, font.Font.GLYPH_HEIGHT));
+    const col: u32 = @intCast(@max(0, @min(cell_x, @as(i32, @intCast(scr.cols)) - 1)));
+    const row: u32 = @intCast(@max(0, @min(cell_y, @as(i32, @intCast(scr.rows)) - 1)));
+
     // Check if mouse tracking is enabled
     const tracking = scr.getMouseTracking();
-    if (tracking == .none) return;
+
+    // Handle text selection when mouse tracking is disabled
+    if (tracking == .none) {
+        if (mouse.button == .left) {
+            if (event_type == .press) {
+                // Start selection
+                scr.startSelection(col, row);
+            } else if (event_type == .motion and scr.selection.selecting) {
+                // Update selection while dragging
+                scr.updateSelection(col, row);
+            } else if (event_type == .release) {
+                // End selection and copy to PRIMARY clipboard
+                scr.endSelection();
+                if (scr.selection.active) {
+                    if (scr.getSelectedText(scr.allocator)) |text| {
+                        conn.setClipboard(.primary, text) catch |err| {
+                            log.warn("failed to set primary clipboard: {}", .{err});
+                        };
+                        scr.allocator.free(text);
+                    } else |_| {}
+                }
+            }
+        }
+        return;
+    }
 
     const encoding = scr.getMouseEncoding();
-    const event_type = mouse.event_type;
 
     // Check if this event type should be reported based on tracking mode
     const should_report = switch (tracking) {
@@ -735,15 +778,9 @@ fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, mouse: client.protocol
 
     if (!should_report) return;
 
-    // Convert pixel coordinates to cell coordinates
-    const cell_x = @divFloor(mouse.x, @as(i32, font.Font.GLYPH_WIDTH)) + 1;
-    const cell_y = @divFloor(mouse.y, @as(i32, font.Font.GLYPH_HEIGHT)) + 1;
-
-    // Clamp to valid range (cols/rows are u32 but always fit in i32 for reasonable terminals)
-    const max_col: i32 = @intCast(scr.cols);
-    const max_row: i32 = @intCast(scr.rows);
-    const x: u32 = @intCast(@max(1, @min(cell_x, max_col)));
-    const y: u32 = @intCast(@max(1, @min(cell_y, max_row)));
+    // For mouse tracking, use 1-based coordinates
+    const x: u32 = col + 1;
+    const y: u32 = row + 1;
 
     // Generate the mouse report based on encoding mode
     var buf: [32]u8 = undefined;
