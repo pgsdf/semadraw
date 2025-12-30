@@ -92,7 +92,7 @@ pub fn main() !void {
             switch (event) {
                 .key_press => |key| {
                     // ESC or Q to quit
-                    if (key.keycode == 1 or key.keycode == 16) {
+                    if (key.key_code == 1 or key.key_code == 16) {
                         running = false;
                     }
                 },
