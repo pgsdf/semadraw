@@ -257,7 +257,22 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
             }
         }
         if (poll_fds[0].revents & (std.posix.POLL.HUP | std.posix.POLL.ERR) != 0) {
-            log.info("shell exited", .{});
+            // Get child exit status for diagnostics
+            const wait_result = posix.waitpid(shell.child_pid, posix.W.NOHANG);
+            if (wait_result.pid != 0) {
+                const status = wait_result.status;
+                if (posix.W.IFEXITED(status)) {
+                    const exit_code = posix.W.EXITSTATUS(status);
+                    log.info("shell exited with code {}", .{exit_code});
+                } else if (posix.W.IFSIGNALED(status)) {
+                    const signal = posix.W.TERMSIG(status);
+                    log.info("shell killed by signal {}", .{signal});
+                } else {
+                    log.info("shell exited (status=0x{x})", .{status});
+                }
+            } else {
+                log.info("shell exited (no status available)", .{});
+            }
             running = false;
         }
 
