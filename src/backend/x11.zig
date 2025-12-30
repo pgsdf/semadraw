@@ -154,10 +154,10 @@ pub const X11Backend = struct {
 
         // Initialize clipboard atoms
         self.atom_clipboard = c.XInternAtom(self.display.?, "CLIPBOARD", c.False);
-        self.atom_primary = c.XA_PRIMARY;
+        self.atom_primary = c.XInternAtom(self.display.?, "PRIMARY", c.False);
         self.atom_targets = c.XInternAtom(self.display.?, "TARGETS", c.False);
         self.atom_utf8_string = c.XInternAtom(self.display.?, "UTF8_STRING", c.False);
-        self.atom_string = c.XA_STRING;
+        self.atom_string = c.XInternAtom(self.display.?, "STRING", c.False);
 
         // Select input events (keyboard, mouse, and window events)
         _ = c.XSelectInput(self.display.?, self.window, c.ExposureMask | c.KeyPressMask | c.KeyReleaseMask | c.StructureNotifyMask | c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask);

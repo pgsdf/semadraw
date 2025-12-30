@@ -938,7 +938,7 @@ pub const Daemon = struct {
             // Data should now be available
             if (self.comp.getClipboardData(self.pending_clipboard_selection)) |data| {
                 // Find the client and send the data
-                if (self.clients.getSession(client_id)) |session| {
+                if (self.clients.sessions.get(client_id)) |session| {
                     const selection: protocol.ClipboardSelection = @enumFromInt(self.pending_clipboard_selection);
                     self.sendClipboardData(session, selection, data) catch |err| {
                         log.warn("failed to send clipboard data to client {}: {}", .{ client_id, err });
