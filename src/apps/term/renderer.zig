@@ -33,9 +33,25 @@ pub const Renderer = struct {
         self.encoder.deinit();
     }
 
+    /// Menu overlay parameters for chord menu rendering
+    pub const MenuOverlay = struct {
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        item_height: u32,
+        labels: []const []const u8,
+        selected_idx: ?usize,
+    };
+
     /// Render the screen to SDCS and return the encoded data
     /// Uses dirty row tracking to skip re-rendering unchanged rows
     pub fn render(self: *Self) ![]u8 {
+        return self.renderWithOverlay(null);
+    }
+
+    /// Render the screen with an optional menu overlay
+    pub fn renderWithOverlay(self: *Self, menu: ?MenuOverlay) ![]u8 {
         try self.encoder.reset();
 
         // Draw background
@@ -60,6 +76,11 @@ pub const Renderer = struct {
         // Draw cursor (hidden when viewing scrollback history)
         if (self.scr.cursor_visible and !self.scr.isViewingScrollback()) {
             try self.renderCursor();
+        }
+
+        // Draw menu overlay if present
+        if (menu) |m| {
+            try self.renderChordMenu(m.x, m.y, m.width, m.height, m.item_height, m.labels, m.selected_idx);
         }
 
         try self.encoder.end();
@@ -298,6 +319,74 @@ pub const Renderer = struct {
                     .rgb => |br| return ar.r == br.r and ar.g == br.g and ar.b == br.b,
                 }
             },
+        }
+    }
+
+    /// Render a chord menu overlay
+    pub fn renderChordMenu(
+        self: *Self,
+        menu_x: i32,
+        menu_y: i32,
+        menu_width: u32,
+        menu_height: u32,
+        item_height: u32,
+        labels: []const []const u8,
+        selected_idx: ?usize,
+    ) !void {
+        const x: f32 = @floatFromInt(menu_x);
+        const y: f32 = @floatFromInt(menu_y);
+        const w: f32 = @floatFromInt(menu_width);
+        const h: f32 = @floatFromInt(menu_height);
+
+        // Draw menu background (dark gray with border)
+        try self.encoder.fillRect(x, y, w, h, 0.2, 0.2, 0.25, 0.95);
+
+        // Draw border
+        try self.encoder.strokeLine(x, y, x + w, y, 1.0, 0.5, 0.5, 0.5, 1.0); // Top
+        try self.encoder.strokeLine(x, y + h, x + w, y + h, 1.0, 0.5, 0.5, 0.5, 1.0); // Bottom
+        try self.encoder.strokeLine(x, y, x, y + h, 1.0, 0.5, 0.5, 0.5, 1.0); // Left
+        try self.encoder.strokeLine(x + w, y, x + w, y + h, 1.0, 0.5, 0.5, 0.5, 1.0); // Right
+
+        // Draw each menu item
+        const ih: f32 = @floatFromInt(item_height);
+        for (labels, 0..) |label, i| {
+            const item_y = y + 2 + @as(f32, @floatFromInt(i)) * ih;
+
+            // Draw highlight for selected item
+            if (selected_idx) |sel| {
+                if (sel == i) {
+                    try self.encoder.fillRect(x + 2, item_y, w - 4, ih, 0.3, 0.5, 0.7, 0.9);
+                }
+            }
+
+            // Draw text - build glyph run for the label
+            self.glyph_buffer.clearRetainingCapacity();
+            for (label, 0..) |char, ci| {
+                const glyph_idx = font.Font.getGlyphIndex(char);
+                try self.glyph_buffer.append(self.allocator, .{
+                    .index = glyph_idx,
+                    .x_offset = @floatFromInt(ci * font.Font.GLYPH_WIDTH),
+                    .y_offset = 0,
+                });
+            }
+
+            // Draw the text (white)
+            const text_y = item_y + 2;
+            try self.encoder.drawGlyphRun(
+                x + 4,
+                text_y,
+                1.0,
+                1.0,
+                1.0,
+                1.0, // White text
+                font.Font.GLYPH_WIDTH,
+                font.Font.GLYPH_HEIGHT,
+                font.Font.ATLAS_COLS,
+                font.Font.ATLAS_WIDTH,
+                font.Font.ATLAS_HEIGHT,
+                self.glyph_buffer.items,
+                self.atlas,
+            );
         }
     }
 };

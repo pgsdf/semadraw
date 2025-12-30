@@ -30,6 +30,71 @@ const MouseState = struct {
 
 var mouse_state = MouseState{};
 
+/// Chord menu for Plan 9-style operations
+pub const ChordMenu = struct {
+    visible: bool = false,
+    x: i32 = 0, // Pixel position
+    y: i32 = 0,
+    selected: ?MenuItem = null,
+
+    pub const MenuItem = enum {
+        copy, // Snarf - copy selection to clipboard
+        paste, // Paste from clipboard
+    };
+
+    pub const ITEM_HEIGHT: u32 = font.Font.GLYPH_HEIGHT + 4;
+    pub const ITEM_WIDTH: u32 = font.Font.GLYPH_WIDTH * 8; // "  Paste  "
+    pub const MENU_HEIGHT: u32 = ITEM_HEIGHT * 2 + 4; // 2 items + border
+    pub const MENU_WIDTH: u32 = ITEM_WIDTH + 4; // + border
+
+    pub fn show(self: *ChordMenu, px: i32, py: i32) void {
+        self.visible = true;
+        self.x = px;
+        self.y = py;
+        self.selected = null;
+    }
+
+    pub fn hide(self: *ChordMenu) void {
+        self.visible = false;
+        self.selected = null;
+    }
+
+    /// Update selection based on mouse position
+    pub fn updateSelection(self: *ChordMenu, px: i32, py: i32) void {
+        if (!self.visible) return;
+
+        // Check if mouse is within menu bounds
+        const menu_x = self.x;
+        const menu_y = self.y;
+        const menu_w: i32 = @intCast(MENU_WIDTH);
+        const menu_h: i32 = @intCast(MENU_HEIGHT);
+
+        if (px < menu_x or px >= menu_x + menu_w or
+            py < menu_y or py >= menu_y + menu_h)
+        {
+            self.selected = null;
+            return;
+        }
+
+        // Determine which item is hovered
+        const rel_y = py - menu_y - 2; // Subtract border
+        const item_h: i32 = @intCast(ITEM_HEIGHT);
+        if (rel_y >= 0 and rel_y < item_h) {
+            self.selected = .copy;
+        } else if (rel_y >= item_h and rel_y < item_h * 2) {
+            self.selected = .paste;
+        } else {
+            self.selected = null;
+        }
+    }
+
+    pub fn getLabels() [2][]const u8 {
+        return .{ " Copy  ", " Paste " };
+    }
+};
+
+var chord_menu = ChordMenu{};
+
 /// Terminal emulator configuration
 const Config = struct {
     cols: u32 = 80,
@@ -394,7 +459,26 @@ fn renderAndCommitWithBlink(allocator: std.mem.Allocator, rend: *renderer.Render
     defer rend.scr.cursor_visible = original_visible;
 
     log.debug("renderAndCommitWithBlink: calling rend.render()", .{});
-    const sdcs_data = try rend.render();
+
+    // Build menu overlay if chord menu is visible
+    const menu_overlay: ?renderer.Renderer.MenuOverlay = if (chord_menu.visible) blk: {
+        const labels = ChordMenu.getLabels();
+        const selected_idx: ?usize = if (chord_menu.selected) |sel| switch (sel) {
+            .copy => 0,
+            .paste => 1,
+        } else null;
+        break :blk .{
+            .x = chord_menu.x,
+            .y = chord_menu.y,
+            .width = ChordMenu.MENU_WIDTH,
+            .height = ChordMenu.MENU_HEIGHT,
+            .item_height = ChordMenu.ITEM_HEIGHT,
+            .labels = &labels,
+            .selected_idx = selected_idx,
+        };
+    } else null;
+
+    const sdcs_data = try rend.renderWithOverlay(menu_overlay);
     defer allocator.free(sdcs_data);
     log.debug("renderAndCommitWithBlink: render returned {} bytes, calling attachAndCommit", .{sdcs_data.len});
     try surface.attachAndCommit(sdcs_data);
@@ -775,31 +859,65 @@ fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connecti
             }
         }
 
-        // Plan 9 chording: Left+Middle = Snarf (copy to clipboard)
-        if (mouse_state.left_down and mouse_state.middle_down and event_type == .press and mouse.button == .middle) {
-            log.debug("chord: left+middle = snarf (copy)", .{});
-            mouse_state.chord_handled = true;
-            // Copy selection to CLIPBOARD (not just PRIMARY)
-            if (scr.selection.active) {
-                if (scr.getSelectedText(scr.allocator) catch null) |text| {
-                    conn.setClipboard(.clipboard, text) catch |err| {
-                        log.warn("chord snarf failed: {}", .{err});
-                    };
-                    scr.allocator.free(text);
-                }
+        // Show chord menu when left is held and another button is pressed
+        if (mouse_state.left_down and (mouse_state.middle_down or mouse_state.right_down)) {
+            if (event_type == .press and (mouse.button == .middle or mouse.button == .right)) {
+                // Show menu at mouse position
+                log.debug("showing chord menu at ({}, {})", .{ mouse.x, mouse.y });
+                chord_menu.show(mouse.x, mouse.y);
+                chord_menu.updateSelection(mouse.x, mouse.y);
+                mouse_state.chord_handled = true;
+                scr.dirty = true;
+                return;
             }
+        }
+
+        // Update menu selection on mouse motion while menu is visible
+        if (chord_menu.visible and event_type == .motion) {
+            chord_menu.updateSelection(mouse.x, mouse.y);
+            scr.dirty = true;
             return;
         }
 
-        // Plan 9 chording: Left+Right = Paste from clipboard
-        if (mouse_state.left_down and mouse_state.right_down and event_type == .press and mouse.button == .right) {
-            log.debug("chord: left+right = paste", .{});
-            mouse_state.chord_handled = true;
-            // Request paste from CLIPBOARD
-            conn.requestClipboard(.clipboard) catch |err| {
-                log.warn("chord paste request failed: {}", .{err});
-            };
-            return;
+        // Execute action when chord button is released while menu is visible
+        if (chord_menu.visible and event_type == .release) {
+            if (mouse.button == .middle or mouse.button == .right) {
+                // Execute the selected action
+                if (chord_menu.selected) |action| {
+                    switch (action) {
+                        .copy => {
+                            log.debug("menu action: copy", .{});
+                            if (scr.selection.active) {
+                                if (scr.getSelectedText(scr.allocator) catch null) |text| {
+                                    conn.setClipboard(.clipboard, text) catch |err| {
+                                        log.warn("chord snarf failed: {}", .{err});
+                                    };
+                                    scr.allocator.free(text);
+                                }
+                            }
+                        },
+                        .paste => {
+                            log.debug("menu action: paste", .{});
+                            conn.requestClipboard(.clipboard) catch |err| {
+                                log.warn("chord paste request failed: {}", .{err});
+                            };
+                        },
+                    }
+                }
+                // Hide menu after action
+                chord_menu.hide();
+                scr.dirty = true;
+                return;
+            }
+        }
+
+        // Hide menu and reset chord state when left button is released
+        if (event_type == .release and mouse.button == .left) {
+            if (chord_menu.visible) {
+                chord_menu.hide();
+                scr.dirty = true;
+            }
+            mouse_state.chord_handled = false;
         }
 
         // Middle-click alone = paste from PRIMARY selection (X11-style)
@@ -814,10 +932,14 @@ fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connecti
         // Reset chord state when all buttons are released
         if (!mouse_state.left_down and !mouse_state.middle_down and !mouse_state.right_down) {
             mouse_state.chord_handled = false;
+            if (chord_menu.visible) {
+                chord_menu.hide();
+                scr.dirty = true;
+            }
         }
 
-        // Skip normal handling if we just handled a chord
-        if (mouse_state.chord_handled) {
+        // Skip normal handling if we're in chord mode or menu is visible
+        if (mouse_state.chord_handled or chord_menu.visible) {
             return;
         }
 
