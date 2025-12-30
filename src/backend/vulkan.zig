@@ -5,11 +5,11 @@ const c = @cImport({
     @cDefine("VK_USE_PLATFORM_XLIB_KHR", "1");
     @cInclude("vulkan/vulkan.h");
     @cInclude("X11/Xlib.h");
+    @cInclude("X11/keysym.h");
 });
 
-// X11 keysym constants (from X11/keysymdef.h)
-const XK_q: c_ulong = 0x0071;
-const XK_Q: c_ulong = 0x0051;
+// X11 Atom type alias
+const Atom = c.Atom;
 
 const log = std.log.scoped(.vulkan_backend);
 
@@ -69,6 +69,29 @@ pub const VulkanBackend = struct {
     // CPU-side framebuffer for readback (getPixels)
     cpu_framebuffer: ?[]u8,
 
+    // Keyboard event queue
+    key_events: [backend.MAX_KEY_EVENTS]backend.KeyEvent,
+    key_event_count: usize,
+
+    // Mouse event queue
+    mouse_events: [backend.MAX_MOUSE_EVENTS]backend.MouseEvent,
+    mouse_event_count: usize,
+
+    // Modifier state tracking
+    modifier_state: u8,
+
+    // Clipboard support (X11 selections)
+    atom_clipboard: Atom,
+    atom_primary: Atom,
+    atom_targets: Atom,
+    atom_utf8_string: Atom,
+    atom_string: Atom,
+    atom_atom: Atom,
+    clipboard_data: ?[]u8,
+    primary_data: ?[]u8,
+    clipboard_request_pending: bool,
+    clipboard_request_selection: u8,
+
     const Self = @This();
 
     // Maximum vertices for dynamic geometry
@@ -118,6 +141,23 @@ pub const VulkanBackend = struct {
             .frame_count = 0,
             .closed = false,
             .cpu_framebuffer = null,
+            // Input event queues
+            .key_events = undefined,
+            .key_event_count = 0,
+            .mouse_events = undefined,
+            .mouse_event_count = 0,
+            .modifier_state = 0,
+            // Clipboard atoms (initialized after display open)
+            .atom_clipboard = 0,
+            .atom_primary = 0,
+            .atom_targets = 0,
+            .atom_utf8_string = 0,
+            .atom_string = 0,
+            .atom_atom = 0,
+            .clipboard_data = null,
+            .primary_data = null,
+            .clipboard_request_pending = false,
+            .clipboard_request_selection = 0,
         };
 
         // Create Vulkan instance
@@ -194,6 +234,14 @@ pub const VulkanBackend = struct {
 
         if (self.cpu_framebuffer) |fb| {
             self.allocator.free(fb);
+        }
+
+        // Free clipboard data
+        if (self.clipboard_data) |data| {
+            self.allocator.free(data);
+        }
+        if (self.primary_data) |data| {
+            self.allocator.free(data);
         }
 
         self.allocator.destroy(self);
@@ -274,8 +322,16 @@ pub const VulkanBackend = struct {
         self.height = height;
         self.owns_window = true;
 
-        // Select input events
-        _ = c.XSelectInput(self.display, self.window, c.KeyPressMask | c.StructureNotifyMask);
+        // Initialize clipboard atoms
+        self.atom_clipboard = c.XInternAtom(self.display, "CLIPBOARD", c.False);
+        self.atom_primary = c.XInternAtom(self.display, "PRIMARY", c.False);
+        self.atom_targets = c.XInternAtom(self.display, "TARGETS", c.False);
+        self.atom_utf8_string = c.XInternAtom(self.display, "UTF8_STRING", c.False);
+        self.atom_string = c.XInternAtom(self.display, "STRING", c.False);
+        self.atom_atom = c.XInternAtom(self.display, "ATOM", c.False);
+
+        // Select input events (keyboard, mouse, and window events)
+        _ = c.XSelectInput(self.display, self.window, c.ExposureMask | c.KeyPressMask | c.KeyReleaseMask | c.StructureNotifyMask | c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask);
     }
 
     fn destroyWindow(self: *Self) void {
@@ -1062,19 +1118,114 @@ pub const VulkanBackend = struct {
     fn processEvents(self: *Self) bool {
         if (self.display == null) return !self.closed;
 
+        // Clear event queues for this poll cycle
+        self.key_event_count = 0;
+        self.mouse_event_count = 0;
+
         while (c.XPending(self.display) > 0) {
             var event: c.XEvent = undefined;
             _ = c.XNextEvent(self.display, &event);
 
             switch (event.type) {
-                c.KeyPress => {
+                c.KeyPress, c.KeyRelease => {
                     const key_event = event.xkey;
+                    const pressed = (event.type == c.KeyPress);
+
+                    // Update modifier state
+                    self.modifier_state = 0;
+                    if (key_event.state & c.ShiftMask != 0) self.modifier_state |= 0x01;
+                    if (key_event.state & c.Mod1Mask != 0) self.modifier_state |= 0x02; // Alt
+                    if (key_event.state & c.ControlMask != 0) self.modifier_state |= 0x04;
+                    if (key_event.state & c.Mod4Mask != 0) self.modifier_state |= 0x08; // Meta/Super
+
+                    // Convert X11 keycode to evdev keycode (X11 = evdev + 8)
+                    const evdev_code: u32 = if (key_event.keycode >= 8) key_event.keycode - 8 else 0;
+
+                    // Check for Ctrl+Q to quit
                     const keysym = c.XLookupKeysym(@constCast(&key_event), 0);
-                    const ctrl_held = (key_event.state & c.ControlMask) != 0;
-                    if (ctrl_held and (keysym == XK_q or keysym == XK_Q)) {
+                    if (pressed and (self.modifier_state & 0x04) != 0 and (keysym == c.XK_q or keysym == c.XK_Q)) {
                         log.info("Ctrl+Q pressed, closing window", .{});
                         self.closed = true;
                         return false;
+                    }
+
+                    // Queue the key event for clients
+                    if (self.key_event_count < backend.MAX_KEY_EVENTS) {
+                        self.key_events[self.key_event_count] = .{
+                            .key_code = evdev_code,
+                            .modifiers = self.modifier_state,
+                            .pressed = pressed,
+                        };
+                        self.key_event_count += 1;
+                    }
+                },
+                c.ButtonPress, c.ButtonRelease => {
+                    const btn_event = event.xbutton;
+                    const pressed = (event.type == c.ButtonPress);
+
+                    // Update modifier state from button event
+                    self.modifier_state = 0;
+                    if (btn_event.state & c.ShiftMask != 0) self.modifier_state |= 0x01;
+                    if (btn_event.state & c.Mod1Mask != 0) self.modifier_state |= 0x02;
+                    if (btn_event.state & c.ControlMask != 0) self.modifier_state |= 0x04;
+                    if (btn_event.state & c.Mod4Mask != 0) self.modifier_state |= 0x08;
+
+                    // Convert X11 button to our MouseButton enum
+                    const button: backend.MouseButton = switch (btn_event.button) {
+                        1 => .left,
+                        2 => .middle,
+                        3 => .right,
+                        4 => .scroll_up,
+                        5 => .scroll_down,
+                        6 => .scroll_left,
+                        7 => .scroll_right,
+                        8 => .button4,
+                        9 => .button5,
+                        else => .left,
+                    };
+
+                    // Queue the mouse event
+                    if (self.mouse_event_count < backend.MAX_MOUSE_EVENTS) {
+                        self.mouse_events[self.mouse_event_count] = .{
+                            .x = @intCast(btn_event.x),
+                            .y = @intCast(btn_event.y),
+                            .button = button,
+                            .event_type = if (pressed) .press else .release,
+                            .modifiers = self.modifier_state,
+                        };
+                        self.mouse_event_count += 1;
+                    }
+                },
+                c.MotionNotify => {
+                    const motion_event = event.xmotion;
+
+                    // Update modifier state from motion event
+                    self.modifier_state = 0;
+                    if (motion_event.state & c.ShiftMask != 0) self.modifier_state |= 0x01;
+                    if (motion_event.state & c.Mod1Mask != 0) self.modifier_state |= 0x02;
+                    if (motion_event.state & c.ControlMask != 0) self.modifier_state |= 0x04;
+                    if (motion_event.state & c.Mod4Mask != 0) self.modifier_state |= 0x08;
+
+                    // Determine which button is pressed during motion
+                    const button: backend.MouseButton = if (motion_event.state & c.Button1Mask != 0)
+                        .left
+                    else if (motion_event.state & c.Button2Mask != 0)
+                        .middle
+                    else if (motion_event.state & c.Button3Mask != 0)
+                        .right
+                    else
+                        .left;
+
+                    // Queue the motion event
+                    if (self.mouse_event_count < backend.MAX_MOUSE_EVENTS) {
+                        self.mouse_events[self.mouse_event_count] = .{
+                            .x = @intCast(motion_event.x),
+                            .y = @intCast(motion_event.y),
+                            .button = button,
+                            .event_type = .motion,
+                            .modifiers = self.modifier_state,
+                        };
+                        self.mouse_event_count += 1;
                     }
                 },
                 c.ConfigureNotify => {
@@ -1082,15 +1233,228 @@ pub const VulkanBackend = struct {
                     if (@as(u32, @intCast(config.width)) != self.width or
                         @as(u32, @intCast(config.height)) != self.height)
                     {
-                        // Would need to handle resize
                         log.info("window resized: {}x{}", .{ config.width, config.height });
                     }
+                },
+                c.SelectionRequest => {
+                    self.handleSelectionRequest(&event.xselectionrequest);
+                },
+                c.SelectionNotify => {
+                    self.handleSelectionNotify(&event.xselection);
                 },
                 else => {},
             }
         }
 
         return !self.closed;
+    }
+
+    // ========================================================================
+    // Clipboard support (X11 selections)
+    // ========================================================================
+
+    fn handleSelectionRequest(self: *Self, req: *c.XSelectionRequestEvent) void {
+        var notify: c.XSelectionEvent = undefined;
+        notify.type = c.SelectionNotify;
+        notify.display = req.display;
+        notify.requestor = req.requestor;
+        notify.selection = req.selection;
+        notify.target = req.target;
+        notify.property = req.property;
+        notify.time = req.time;
+
+        // Get the data for the requested selection
+        const data = if (req.selection == self.atom_clipboard)
+            self.clipboard_data
+        else if (req.selection == self.atom_primary)
+            self.primary_data
+        else
+            null;
+
+        if (data) |content| {
+            if (req.target == self.atom_targets) {
+                // Return supported targets
+                var targets = [_]Atom{ self.atom_targets, self.atom_utf8_string, self.atom_string };
+                _ = c.XChangeProperty(
+                    self.display,
+                    req.requestor,
+                    req.property,
+                    self.atom_atom,
+                    32,
+                    c.PropModeReplace,
+                    @ptrCast(&targets),
+                    3,
+                );
+            } else if (req.target == self.atom_utf8_string or req.target == self.atom_string) {
+                // Return the text content
+                _ = c.XChangeProperty(
+                    self.display,
+                    req.requestor,
+                    req.property,
+                    req.target,
+                    8,
+                    c.PropModeReplace,
+                    content.ptr,
+                    @intCast(content.len),
+                );
+            } else {
+                // Unsupported target
+                notify.property = c.None;
+            }
+        } else {
+            // No data available
+            notify.property = c.None;
+        }
+
+        // Send the notification
+        _ = c.XSendEvent(self.display, req.requestor, c.False, 0, @ptrCast(&notify));
+        _ = c.XFlush(self.display);
+    }
+
+    fn handleSelectionNotify(self: *Self, notify: *c.XSelectionEvent) void {
+        if (notify.property == c.None) {
+            self.clipboard_request_pending = false;
+            return;
+        }
+
+        // Read the selection data
+        var actual_type: Atom = undefined;
+        var actual_format: c_int = undefined;
+        var nitems: c_ulong = undefined;
+        var bytes_after: c_ulong = undefined;
+        var prop_data: [*c]u8 = undefined;
+
+        const result = c.XGetWindowProperty(
+            self.display,
+            self.window,
+            notify.property,
+            0,
+            1024 * 1024, // Max 1MB
+            c.True, // Delete after reading
+            c.AnyPropertyType,
+            &actual_type,
+            &actual_format,
+            &nitems,
+            &bytes_after,
+            &prop_data,
+        );
+
+        if (result == c.Success and prop_data != null and nitems > 0) {
+            const len: usize = @intCast(nitems);
+            const text = prop_data[0..len];
+
+            // Store the clipboard data
+            if (notify.selection == self.atom_clipboard) {
+                if (self.clipboard_data) |old| {
+                    self.allocator.free(old);
+                }
+                self.clipboard_data = self.allocator.dupe(u8, text) catch null;
+            } else if (notify.selection == self.atom_primary) {
+                if (self.primary_data) |old| {
+                    self.allocator.free(old);
+                }
+                self.primary_data = self.allocator.dupe(u8, text) catch null;
+            }
+
+            _ = c.XFree(prop_data);
+        }
+
+        self.clipboard_request_pending = false;
+    }
+
+    /// Set clipboard content (selection: 0=CLIPBOARD, 1=PRIMARY)
+    pub fn setClipboard(self: *Self, selection: u8, text: []const u8) !void {
+        if (self.display == null) return error.NotInitialized;
+
+        const atom = if (selection == 0) self.atom_clipboard else self.atom_primary;
+
+        // Store the data
+        if (selection == 0) {
+            if (self.clipboard_data) |old| {
+                self.allocator.free(old);
+            }
+            self.clipboard_data = try self.allocator.dupe(u8, text);
+        } else {
+            if (self.primary_data) |old| {
+                self.allocator.free(old);
+            }
+            self.primary_data = try self.allocator.dupe(u8, text);
+        }
+
+        // Take ownership of the selection
+        _ = c.XSetSelectionOwner(self.display, atom, self.window, c.CurrentTime);
+        _ = c.XFlush(self.display);
+
+        log.debug("clipboard set: selection={} len={}", .{ selection, text.len });
+    }
+
+    /// Request clipboard content (selection: 0=CLIPBOARD, 1=PRIMARY)
+    pub fn requestClipboard(self: *Self, selection: u8) void {
+        if (self.display == null) return;
+
+        const atom = if (selection == 0) self.atom_clipboard else self.atom_primary;
+        const property = c.XInternAtom(self.display, "SEMADRAW_CLIP", c.False);
+
+        self.clipboard_request_selection = selection;
+        self.clipboard_request_pending = true;
+
+        _ = c.XConvertSelection(
+            self.display,
+            atom,
+            self.atom_utf8_string,
+            property,
+            self.window,
+            c.CurrentTime,
+        );
+        _ = c.XFlush(self.display);
+    }
+
+    /// Get the most recently received clipboard data
+    pub fn getClipboardData(self: *Self, selection: u8) ?[]const u8 {
+        if (selection == 0) {
+            return self.clipboard_data;
+        } else {
+            return self.primary_data;
+        }
+    }
+
+    /// Check if a clipboard request is pending
+    pub fn isClipboardRequestPending(self: *Self) bool {
+        return self.clipboard_request_pending;
+    }
+
+    fn getKeyEventsImpl(ctx: *anyopaque) []const backend.KeyEvent {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        const count = self.key_event_count;
+        self.key_event_count = 0; // Clear the queue
+        return self.key_events[0..count];
+    }
+
+    fn getMouseEventsImpl(ctx: *anyopaque) []const backend.MouseEvent {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        const count = self.mouse_event_count;
+        self.mouse_event_count = 0; // Clear the queue
+        return self.mouse_events[0..count];
+    }
+
+    fn setClipboardImpl(ctx: *anyopaque, selection: u8, text: []const u8) anyerror!void {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        return self.setClipboard(selection, text);
+    }
+
+    fn requestClipboardImpl(ctx: *anyopaque, selection: u8) void {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        self.requestClipboard(selection);
+    }
+
+    fn getClipboardDataImpl(ctx: *anyopaque, selection: u8) ?[]const u8 {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        return self.getClipboardData(selection);
+    }
+
+    fn isClipboardPendingImpl(ctx: *anyopaque) bool {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        return self.isClipboardRequestPending();
     }
 
     pub const vtable = backend.Backend.VTable{
@@ -1100,6 +1464,12 @@ pub const VulkanBackend = struct {
         .getPixels = getPixelsImpl,
         .resize = resizeImpl,
         .pollEvents = pollEventsImpl,
+        .getKeyEvents = getKeyEventsImpl,
+        .getMouseEvents = getMouseEventsImpl,
+        .setClipboard = setClipboardImpl,
+        .requestClipboard = requestClipboardImpl,
+        .getClipboardData = getClipboardDataImpl,
+        .isClipboardPending = isClipboardPendingImpl,
         .deinit = deinitImpl,
     };
 
