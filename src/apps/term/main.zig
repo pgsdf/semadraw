@@ -298,6 +298,7 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
                         log.err("daemon error: {}", .{err.code});
                     },
                     .key_press => |key| {
+                        log.debug("received key_press: code={} pressed={}", .{ key.key_code, key.pressed });
                         // Only process key presses (not releases)
                         if (key.pressed == 1) {
                             handleKeyPress(&shell, &scr, key.key_code, key.modifiers);
@@ -570,6 +571,7 @@ fn handleKeyPress(shell: *pty.Pty, scr: *screen.Screen, key_code: u32, modifiers
     }
 
     if (len > 0) {
+        log.debug("writing to PTY: {} bytes", .{len});
         shell.write(buf[0..len]) catch |err| {
             log.warn("shell write failed: {}", .{err});
         };
