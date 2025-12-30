@@ -348,7 +348,14 @@ semadraw-term [OPTIONS]
 
 **Mouse:**
 - Left click and drag: Select text (highlighted with inverted colors)
-- Release: Copies selection to PRIMARY clipboard (middle-click to paste)
+- Left release: Copies selection to PRIMARY clipboard
+- Middle click: Paste from PRIMARY clipboard
+
+**Plan 9-style mouse chording:**
+- Left+Middle chord: Copy selection to system clipboard (snarf)
+- Left+Right chord: Paste from system clipboard
+
+To chord: hold down the left button, then click the second button while left is still held.
 
 ## semadraw-demo Reference
 

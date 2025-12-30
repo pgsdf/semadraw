@@ -13,6 +13,23 @@ pub const std_options = std.Options{
     .log_level = .debug,
 };
 
+/// Mouse button state for Plan 9-style chording
+const MouseState = struct {
+    left_down: bool = false,
+    middle_down: bool = false,
+    right_down: bool = false,
+    chord_handled: bool = false, // Prevent normal handling after chord
+
+    fn reset(self: *MouseState) void {
+        self.left_down = false;
+        self.middle_down = false;
+        self.right_down = false;
+        self.chord_handled = false;
+    }
+};
+
+var mouse_state = MouseState{};
+
 /// Terminal emulator configuration
 const Config = struct {
     cols: u32 = 80,
@@ -739,8 +756,72 @@ fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connecti
     // Check if mouse tracking is enabled
     const tracking = scr.getMouseTracking();
 
-    // Handle text selection when mouse tracking is disabled
+    // Handle Plan 9-style mouse chording and text selection when tracking is disabled
     if (tracking == .none) {
+        // Update button state tracking
+        if (event_type == .press) {
+            switch (mouse.button) {
+                .left => mouse_state.left_down = true,
+                .middle => mouse_state.middle_down = true,
+                .right => mouse_state.right_down = true,
+                else => {},
+            }
+        } else if (event_type == .release) {
+            switch (mouse.button) {
+                .left => mouse_state.left_down = false,
+                .middle => mouse_state.middle_down = false,
+                .right => mouse_state.right_down = false,
+                else => {},
+            }
+        }
+
+        // Plan 9 chording: Left+Middle = Snarf (copy to clipboard)
+        if (mouse_state.left_down and mouse_state.middle_down and event_type == .press and mouse.button == .middle) {
+            log.debug("chord: left+middle = snarf (copy)", .{});
+            mouse_state.chord_handled = true;
+            // Copy selection to CLIPBOARD (not just PRIMARY)
+            if (scr.selection.active) {
+                if (scr.getSelectedText(scr.allocator) catch null) |text| {
+                    conn.setClipboard(.clipboard, text) catch |err| {
+                        log.warn("chord snarf failed: {}", .{err});
+                    };
+                    scr.allocator.free(text);
+                }
+            }
+            return;
+        }
+
+        // Plan 9 chording: Left+Right = Paste from clipboard
+        if (mouse_state.left_down and mouse_state.right_down and event_type == .press and mouse.button == .right) {
+            log.debug("chord: left+right = paste", .{});
+            mouse_state.chord_handled = true;
+            // Request paste from CLIPBOARD
+            conn.requestClipboard(.clipboard) catch |err| {
+                log.warn("chord paste request failed: {}", .{err});
+            };
+            return;
+        }
+
+        // Middle-click alone = paste from PRIMARY selection (X11-style)
+        if (mouse.button == .middle and event_type == .press and !mouse_state.left_down and !mouse_state.right_down) {
+            log.debug("middle-click = paste from PRIMARY", .{});
+            conn.requestClipboard(.primary) catch |err| {
+                log.warn("primary paste request failed: {}", .{err});
+            };
+            return;
+        }
+
+        // Reset chord state when all buttons are released
+        if (!mouse_state.left_down and !mouse_state.middle_down and !mouse_state.right_down) {
+            mouse_state.chord_handled = false;
+        }
+
+        // Skip normal handling if we just handled a chord
+        if (mouse_state.chord_handled) {
+            return;
+        }
+
+        // Normal left-button selection handling
         if (mouse.button == .left) {
             if (event_type == .press) {
                 // Start selection
