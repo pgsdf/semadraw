@@ -19,12 +19,17 @@ const MouseState = struct {
     middle_down: bool = false,
     right_down: bool = false,
     chord_handled: bool = false, // Prevent normal handling after chord
+    // Track left press position to delay selection start (preserves selection for chords)
+    left_press_col: u32 = 0,
+    left_press_row: u32 = 0,
+    drag_started: bool = false, // True once user starts dragging (not just clicking)
 
     fn reset(self: *MouseState) void {
         self.left_down = false;
         self.middle_down = false;
         self.right_down = false;
         self.chord_handled = false;
+        self.drag_started = false;
     }
 };
 
@@ -989,24 +994,36 @@ fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connecti
         }
 
         // Normal left-button selection handling
+        // We delay selection start until drag to preserve existing selection for chords
         if (mouse.button == .left) {
             if (event_type == .press) {
-                // Start selection
-                scr.startSelection(col, row);
-            } else if (event_type == .motion and scr.selection.selecting) {
-                // Update selection while dragging
+                // Don't start selection immediately - save position for potential drag
+                // This preserves existing selection in case user is initiating a chord
+                mouse_state.left_press_col = col;
+                mouse_state.left_press_row = row;
+                mouse_state.drag_started = false;
+            } else if (event_type == .motion and mouse_state.left_down) {
+                // User is dragging - now we can start/update selection
+                if (!mouse_state.drag_started) {
+                    // First motion after press - start selection from press position
+                    scr.startSelection(mouse_state.left_press_col, mouse_state.left_press_row);
+                    mouse_state.drag_started = true;
+                }
                 scr.updateSelection(col, row);
             } else if (event_type == .release) {
                 // End selection and copy to PRIMARY clipboard
-                scr.endSelection();
-                if (scr.selection.active) {
-                    if (scr.getSelectedText(scr.allocator) catch null) |text| {
-                        conn.setClipboard(.primary, text) catch |err| {
-                            log.warn("failed to set primary clipboard: {}", .{err});
-                        };
-                        scr.allocator.free(text);
+                if (mouse_state.drag_started) {
+                    scr.endSelection();
+                    if (scr.selection.active) {
+                        if (scr.getSelectedText(scr.allocator) catch null) |text| {
+                            conn.setClipboard(.primary, text) catch |err| {
+                                log.warn("failed to set primary clipboard: {}", .{err});
+                            };
+                            scr.allocator.free(text);
+                        }
                     }
                 }
+                mouse_state.drag_started = false;
             }
         }
         return;
