@@ -110,16 +110,14 @@ Notes:
 
 #### Medium Priority
 
-* **Vulkan Console Backend**
+* **Input Abstraction Layer**
+  - Factor out common evdev handling from KMS backend into reusable module
+  - Will be reused by Vulkan console backend
+  - Would enable future DirectFB or fbdev backends
+
+* **Vulkan Console Backend** (depends on Input Abstraction Layer)
   - GPU-accelerated rendering directly to DRM/KMS (no X11/Wayland)
   - Use VK_KHR_display extension for direct display output
-  - Reuse evdev input handling from KMS backend
+  - Reuse evdev input module for keyboard/mouse
   - Would provide GPU acceleration for console/TTY environments
-
-#### Low Priority
-
-* **Input Abstraction Layer**
-  - Consider factoring out common evdev handling from KMS backend
-  - Could be reused by Vulkan console backend
-  - Would enable future DirectFB or fbdev backends
 
