@@ -211,7 +211,10 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
 
     // Main event loop
     var running = true;
+    var loop_count: u64 = 0;
     while (running) {
+        loop_count += 1;
+
         // Poll for events
         var poll_fds = [_]posix.pollfd{
             .{ .fd = shell.getFd(), .events = posix.POLL.IN, .revents = 0 },
@@ -219,6 +222,15 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
         };
 
         const n = posix.poll(&poll_fds, 16) catch continue; // 16ms timeout for ~60fps
+
+        // Log poll results periodically or when there's activity
+        if (n > 0 or loop_count % 100 == 0) {
+            log.debug("loop {}: poll returned {}, revents[0]=0x{x} revents[1]=0x{x}", .{
+                loop_count, n,
+                @as(u16, @bitCast(poll_fds[0].revents)),
+                @as(u16, @bitCast(poll_fds[1].revents))
+            });
+        }
 
         // Check cursor blink timing
         const current_time = std.time.milliTimestamp();
