@@ -354,6 +354,7 @@ semadraw-term [OPTIONS]
 **Plan 9-style mouse chording with menus:**
 - Hold left button, then press middle or right to show a chord menu
 - Move mouse to highlight an option, release left to execute
+- Text selection is preserved when initiating a chord (small movements ignored)
 
 **Left + Middle chord** (Edit menu):
 - Copy: Copy selection to system clipboard
@@ -362,6 +363,13 @@ semadraw-term [OPTIONS]
 **Left + Right chord** (Paste menu):
 - Paste: Paste from system clipboard
 - Paste Primary: Paste from X11 PRIMARY selection
+
+**Chord workflow example:**
+1. Select text by dragging with left button
+2. Release left button (selection stays highlighted)
+3. Press and hold left button again
+4. Press middle button to show Edit menu
+5. Move to highlight "Copy", release left to copy
 
 The menu stays open while left button is held, allowing easy selection.
 
