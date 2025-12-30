@@ -90,36 +90,33 @@ Each feature is implemented end to end (encoder, SDCS, replay, tests, docs) befo
 
 Current implementation status for input and clipboard across backends:
 
-| Feature           | X11 | Wayland | KMS/DRM | Vulkan | Software |
-|-------------------|-----|---------|---------|--------|----------|
-| Keyboard Input    | ✓   | ✓       | ✓       | ✓      | N/A      |
-| Mouse Input       | ✓   | ✓       | ✓       | ✓      | N/A      |
-| Clipboard Set     | ✓   | ✓**     | ✓*      | ✓      | N/A      |
-| Clipboard Get     | ✓   | ✓**     | ✓*      | ✓      | N/A      |
-| Clipboard Pending | ✓   | ✓**     | ✓*      | ✓      | N/A      |
+| Feature           | X11 | Wayland | KMS/DRM | Vulkan | Vulkan Console | Software |
+|-------------------|-----|---------|---------|--------|----------------|----------|
+| Keyboard Input    | ✓   | ✓       | ✓       | ✓      | ✓              | N/A      |
+| Mouse Input       | ✓   | ✓       | ✓       | ✓      | ✓              | N/A      |
+| Clipboard Set     | ✓   | ✓**     | ✓*      | ✓      | ✓*             | N/A      |
+| Clipboard Get     | ✓   | ✓**     | ✓*      | ✓      | ✓*             | N/A      |
+| Clipboard Pending | ✓   | ✓**     | ✓*      | ✓      | ✓*             | N/A      |
 
 Notes:
 - Software backend is headless (no display) - input not applicable
 - Vulkan uses X11 window for presentation with full X11 input/clipboard support
-- KMS/DRM uses file-based clipboard (/tmp/.semadraw-clipboard, /tmp/.semadraw-primary)
+- Vulkan Console uses VK_KHR_display for direct display output with evdev for input
+- KMS/DRM and Vulkan Console use file-based clipboard (/tmp/.semadraw-clipboard, /tmp/.semadraw-primary)
   - *Works within semadraw sessions, not shared with other applications
 - **Wayland clipboard uses wl_data_device protocol (CLIPBOARD only, no PRIMARY selection)
   - PRIMARY selection requires zwp_primary_selection_device_manager_v1 extension
 
-### Backend Feature Gaps (To Be Implemented)
-
-#### Medium Priority
-
-* **Vulkan Console Backend**
-  - GPU-accelerated rendering directly to DRM/KMS (no X11/Wayland)
-  - Use VK_KHR_display extension for direct display output
-  - Reuse evdev input module for keyboard/mouse
-  - Would provide GPU acceleration for console/TTY environments
-
 ### Recently Completed
+
+* **Vulkan Console Backend** ✓
+  - GPU-accelerated rendering directly to DRM/KMS (no X11/Wayland)
+  - Uses VK_KHR_display extension for direct display output
+  - Reuses evdev input module for keyboard/mouse
+  - Provides GPU acceleration for console/TTY environments
 
 * **Input Abstraction Layer** ✓
   - Factored evdev handling into reusable module (src/backend/evdev.zig)
   - KMS backend updated to use the evdev module
-  - Ready for Vulkan console backend to reuse
+  - Vulkan console backend reuses the evdev module
 
