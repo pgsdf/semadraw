@@ -463,17 +463,20 @@ fn renderAndCommitWithBlink(allocator: std.mem.Allocator, rend: *renderer.Render
     log.debug("renderAndCommitWithBlink: calling rend.render()", .{});
 
     // Build menu overlay if chord menu is visible
-    const menu_overlay: ?renderer.Renderer.MenuOverlay = if (chord_menu.visible) .{
-        .x = chord_menu.x,
-        .y = chord_menu.y,
-        .width = ChordMenu.MENU_WIDTH,
-        .height = ChordMenu.MENU_HEIGHT,
-        .item_height = ChordMenu.ITEM_HEIGHT,
-        .labels = &ChordMenu.LABELS,
-        .selected_idx = if (chord_menu.selected) |sel| switch (sel) {
-            .copy => 0,
-            .paste => 1,
-        } else null,
+    const menu_overlay: ?renderer.Renderer.MenuOverlay = if (chord_menu.visible) blk: {
+        log.info("rendering with chord menu at ({}, {})", .{ chord_menu.x, chord_menu.y });
+        break :blk .{
+            .x = chord_menu.x,
+            .y = chord_menu.y,
+            .width = ChordMenu.MENU_WIDTH,
+            .height = ChordMenu.MENU_HEIGHT,
+            .item_height = ChordMenu.ITEM_HEIGHT,
+            .labels = ChordMenu.LABELS[0..], // Explicit slice
+            .selected_idx = if (chord_menu.selected) |sel| switch (sel) {
+                .copy => 0,
+                .paste => 1,
+            } else null,
+        };
     } else null;
 
     const sdcs_data = try rend.renderWithOverlay(menu_overlay);
@@ -829,6 +832,14 @@ fn handleKeyPress(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connection
 fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connection, mouse: client.protocol.MouseEventMsg) void {
     const event_type = mouse.event_type;
 
+    // Debug: log all mouse events
+    log.debug("mouse event: button={} type={} pos=({},{})", .{
+        @intFromEnum(mouse.button),
+        @intFromEnum(event_type),
+        mouse.x,
+        mouse.y,
+    });
+
     // Convert pixel coordinates to cell coordinates (0-based for selection)
     const cell_x = @divFloor(mouse.x, @as(i32, font.Font.GLYPH_WIDTH));
     const cell_y = @divFloor(mouse.y, @as(i32, font.Font.GLYPH_HEIGHT));
@@ -848,6 +859,11 @@ fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connecti
                 .right => mouse_state.right_down = true,
                 else => {},
             }
+            log.debug("button state after press: L={} M={} R={}", .{
+                mouse_state.left_down,
+                mouse_state.middle_down,
+                mouse_state.right_down,
+            });
         } else if (event_type == .release) {
             switch (mouse.button) {
                 .left => mouse_state.left_down = false,
@@ -858,16 +874,17 @@ fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connecti
         }
 
         // Show chord menu when left is held and another button is pressed
-        if (mouse_state.left_down and (mouse_state.middle_down or mouse_state.right_down)) {
-            if (event_type == .press and (mouse.button == .middle or mouse.button == .right)) {
-                // Show menu at mouse position
-                log.debug("showing chord menu at ({}, {})", .{ mouse.x, mouse.y });
-                chord_menu.show(mouse.x, mouse.y);
-                chord_menu.updateSelection(mouse.x, mouse.y);
-                mouse_state.chord_handled = true;
-                scr.dirty = true;
-                return;
-            }
+        const chord_condition = mouse_state.left_down and (mouse_state.middle_down or mouse_state.right_down);
+        const is_chord_press = event_type == .press and (mouse.button == .middle or mouse.button == .right);
+        if (chord_condition and is_chord_press) {
+            // Show menu at mouse position
+            log.info("CHORD DETECTED: showing menu at ({}, {})", .{ mouse.x, mouse.y });
+            chord_menu.show(mouse.x, mouse.y);
+            chord_menu.updateSelection(mouse.x, mouse.y);
+            mouse_state.chord_handled = true;
+            scr.dirty = true;
+            log.info("menu visible={} dirty={}", .{ chord_menu.visible, scr.dirty });
+            return;
         }
 
         // Update menu selection on mouse motion while menu is visible
