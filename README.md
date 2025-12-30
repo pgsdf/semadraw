@@ -338,11 +338,17 @@ semadraw-term [OPTIONS]
 - Cursor styles (block, underline, bar) with blink support
 - Box drawing characters (U+2500-U+257F)
 - Text decorations (bold, italic, underline, strikethrough)
+- Text selection with mouse (click and drag)
 
 **Keyboard shortcuts:**
+- Ctrl+Shift+C: Copy selection to system clipboard
 - Ctrl+Shift+V: Paste from system clipboard
 - Shift+PageUp: Scroll up in history
 - Shift+PageDown: Scroll down in history
+
+**Mouse:**
+- Left click and drag: Select text (highlighted with inverted colors)
+- Release: Copies selection to PRIMARY clipboard (middle-click to paste)
 
 ## semadraw-demo Reference
 
