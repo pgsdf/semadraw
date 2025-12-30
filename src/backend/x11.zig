@@ -253,6 +253,8 @@ pub const X11Backend = struct {
                     const key_event = event.xkey;
                     const pressed = (event.type == c.KeyPress);
 
+                    log.debug("X11 key event: keycode={} pressed={}", .{ key_event.keycode, pressed });
+
                     // Update modifier state
                     self.modifier_state = 0;
                     if (key_event.state & c.ShiftMask != 0) self.modifier_state |= 0x01;
