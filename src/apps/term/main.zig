@@ -278,9 +278,17 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
 
         // Check daemon events
         if (poll_fds[1].revents & posix.POLL.IN != 0) {
+            log.debug("daemon fd has data, polling for events", .{});
             while (true) {
-                const event = conn.poll() catch break;
-                if (event == null) break;
+                const event = conn.poll() catch |err| {
+                    log.debug("conn.poll error: {}", .{err});
+                    break;
+                };
+                if (event == null) {
+                    log.debug("conn.poll returned null, no more events", .{});
+                    break;
+                }
+                log.debug("received event from daemon", .{});
                 switch (event.?) {
                     .disconnected => {
                         log.info("daemon disconnected", .{});
