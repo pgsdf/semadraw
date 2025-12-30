@@ -470,6 +470,22 @@ pub fn build(b: *std.Build) void {
     // Add wayland import to backend module for createBackend
     backend_mod.addImport("wayland", wayland_backend_mod);
 
+    // Vulkan console backend module (VK_KHR_display for direct display output)
+    const vulkan_console_backend_mod = b.createModule(.{
+        .root_source_file = b.path("src/backend/vulkan_console.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "backend", .module = backend_mod },
+            .{ .name = "evdev", .module = evdev_mod },
+        },
+    });
+    vulkan_console_backend_mod.link_libc = true;
+    vulkan_console_backend_mod.linkSystemLibrary("vulkan", .{});
+
+    // Add vulkan_console import to backend module for createBackend
+    backend_mod.addImport("vulkan_console", vulkan_console_backend_mod);
+
     const backend_process_mod = b.createModule(.{
         .root_source_file = b.path("src/backend/process.zig"),
         .target = target,

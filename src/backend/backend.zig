@@ -252,7 +252,7 @@ pub const BackendType = enum(u8) {
     software = 0,
     /// Headless (no output, for testing)
     headless = 1,
-    /// Vulkan GPU renderer
+    /// Vulkan GPU renderer (X11 presentation)
     vulkan = 2,
     /// KMS/DRM direct output
     kms = 3,
@@ -260,6 +260,8 @@ pub const BackendType = enum(u8) {
     x11 = 4,
     /// Wayland windowed output
     wayland = 5,
+    /// Vulkan console backend (VK_KHR_display, no X11/Wayland)
+    vulkan_console = 6,
 };
 
 /// Create a backend of the specified type
@@ -289,6 +291,10 @@ pub fn createBackend(allocator: std.mem.Allocator, backend_type: BackendType) !B
         .wayland => {
             const wayland = @import("wayland");
             return wayland.create(allocator);
+        },
+        .vulkan_console => {
+            const vulkan_console = @import("vulkan_console");
+            return vulkan_console.create(allocator);
         },
     }
 }
