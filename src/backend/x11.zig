@@ -61,6 +61,7 @@ pub const X11Backend = struct {
     atom_targets: Atom,
     atom_utf8_string: Atom,
     atom_string: Atom,
+    atom_atom: Atom,
     clipboard_data: ?[]u8,
     primary_data: ?[]u8,
     // Pending clipboard request
@@ -103,6 +104,7 @@ pub const X11Backend = struct {
             .atom_targets = 0,
             .atom_utf8_string = 0,
             .atom_string = 0,
+            .atom_atom = 0,
             .clipboard_data = null,
             .primary_data = null,
             .clipboard_request_pending = false,
@@ -158,6 +160,7 @@ pub const X11Backend = struct {
         self.atom_targets = c.XInternAtom(self.display.?, "TARGETS", c.False);
         self.atom_utf8_string = c.XInternAtom(self.display.?, "UTF8_STRING", c.False);
         self.atom_string = c.XInternAtom(self.display.?, "STRING", c.False);
+        self.atom_atom = c.XInternAtom(self.display.?, "ATOM", c.False);
 
         // Select input events (keyboard, mouse, and window events)
         _ = c.XSelectInput(self.display.?, self.window, c.ExposureMask | c.KeyPressMask | c.KeyReleaseMask | c.StructureNotifyMask | c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask);
@@ -438,7 +441,7 @@ pub const X11Backend = struct {
                     self.display.?,
                     req.requestor,
                     req.property,
-                    c.XA_ATOM,
+                    self.atom_atom,
                     32,
                     c.PropModeReplace,
                     @ptrCast(&targets),
