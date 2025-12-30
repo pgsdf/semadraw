@@ -81,11 +81,14 @@ pub const ChordMenu = struct {
     pub fn updateSelectionScaled(self: *ChordMenu, px: i32, py: i32, cell_w: u32, cell_h: u32, scale: u32) void {
         if (!self.visible) return;
 
-        // Compute scaled menu dimensions
-        const item_h: i32 = @intCast(cell_h + 4 * scale);
-        const item_w: i32 = @intCast(cell_w * 14);
-        const menu_w: i32 = @intCast(item_w + 4 * scale);
-        const menu_h: i32 = @intCast(item_h * 2 + 4 * scale);
+        // Compute scaled menu dimensions (all in u32 first, then cast)
+        const item_h_u = cell_h + 4 * scale;
+        const item_w_u = cell_w * 14;
+        const menu_w_u = item_w_u + 4 * scale;
+        const menu_h_u = item_h_u * 2 + 4 * scale;
+        const item_h: i32 = @intCast(item_h_u);
+        const menu_w: i32 = @intCast(menu_w_u);
+        const menu_h: i32 = @intCast(menu_h_u);
         const border: i32 = @intCast(2 * scale);
 
         // Check if mouse is within menu bounds
