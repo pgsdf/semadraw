@@ -405,12 +405,25 @@ pub const Connection = struct {
         };
         header.serialize(&header_buf);
 
-        // Send header
-        _ = try posix.write(self.fd, &header_buf);
+        // Send header (small, should complete in one write)
+        try self.sendAll(&header_buf);
 
         // Send payload if any
         if (payload.len > 0) {
-            _ = try posix.write(self.fd, payload);
+            try self.sendAll(payload);
+        }
+    }
+
+    /// Write all bytes, handling partial writes
+    fn sendAll(self: *Self, data: []const u8) !void {
+        var sent: usize = 0;
+        while (sent < data.len) {
+            const n = posix.write(self.fd, data[sent..]) catch |err| {
+                if (err == error.WouldBlock) continue;
+                return err;
+            };
+            if (n == 0) return error.BrokenPipe;
+            sent += n;
         }
     }
 
