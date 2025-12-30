@@ -108,10 +108,18 @@ Notes:
 
 ### Backend Feature Gaps (To Be Implemented)
 
-#### Low Priority
+#### Medium Priority
 
-* **Input Abstraction Layer**
-  - Consider factoring out common evdev handling from KMS backend
-  - Could be reused by Vulkan when running without X11
-  - Would enable future DirectFB or fbdev backends
+* **Vulkan Console Backend**
+  - GPU-accelerated rendering directly to DRM/KMS (no X11/Wayland)
+  - Use VK_KHR_display extension for direct display output
+  - Reuse evdev input module for keyboard/mouse
+  - Would provide GPU acceleration for console/TTY environments
+
+### Recently Completed
+
+* **Input Abstraction Layer** ✓
+  - Factored evdev handling into reusable module (src/backend/evdev.zig)
+  - KMS backend updated to use the evdev module
+  - Ready for Vulkan console backend to reuse
 
