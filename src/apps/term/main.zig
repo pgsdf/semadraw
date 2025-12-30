@@ -358,9 +358,12 @@ fn renderAndCommitWithBlink(allocator: std.mem.Allocator, rend: *renderer.Render
     }
     defer rend.scr.cursor_visible = original_visible;
 
+    log.debug("renderAndCommitWithBlink: calling rend.render()", .{});
     const sdcs_data = try rend.render();
     defer allocator.free(sdcs_data);
+    log.debug("renderAndCommitWithBlink: render returned {} bytes, calling attachAndCommit", .{sdcs_data.len});
     try surface.attachAndCommit(sdcs_data);
+    log.debug("renderAndCommitWithBlink: attachAndCommit complete", .{});
 }
 
 fn handleKeyPress(shell: *pty.Pty, scr: *screen.Screen, key_code: u32, modifiers: u8) void {
