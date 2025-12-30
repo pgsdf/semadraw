@@ -270,3 +270,44 @@ pub fn renderWithOverlay(self: *Self, menu: ?MenuOverlay) ![]u8;
 ```
 
 The overlay is composited on top of the terminal content during rendering, allowing transient UI elements without modifying the screen buffer.
+
+## KMS Backend Input Support
+
+The DRM/KMS backend includes evdev input handling for keyboard and mouse when running on the console without X11/Wayland.
+
+### Evdev Device Discovery
+
+On initialization, the backend scans `/dev/input/event*` for input devices:
+
+```zig
+// Device types detected
+const InputDeviceType = enum {
+    keyboard,  // Has letter keys (KEY_Q, KEY_W, etc.)
+    mouse,     // Has relative motion and BTN_LEFT
+    unknown,
+};
+```
+
+### Mouse Position Tracking
+
+Since there's no window manager, the backend tracks mouse position internally:
+
+```zig
+// Mouse state maintained by backend
+mouse_x: i32,  // Clamped to [0, width-1]
+mouse_y: i32,  // Clamped to [0, height-1]
+mouse_buttons: u8,  // Bit flags for button state
+modifiers: u8,      // Shift/Alt/Ctrl/Meta state
+```
+
+### Event Queues
+
+Events are queued during `pollEvents()` and returned via `getKeyEvents()` and `getMouseEvents()`:
+
+- Motion events are batched (multiple REL_X/REL_Y combined into one motion event)
+- Button events are emitted immediately
+- Modifier key state is tracked for all events
+
+### Permissions
+
+The backend requires read access to `/dev/input/event*` devices. Users should be in the `input` group or run as root.

@@ -178,12 +178,19 @@ semadraw-term
 **Requirements:**
 - Linux kernel with DRM support
 - Access to `/dev/dri/card0` (usually requires root or `video` group)
+- Access to `/dev/input/event*` for keyboard and mouse (root or `input` group)
 - No active X11/Wayland session on the target display
+
+**Input Support:**
+- Keyboard and mouse input via evdev (`/dev/input/event*`)
+- Mouse chording and text selection work the same as X11/Wayland
+- Automatic detection of keyboard and mouse devices
 
 **Notes:**
 - The KMS backend takes exclusive control of the display
 - Use Ctrl+Alt+F1 to return to your previous console
 - For multi-monitor setups, the first available display is used
+- If input doesn't work, ensure user is in the `input` group: `sudo usermod -aG input $USER`
 
 ### X11 Use
 
