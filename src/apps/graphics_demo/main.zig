@@ -104,7 +104,12 @@ pub fn main() !void {
         }
 
         // ~30 FPS
-        std.time.sleep(33 * std.time.ns_per_ms);
+        const sleep_ns: u64 = 33 * std.time.ns_per_ms;
+        var ts = posix.timespec{
+            .sec = @intCast(sleep_ns / std.time.ns_per_s),
+            .nsec = @intCast(sleep_ns % std.time.ns_per_s),
+        };
+        _ = posix.nanosleep(&ts, null);
     }
 
     log.info("demo finished", .{});
