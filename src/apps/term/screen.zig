@@ -304,8 +304,8 @@ pub const Screen = struct {
         if (!self.selection.active) return null;
 
         const n = self.selection.normalized();
-        var result = std.ArrayList(u8).init(allocator);
-        errdefer result.deinit();
+        var result: std.ArrayList(u8) = .empty;
+        errdefer result.deinit(allocator);
 
         var row = n.start_row;
         while (row <= n.end_row) : (row += 1) {
@@ -331,16 +331,16 @@ pub const Screen = struct {
                 // Encode as UTF-8
                 var buf: [4]u8 = undefined;
                 const len = std.unicode.utf8Encode(char, &buf) catch 1;
-                try result.appendSlice(buf[0..len]);
+                try result.appendSlice(allocator, buf[0..len]);
             }
 
             // Add newline between rows (but not after last row)
             if (row < n.end_row) {
-                try result.append('\n');
+                try result.append(allocator, '\n');
             }
         }
 
-        return try result.toOwnedSlice();
+        return try result.toOwnedSlice(allocator);
     }
 
     // ========================================================================
