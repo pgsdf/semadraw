@@ -92,6 +92,15 @@ pub const VulkanBackend = struct {
     clipboard_request_pending: bool,
     clipboard_request_selection: u8,
 
+    // Staging buffer for framebuffer upload
+    staging_buffer: c.VkBuffer,
+    staging_buffer_memory: c.VkDeviceMemory,
+    staging_buffer_size: usize,
+
+    // Render offset for surface positioning
+    render_offset_x: i32,
+    render_offset_y: i32,
+
     const Self = @This();
 
     // Maximum vertices for dynamic geometry
@@ -158,6 +167,13 @@ pub const VulkanBackend = struct {
             .primary_data = null,
             .clipboard_request_pending = false,
             .clipboard_request_selection = 0,
+            // Staging buffer (initialized later)
+            .staging_buffer = null,
+            .staging_buffer_memory = null,
+            .staging_buffer_size = 0,
+            // Render offset
+            .render_offset_x = 0,
+            .render_offset_y = 0,
         };
 
         // Create Vulkan instance
@@ -234,6 +250,14 @@ pub const VulkanBackend = struct {
 
         if (self.cpu_framebuffer) |fb| {
             self.allocator.free(fb);
+        }
+
+        // Destroy staging buffer
+        if (self.staging_buffer != null) {
+            c.vkDestroyBuffer(self.device, self.staging_buffer, null);
+        }
+        if (self.staging_buffer_memory != null) {
+            c.vkFreeMemory(self.device, self.staging_buffer_memory, null);
         }
 
         // Free clipboard data
@@ -575,7 +599,7 @@ pub const VulkanBackend = struct {
             .imageColorSpace = surface_format.colorSpace,
             .imageExtent = extent,
             .imageArrayLayers = 1,
-            .imageUsage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            .imageUsage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | c.VK_IMAGE_USAGE_TRANSFER_DST_BIT,
             .imageSharingMode = c.VK_SHARING_MODE_EXCLUSIVE,
             .queueFamilyIndexCount = 0,
             .pQueueFamilyIndices = null,
@@ -980,6 +1004,270 @@ pub const VulkanBackend = struct {
         }
     }
 
+    // ========================================================================
+    // SDCS Rendering (CPU-based, uploaded to GPU)
+    // ========================================================================
+
+    fn ensureStagingBuffer(self: *Self, size: usize) !void {
+        if (self.staging_buffer_size >= size) return;
+
+        // Free old buffer
+        if (self.staging_buffer != null) {
+            c.vkDestroyBuffer(self.device, self.staging_buffer, null);
+        }
+        if (self.staging_buffer_memory != null) {
+            c.vkFreeMemory(self.device, self.staging_buffer_memory, null);
+        }
+
+        // Create new buffer
+        const buffer_info = c.VkBufferCreateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .pNext = null,
+            .flags = 0,
+            .size = size,
+            .usage = c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            .sharingMode = c.VK_SHARING_MODE_EXCLUSIVE,
+            .queueFamilyIndexCount = 0,
+            .pQueueFamilyIndices = null,
+        };
+
+        if (c.vkCreateBuffer(self.device, &buffer_info, null, &self.staging_buffer) != c.VK_SUCCESS) {
+            return error.StagingBufferCreationFailed;
+        }
+
+        var mem_requirements: c.VkMemoryRequirements = undefined;
+        c.vkGetBufferMemoryRequirements(self.device, self.staging_buffer, &mem_requirements);
+
+        const memory_type = try self.findMemoryType(
+            mem_requirements.memoryTypeBits,
+            c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        );
+
+        const alloc_info = c.VkMemoryAllocateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .pNext = null,
+            .allocationSize = mem_requirements.size,
+            .memoryTypeIndex = memory_type,
+        };
+
+        if (c.vkAllocateMemory(self.device, &alloc_info, null, &self.staging_buffer_memory) != c.VK_SUCCESS) {
+            return error.StagingMemoryAllocationFailed;
+        }
+
+        _ = c.vkBindBufferMemory(self.device, self.staging_buffer, self.staging_buffer_memory, 0);
+        self.staging_buffer_size = size;
+    }
+
+    fn executeSdcs(self: *Self, fb: []u8, data: []const u8) !void {
+        if (data.len < 64) return error.InvalidSdcs;
+
+        var offset: usize = 64; // Skip header
+
+        while (offset + 32 <= data.len) {
+            const chunk_payload_bytes = std.mem.readInt(u64, data[offset + 24 ..][0..8], .little);
+            offset += 32;
+
+            if (offset + chunk_payload_bytes > data.len) break;
+
+            const chunk_end = offset + @as(usize, @intCast(chunk_payload_bytes));
+            try self.executeChunkCommands(fb, data[offset..chunk_end]);
+
+            offset = chunk_end;
+            offset = std.mem.alignForward(usize, offset, 8);
+        }
+    }
+
+    fn executeChunkCommands(self: *Self, fb: []u8, commands: []const u8) !void {
+        var offset: usize = 0;
+
+        while (offset + 8 <= commands.len) {
+            const opcode = std.mem.readInt(u16, commands[offset..][0..2], .little);
+            const payload_len = std.mem.readInt(u32, commands[offset + 4 ..][0..4], .little);
+            offset += 8;
+
+            if (offset + payload_len > commands.len) break;
+
+            const payload = commands[offset..][0..payload_len];
+            try self.executeCommand(fb, opcode, payload);
+
+            offset += payload_len;
+            const record_bytes = 8 + payload_len;
+            const pad = (8 - (record_bytes % 8)) % 8;
+            offset += pad;
+
+            if (opcode == 0x00F0) break; // END
+        }
+    }
+
+    fn executeCommand(self: *Self, fb: []u8, opcode: u16, payload: []const u8) !void {
+        switch (opcode) {
+            0x0010 => { // FILL_RECT
+                if (payload.len >= 32) {
+                    const x = readF32(payload[0..4]);
+                    const y = readF32(payload[4..8]);
+                    const w = readF32(payload[8..12]);
+                    const h = readF32(payload[12..16]);
+                    const r = readF32(payload[16..20]);
+                    const g = readF32(payload[20..24]);
+                    const b_col = readF32(payload[24..28]);
+                    const a = readF32(payload[28..32]);
+                    self.fillRect(fb, x, y, w, h, r, g, b_col, a);
+                }
+            },
+            0x0030 => { // DRAW_GLYPH_RUN
+                if (payload.len >= 48) {
+                    self.drawGlyphRun(fb, payload);
+                }
+            },
+            else => {},
+        }
+    }
+
+    fn fillRect(self: *Self, fb: []u8, x: f32, y: f32, w: f32, h: f32, r: f32, g: f32, b_col: f32, a: f32) void {
+        const fb_w = self.width;
+        const fb_h = self.height;
+
+        const ox = x + @as(f32, @floatFromInt(self.render_offset_x));
+        const oy = y + @as(f32, @floatFromInt(self.render_offset_y));
+
+        const x0: i32 = @intFromFloat(@max(0, ox));
+        const y0: i32 = @intFromFloat(@max(0, oy));
+        const x1: i32 = @intFromFloat(@min(@as(f32, @floatFromInt(fb_w)), ox + w));
+        const y1: i32 = @intFromFloat(@min(@as(f32, @floatFromInt(fb_h)), oy + h));
+
+        if (x0 >= x1 or y0 >= y1) return;
+
+        const cb: u8 = clampU8(b_col);
+        const cg: u8 = clampU8(g);
+        const cr: u8 = clampU8(r);
+        const ca: u8 = clampU8(a);
+
+        var py: i32 = y0;
+        while (py < y1) : (py += 1) {
+            var px: i32 = x0;
+            while (px < x1) : (px += 1) {
+                const idx = (@as(usize, @intCast(py)) * @as(usize, fb_w) + @as(usize, @intCast(px))) * 4;
+                if (idx + 3 < fb.len) {
+                    if (ca == 255) {
+                        fb[idx + 0] = cb;
+                        fb[idx + 1] = cg;
+                        fb[idx + 2] = cr;
+                        fb[idx + 3] = ca;
+                    } else if (ca > 0) {
+                        const sa: f32 = @as(f32, @floatFromInt(ca)) / 255.0;
+                        const da: f32 = @as(f32, @floatFromInt(fb[idx + 3])) / 255.0;
+                        const out_a = sa + da * (1.0 - sa);
+                        if (out_a > 0) {
+                            fb[idx + 0] = blendChannel(cb, fb[idx + 0], sa, da, out_a);
+                            fb[idx + 1] = blendChannel(cg, fb[idx + 1], sa, da, out_a);
+                            fb[idx + 2] = blendChannel(cr, fb[idx + 2], sa, da, out_a);
+                            fb[idx + 3] = @intFromFloat(@min(255.0, out_a * 255.0));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn drawGlyphRun(self: *Self, fb: []u8, payload: []const u8) void {
+        const base_x = readF32(payload[0..4]);
+        const base_y = readF32(payload[4..8]);
+        const r = readF32(payload[8..12]);
+        const g = readF32(payload[12..16]);
+        const b_col = readF32(payload[16..20]);
+        const a = readF32(payload[20..24]);
+        const cell_width = std.mem.readInt(u32, payload[24..28], .little);
+        const cell_height = std.mem.readInt(u32, payload[28..32], .little);
+        const atlas_cols = std.mem.readInt(u32, payload[32..36], .little);
+        const atlas_width = std.mem.readInt(u32, payload[36..40], .little);
+        const atlas_height = std.mem.readInt(u32, payload[40..44], .little);
+        const glyph_count = std.mem.readInt(u32, payload[44..48], .little);
+
+        if (cell_width == 0 or cell_height == 0 or atlas_cols == 0) return;
+
+        const glyphs_offset: usize = 48;
+        const glyphs_size = glyph_count * 12;
+        const atlas_offset = glyphs_offset + glyphs_size;
+        const atlas_size = @as(usize, atlas_width) * @as(usize, atlas_height);
+
+        if (payload.len < atlas_offset + atlas_size) return;
+
+        const atlas_data = payload[atlas_offset..][0..atlas_size];
+        const cr: u8 = clampU8(r);
+        const cg: u8 = clampU8(g);
+        const cb: u8 = clampU8(b_col);
+
+        var i: u32 = 0;
+        while (i < glyph_count) : (i += 1) {
+            const glyph_off = glyphs_offset + i * 12;
+            if (glyph_off + 12 > payload.len) break;
+
+            const glyph_index = std.mem.readInt(u32, payload[glyph_off..][0..4], .little);
+            const x_offset = readF32(payload[glyph_off + 4 ..][0..4]);
+            const y_offset = readF32(payload[glyph_off + 8 ..][0..4]);
+
+            const atlas_col = glyph_index % atlas_cols;
+            const atlas_row = glyph_index / atlas_cols;
+            const atlas_x = atlas_col * cell_width;
+            const atlas_y = atlas_row * cell_height;
+
+            self.blitGlyph(fb, base_x + x_offset, base_y + y_offset, cell_width, cell_height, atlas_data, atlas_width, atlas_x, atlas_y, cr, cg, cb, a);
+        }
+    }
+
+    fn blitGlyph(self: *Self, fb: []u8, dst_x: f32, dst_y: f32, cell_w: u32, cell_h: u32, atlas: []const u8, atlas_w: u32, atlas_x: u32, atlas_y: u32, r: u8, g: u8, b: u8, base_alpha: f32) void {
+        const fb_w = self.width;
+        const fb_h = self.height;
+
+        const offset_dst_x = dst_x + @as(f32, @floatFromInt(self.render_offset_x));
+        const offset_dst_y = dst_y + @as(f32, @floatFromInt(self.render_offset_y));
+
+        var cy: u32 = 0;
+        while (cy < cell_h) : (cy += 1) {
+            var cx: u32 = 0;
+            while (cx < cell_w) : (cx += 1) {
+                const px: i32 = @as(i32, @intFromFloat(offset_dst_x)) + @as(i32, @intCast(cx));
+                const py: i32 = @as(i32, @intFromFloat(offset_dst_y)) + @as(i32, @intCast(cy));
+
+                if (px < 0 or py < 0) continue;
+                if (px >= @as(i32, @intCast(fb_w)) or py >= @as(i32, @intCast(fb_h))) continue;
+
+                const ax = atlas_x + cx;
+                const ay = atlas_y + cy;
+                if (ax >= atlas_w or ay * atlas_w + ax >= atlas.len) continue;
+
+                const atlas_alpha = atlas[ay * atlas_w + ax];
+                if (atlas_alpha == 0) continue;
+
+                const glyph_a: f32 = @as(f32, @floatFromInt(atlas_alpha)) / 255.0;
+                const final_a: f32 = glyph_a * base_alpha;
+                const ca: u8 = @intFromFloat(final_a * 255.0);
+
+                if (ca == 0) continue;
+
+                const fb_idx = (@as(usize, @intCast(py)) * @as(usize, fb_w) + @as(usize, @intCast(px))) * 4;
+                if (fb_idx + 3 >= fb.len) continue;
+
+                if (ca == 255) {
+                    fb[fb_idx + 0] = b;
+                    fb[fb_idx + 1] = g;
+                    fb[fb_idx + 2] = r;
+                    fb[fb_idx + 3] = 255;
+                } else {
+                    const sa: f32 = final_a;
+                    const da: f32 = @as(f32, @floatFromInt(fb[fb_idx + 3])) / 255.0;
+                    const out_a = sa + da * (1.0 - sa);
+                    if (out_a > 0) {
+                        fb[fb_idx + 0] = blendChannel(b, fb[fb_idx + 0], sa, da, out_a);
+                        fb[fb_idx + 1] = blendChannel(g, fb[fb_idx + 1], sa, da, out_a);
+                        fb[fb_idx + 2] = blendChannel(r, fb[fb_idx + 2], sa, da, out_a);
+                        fb[fb_idx + 3] = @intFromFloat(@min(255.0, out_a * 255.0));
+                    }
+                }
+            }
+        }
+    }
+
     fn renderImpl(ctx: *anyopaque, request: backend.RenderRequest) anyerror!backend.RenderResult {
         const self: *Self = @ptrCast(@alignCast(ctx));
         const start_time = std.time.nanoTimestamp();
@@ -988,6 +1276,46 @@ pub const VulkanBackend = struct {
         if (!self.processEvents()) {
             return backend.RenderResult.failure(request.surface_id, "window closed");
         }
+
+        // Get CPU framebuffer
+        const fb = self.cpu_framebuffer orelse {
+            return backend.RenderResult.failure(request.surface_id, "no framebuffer");
+        };
+
+        // Clear if requested (BGRA format)
+        if (request.clear_color) |color| {
+            const b: u8 = @intFromFloat(color[2] * 255.0);
+            const g: u8 = @intFromFloat(color[1] * 255.0);
+            const r: u8 = @intFromFloat(color[0] * 255.0);
+            const a: u8 = @intFromFloat(color[3] * 255.0);
+            var i: usize = 0;
+            while (i < fb.len) : (i += 4) {
+                fb[i + 0] = b;
+                fb[i + 1] = g;
+                fb[i + 2] = r;
+                fb[i + 3] = a;
+            }
+        }
+
+        // Set render offset for surface positioning
+        self.render_offset_x = request.offset_x;
+        self.render_offset_y = request.offset_y;
+
+        // Execute SDCS commands to CPU framebuffer
+        self.executeSdcs(fb, request.sdcs_data) catch |err| {
+            log.warn("SDCS execution failed: {}", .{err});
+        };
+
+        // Ensure staging buffer is large enough
+        try self.ensureStagingBuffer(fb.len);
+
+        // Copy CPU framebuffer to staging buffer
+        var data_ptr: ?*anyopaque = undefined;
+        if (c.vkMapMemory(self.device, self.staging_buffer_memory, 0, fb.len, 0, &data_ptr) != c.VK_SUCCESS) {
+            return backend.RenderResult.failure(request.surface_id, "failed to map staging buffer");
+        }
+        @memcpy(@as([*]u8, @ptrCast(data_ptr))[0..fb.len], fb);
+        c.vkUnmapMemory(self.device, self.staging_buffer_memory);
 
         // Wait for previous frame
         _ = c.vkWaitForFences(self.device, 1, &self.in_flight_fence, c.VK_TRUE, std.math.maxInt(u64));
@@ -1005,7 +1333,6 @@ pub const VulkanBackend = struct {
         );
 
         if (acquire_result == c.VK_ERROR_OUT_OF_DATE_KHR) {
-            // Would need to recreate swapchain
             return backend.RenderResult.failure(request.surface_id, "swapchain out of date");
         }
 
@@ -1021,38 +1348,86 @@ pub const VulkanBackend = struct {
         };
         _ = c.vkBeginCommandBuffer(cmd, &begin_info);
 
-        // Begin render pass
-        var clear_value: c.VkClearValue = undefined;
-        if (request.clear_color) |color| {
-            clear_value.color.float32 = color;
-        } else {
-            clear_value.color.float32 = .{ 0.0, 0.0, 0.0, 1.0 };
-        }
-
-        const render_pass_info = c.VkRenderPassBeginInfo{
-            .sType = c.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+        // Transition image to TRANSFER_DST_OPTIMAL
+        var barrier = c.VkImageMemoryBarrier{
+            .sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             .pNext = null,
-            .renderPass = self.render_pass,
-            .framebuffer = self.framebuffers[image_index],
-            .renderArea = .{
-                .offset = .{ .x = 0, .y = 0 },
-                .extent = self.swapchain_extent,
+            .srcAccessMask = 0,
+            .dstAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT,
+            .oldLayout = c.VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            .srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
+            .image = self.swapchain_images[image_index],
+            .subresourceRange = .{
+                .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
             },
-            .clearValueCount = 1,
-            .pClearValues = &clear_value,
         };
 
-        c.vkCmdBeginRenderPass(cmd, &render_pass_info, c.VK_SUBPASS_CONTENTS_INLINE);
+        c.vkCmdPipelineBarrier(
+            cmd,
+            c.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            c.VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0,
+            0,
+            null,
+            0,
+            null,
+            1,
+            &barrier,
+        );
 
-        // TODO: Parse SDCS commands and render geometry
-        // For now, just clear the screen
-        _ = request.sdcs_data;
+        // Copy staging buffer to swapchain image
+        const region = c.VkBufferImageCopy{
+            .bufferOffset = 0,
+            .bufferRowLength = self.width,
+            .bufferImageHeight = self.height,
+            .imageSubresource = .{
+                .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+                .mipLevel = 0,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            },
+            .imageOffset = .{ .x = 0, .y = 0, .z = 0 },
+            .imageExtent = .{ .width = self.width, .height = self.height, .depth = 1 },
+        };
 
-        c.vkCmdEndRenderPass(cmd);
+        c.vkCmdCopyBufferToImage(
+            cmd,
+            self.staging_buffer,
+            self.swapchain_images[image_index],
+            c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            1,
+            &region,
+        );
+
+        // Transition image to PRESENT_SRC_KHR
+        barrier.srcAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = 0;
+        barrier.oldLayout = c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+        c.vkCmdPipelineBarrier(
+            cmd,
+            c.VK_PIPELINE_STAGE_TRANSFER_BIT,
+            c.VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            0,
+            0,
+            null,
+            0,
+            null,
+            1,
+            &barrier,
+        );
+
         _ = c.vkEndCommandBuffer(cmd);
 
         // Submit
-        const wait_stages = [_]c.VkPipelineStageFlags{c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+        const wait_stages = [_]c.VkPipelineStageFlags{c.VK_PIPELINE_STAGE_TRANSFER_BIT};
         const submit_info = c.VkSubmitInfo{
             .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
             .pNext = null,
@@ -1485,4 +1860,27 @@ pub const VulkanBackend = struct {
 pub fn create(allocator: std.mem.Allocator) !backend.Backend {
     const vk = try VulkanBackend.init(allocator);
     return vk.toBackend();
+}
+
+// ============================================================================
+// Helper functions
+// ============================================================================
+
+fn clampU8(v: f32) u8 {
+    var x = v;
+    if (x < 0.0) x = 0.0;
+    if (x > 1.0) x = 1.0;
+    return @intFromFloat(@round(x * 255.0));
+}
+
+fn readF32(bytes: *const [4]u8) f32 {
+    const u = std.mem.readInt(u32, bytes, .little);
+    return @bitCast(u);
+}
+
+fn blendChannel(src: u8, dst: u8, sa: f32, da: f32, out_a: f32) u8 {
+    const s: f32 = @floatFromInt(src);
+    const d: f32 = @floatFromInt(dst);
+    const result = (s * sa + d * da * (1.0 - sa)) / out_a;
+    return @intFromFloat(@min(255.0, @max(0.0, result)));
 }
