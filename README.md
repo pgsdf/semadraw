@@ -351,11 +351,14 @@ semadraw-term [OPTIONS]
 - Left release: Copies selection to PRIMARY clipboard
 - Middle click: Paste from PRIMARY clipboard
 
-**Plan 9-style mouse chording:**
-- Left+Middle chord: Copy selection to system clipboard (snarf)
-- Left+Right chord: Paste from system clipboard
+**Plan 9-style mouse chording with menu:**
+- Hold left button, then press middle or right to show chord menu
+- Move mouse to highlight "Copy" or "Paste" option
+- Release the chord button to execute the highlighted action
+- Left+Middle: Copy selection to system clipboard (snarf)
+- Left+Right: Paste from system clipboard
 
-To chord: hold down the left button, then click the second button while left is still held.
+The chord menu appears at the mouse position with visual selection highlighting.
 
 ## semadraw-demo Reference
 
