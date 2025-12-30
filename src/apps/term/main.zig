@@ -394,12 +394,12 @@ fn handleKeyPress(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connection
             Key.C => {
                 // Copy selection to clipboard
                 if (scr.selection.active) {
-                    if (scr.getSelectedText(scr.allocator)) |text| {
+                    if (scr.getSelectedText(scr.allocator) catch null) |text| {
                         conn.setClipboard(.clipboard, text) catch |err| {
                             log.warn("clipboard copy failed: {}", .{err});
                         };
                         scr.allocator.free(text);
-                    } else |_| {}
+                    }
                 }
                 return;
             },
@@ -752,12 +752,12 @@ fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connecti
                 // End selection and copy to PRIMARY clipboard
                 scr.endSelection();
                 if (scr.selection.active) {
-                    if (scr.getSelectedText(scr.allocator)) |text| {
+                    if (scr.getSelectedText(scr.allocator) catch null) |text| {
                         conn.setClipboard(.primary, text) catch |err| {
                             log.warn("failed to set primary clipboard: {}", .{err});
                         };
                         scr.allocator.free(text);
-                    } else |_| {}
+                    }
                 }
             }
         }
