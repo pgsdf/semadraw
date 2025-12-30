@@ -10,7 +10,7 @@ const font = @import("font");
 const log = std.log.scoped(.semadraw_term);
 
 pub const std_options = std.Options{
-    .log_level = .info,
+    .log_level = .debug,
 };
 
 /// Terminal emulator configuration
