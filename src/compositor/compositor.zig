@@ -184,7 +184,7 @@ pub const Compositor = struct {
 
             log.debug("  surface {}: rendering {} bytes SDCS data", .{ surface.id, sdcs_data.?.len });
 
-            // Render surface
+            // Render surface at its position
             const result = try output.be.render(.{
                 .surface_id = surface.id,
                 .sdcs_data = sdcs_data.?,
@@ -194,6 +194,8 @@ pub const Compositor = struct {
                     .format = output.config.format,
                 },
                 .clear_color = if (surfaces_rendered == 0) clear_color else null,
+                .offset_x = @intFromFloat(surface.position_x),
+                .offset_y = @intFromFloat(surface.position_y),
             });
 
             if (result.error_msg == null) {

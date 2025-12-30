@@ -30,6 +30,7 @@ pub const MsgType = enum(u16) {
     commit = 0x0021,
     set_visible = 0x0030,
     set_z_order = 0x0031,
+    set_position = 0x0032,
     sync = 0x0040,
     disconnect = 0x00F0,
 
@@ -276,6 +277,31 @@ pub const SetZOrderMsg = extern struct {
         return .{
             .surface_id = std.mem.readInt(u32, buf[0..4], .little),
             .z_order = std.mem.readInt(i32, buf[4..8], .little),
+        };
+    }
+};
+
+/// Set position request
+pub const SetPositionMsg = extern struct {
+    surface_id: SurfaceId,
+    x: f32,
+    y: f32,
+
+    pub const SIZE: usize = 12;
+
+    pub fn serialize(self: SetPositionMsg, buf: []u8) void {
+        std.debug.assert(buf.len >= SIZE);
+        std.mem.writeInt(u32, buf[0..4], self.surface_id, .little);
+        std.mem.writeInt(u32, buf[4..8], @bitCast(self.x), .little);
+        std.mem.writeInt(u32, buf[8..12], @bitCast(self.y), .little);
+    }
+
+    pub fn deserialize(buf: []const u8) !SetPositionMsg {
+        if (buf.len < SIZE) return error.BufferTooSmall;
+        return .{
+            .surface_id = std.mem.readInt(u32, buf[0..4], .little),
+            .x = @bitCast(std.mem.readInt(u32, buf[4..8], .little)),
+            .y = @bitCast(std.mem.readInt(u32, buf[8..12], .little)),
         };
     }
 };

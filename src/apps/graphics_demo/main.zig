@@ -68,6 +68,8 @@ pub fn main() !void {
 
     // Set higher z-order so demo appears on top of other windows (like terminal)
     try surface.setZOrder(100);
+    // Position demo in the bottom-right area (offset from top-left)
+    try surface.setPosition(400, 300);
     try surface.setVisible(true);
 
     log.info("surface created, starting animation...", .{});

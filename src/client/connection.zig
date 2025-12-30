@@ -249,6 +249,20 @@ pub const Connection = struct {
         try self.sendMessage(.set_z_order, &payload);
     }
 
+    /// Set surface position (in pixels)
+    pub fn setPosition(self: *Self, surface_id: protocol.SurfaceId, x: f32, y: f32) !void {
+        if (self.state != .connected) return error.NotConnected;
+
+        const msg = protocol.SetPositionMsg{
+            .surface_id = surface_id,
+            .x = x,
+            .y = y,
+        };
+        var payload: [protocol.SetPositionMsg.SIZE]u8 = undefined;
+        msg.serialize(&payload);
+        try self.sendMessage(.set_position, &payload);
+    }
+
     /// Synchronization barrier - wait for all pending operations
     pub fn sync(self: *Self) !void {
         if (self.state != .connected) return error.NotConnected;

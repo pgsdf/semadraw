@@ -336,6 +336,7 @@ pub const Daemon = struct {
             .commit => try self.handleRemoteCommit(session, payload),
             .set_visible => try self.handleRemoteSetVisible(session, payload),
             .set_z_order => try self.handleRemoteSetZOrder(session, payload),
+            .set_position => try self.handleRemoteSetPosition(session, payload),
             .sync => try self.handleRemoteSync(session, payload),
             .disconnect => {
                 session.state = .disconnecting;
@@ -500,6 +501,25 @@ pub const Daemon = struct {
         };
     }
 
+    fn handleRemoteSetPosition(self: *Daemon, session: *RemoteSession, payload: ?[]u8) !void {
+        if (payload == null or payload.?.len < protocol.SetPositionMsg.SIZE) {
+            try self.sendRemoteError(session, .protocol_error, 0);
+            return;
+        }
+
+        const msg = try protocol.SetPositionMsg.deserialize(payload.?);
+
+        if (!self.surfaces.isOwner(msg.surface_id, session.id)) {
+            try self.sendRemoteError(session, .permission_denied, msg.surface_id);
+            return;
+        }
+
+        self.surfaces.setPosition(msg.surface_id, msg.x, msg.y) catch {
+            try self.sendRemoteError(session, .invalid_surface, msg.surface_id);
+            return;
+        };
+    }
+
     fn handleRemoteSync(_: *Daemon, session: *RemoteSession, payload: ?[]u8) !void {
         if (payload == null or payload.?.len < protocol.SyncMsg.SIZE) {
             return error.InvalidPayload;
@@ -602,6 +622,7 @@ pub const Daemon = struct {
             .commit => try self.handleCommit(session, payload),
             .set_visible => try self.handleSetVisible(session, payload),
             .set_z_order => try self.handleSetZOrder(session, payload),
+            .set_position => try self.handleSetPosition(session, payload),
             .sync => try self.handleSync(session, payload),
             .disconnect => {
                 session.state = .disconnecting;
@@ -788,6 +809,27 @@ pub const Daemon = struct {
             return;
         };
         log.debug("client {} set surface {} z_order={}", .{ session.id, msg.surface_id, msg.z_order });
+    }
+
+    fn handleSetPosition(self: *Daemon, session: *client_session.ClientSession, payload: ?[]u8) !void {
+        if (payload == null or payload.?.len < protocol.SetPositionMsg.SIZE) {
+            try session.sendError(.protocol_error, 0);
+            return;
+        }
+
+        const msg = try protocol.SetPositionMsg.deserialize(payload.?);
+
+        // Verify ownership via registry
+        if (!self.surfaces.isOwner(msg.surface_id, session.id)) {
+            try session.sendError(.permission_denied, msg.surface_id);
+            return;
+        }
+
+        self.surfaces.setPosition(msg.surface_id, msg.x, msg.y) catch {
+            try session.sendError(.invalid_surface, msg.surface_id);
+            return;
+        };
+        log.debug("client {} set surface {} position=({}, {})", .{ session.id, msg.surface_id, msg.x, msg.y });
     }
 
     fn handleSync(self: *Daemon, session: *client_session.ClientSession, payload: ?[]u8) !void {
