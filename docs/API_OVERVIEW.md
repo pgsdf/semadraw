@@ -44,6 +44,10 @@ All messages use a 16-byte header:
 | FRAME_COMPLETE | 0x0021 | Frame rendered notification |
 | SET_VISIBLE | 0x0030 | Set surface visibility |
 | SET_Z_ORDER | 0x0031 | Set surface stacking order |
+| SET_POSITION | 0x0032 | Set surface position |
+| CLIPBOARD_SET | 0x0050 | Set clipboard content |
+| CLIPBOARD_REQUEST | 0x0051 | Request clipboard content |
+| CLIPBOARD_DATA | 0x9050 | Clipboard data response |
 | ERROR | 0x00FF | Error response |
 
 ### Shared memory
@@ -67,6 +71,12 @@ pub const VTable = struct {
     render: *const fn (ctx: *anyopaque, request: RenderRequest) anyerror!RenderResult,
     getPixels: *const fn (ctx: *anyopaque) ?[]u8,
     resize: *const fn (ctx: *anyopaque, width: u32, height: u32) anyerror!void,
+    pollEvents: *const fn (ctx: *anyopaque) bool,
+    getKeyEvents: ?*const fn (ctx: *anyopaque) []const KeyEvent,
+    getMouseEvents: ?*const fn (ctx: *anyopaque) []const MouseEvent,
+    setClipboard: ?*const fn (ctx: *anyopaque, selection: u8, text: []const u8) anyerror!void,
+    requestClipboard: ?*const fn (ctx: *anyopaque, selection: u8) void,
+    getClipboardData: ?*const fn (ctx: *anyopaque, selection: u8) ?[]const u8,
     deinit: *const fn (ctx: *anyopaque) void,
 };
 ```
@@ -75,6 +85,9 @@ Current backends:
 * `software` - CPU-based reference renderer
 * `headless` - No output, for testing
 * `kms` - DRM/KMS direct display output (Linux/FreeBSD)
+* `x11` - X11 windowed output with clipboard support
+* `vulkan` - GPU-accelerated Vulkan renderer
+* `wayland` - Wayland windowed output
 
 ## Client Library
 
@@ -146,3 +159,39 @@ var surface2 = try manager.createSurface(400, 300);
 // Process events and dispatch to surfaces
 try manager.processEvents();
 ```
+
+### Clipboard
+
+The client library provides clipboard support for copy/paste operations:
+
+```zig
+const client = @import("semadraw_client");
+
+var conn = try client.Connection.connect(allocator);
+defer conn.disconnect();
+
+// Set clipboard content (CLIPBOARD selection)
+try conn.setClipboard(.clipboard, "Hello, World!");
+
+// Set primary selection (mouse selection)
+try conn.setClipboard(.primary, "Selected text");
+
+// Request clipboard content (async)
+try conn.requestClipboard(.clipboard);
+
+// Handle clipboard data in event loop
+while (try conn.poll()) |event| {
+    switch (event) {
+        .clipboard_data => |clip| {
+            // clip.selection: .clipboard or .primary
+            // clip.data: clipboard text content
+            std.debug.print("Clipboard: {s}\n", .{clip.data});
+        },
+        else => {},
+    }
+}
+```
+
+Selection types:
+- `.clipboard` - System clipboard (Ctrl+C/V)
+- `.primary` - Primary selection (X11 mouse selection)
