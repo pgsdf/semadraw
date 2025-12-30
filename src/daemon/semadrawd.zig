@@ -820,8 +820,15 @@ pub const Daemon = struct {
     /// Forward keyboard events to the top visible surface's client
     fn forwardKeyEvents(self: *Daemon, key_events: []const backend.KeyEvent) void {
         // Get the top visible surface to send keyboard input to
-        const top_surface_id = self.surfaces.getTopVisibleSurface() orelse return;
-        const surface = self.surfaces.getSurface(top_surface_id) orelse return;
+        const top_surface_id = self.surfaces.getTopVisibleSurface() orelse {
+            log.debug("forwardKeyEvents: no top visible surface", .{});
+            return;
+        };
+        const surface = self.surfaces.getSurface(top_surface_id) orelse {
+            log.debug("forwardKeyEvents: surface {} not found", .{top_surface_id});
+            return;
+        };
+        log.debug("forwardKeyEvents: {} events to surface {} (owner {})", .{ key_events.len, top_surface_id, surface.owner });
 
         for (key_events) |event| {
             const msg = protocol.KeyPressMsg{
