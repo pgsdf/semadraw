@@ -202,7 +202,7 @@ The terminal emulator demonstrates a complete SDCS client application with text 
 
 ### Mouse State Tracking
 
-The terminal tracks mouse button state for chord detection:
+The terminal tracks mouse button state for chord detection and selection:
 
 ```zig
 const MouseState = struct {
@@ -210,8 +210,14 @@ const MouseState = struct {
     middle_down: bool = false,
     right_down: bool = false,
     chord_handled: bool = false,  // Prevents repeat actions while held
+    // Delayed selection start (preserves existing selection for chords)
+    left_press_col: u32 = 0,
+    left_press_row: u32 = 0,
+    drag_started: bool = false,   // True once user drags past threshold
 };
 ```
+
+**Selection preservation**: When initiating a chord, small mouse movements are ignored (threshold: 2 cells). This prevents accidental selection reset and allows users to chord on existing selections.
 
 ### Chord Menu System
 
@@ -242,6 +248,7 @@ Chord detection:
 - **Left + Right**: Shows Paste menu (Paste, Paste Primary)
 - Menu stays visible while left button is held
 - Selection executes on left button release
+- Immediate render triggered when menu shown to ensure visibility
 
 ### Renderer Overlay
 
