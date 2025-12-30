@@ -103,8 +103,8 @@ pub fn main() !void {
             }
         }
 
-        // ~30 FPS
-        _ = posix.nanosleep(33 * std.time.ns_per_ms, null);
+        // ~30 FPS (33ms = 0 seconds, 33_000_000 nanoseconds)
+        posix.nanosleep(0, 33_000_000);
     }
 
     log.info("demo finished", .{});
