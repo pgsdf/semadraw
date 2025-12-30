@@ -1,6 +1,19 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const backend = @import("backend");
-const evdev = @import("evdev");
+
+// Platform-specific input handling
+const input_module = switch (builtin.os.tag) {
+    .linux => @import("evdev"),
+    .freebsd, .openbsd, .netbsd, .dragonfly => @import("bsdinput"),
+    else => @import("evdev"), // Try evdev as fallback
+};
+
+const InputHandler = switch (builtin.os.tag) {
+    .linux => input_module.EvdevInput,
+    .freebsd, .openbsd, .netbsd, .dragonfly => input_module.BsdInput,
+    else => input_module.EvdevInput,
+};
 
 const c = @cImport({
     @cDefine("VK_USE_PLATFORM_DISPLAY_KHR", "1");
@@ -72,8 +85,8 @@ pub const VulkanConsoleBackend = struct {
     render_offset_x: i32,
     render_offset_y: i32,
 
-    // Input handling via evdev module
-    input: ?*evdev.EvdevInput,
+    // Input handling (platform-specific: evdev on Linux, sysmouse on BSD)
+    input: ?*InputHandler,
 
     // Clipboard data (file-based for console use)
     clipboard_data: [2]?[]u8,
@@ -169,9 +182,9 @@ pub const VulkanConsoleBackend = struct {
         // Create pipeline layout
         try self.createPipelineLayout();
 
-        // Initialize input devices via evdev module
-        self.input = evdev.EvdevInput.init(allocator, self.width, self.height) catch |err| blk: {
-            log.warn("failed to initialize evdev input: {}", .{err});
+        // Initialize input devices (platform-specific)
+        self.input = InputHandler.init(allocator, self.width, self.height) catch |err| blk: {
+            log.warn("failed to initialize input: {} (input will be disabled)", .{err});
             break :blk null;
         };
 
@@ -194,7 +207,7 @@ pub const VulkanConsoleBackend = struct {
             }
         }
 
-        // Cleanup evdev input
+        // Cleanup input handler
         if (self.input) |inp| {
             inp.deinit();
         }
@@ -1285,7 +1298,7 @@ pub const VulkanConsoleBackend = struct {
         self.cpu_framebuffer = try self.allocator.alloc(u8, size);
         @memset(self.cpu_framebuffer.?, 0);
 
-        // Update evdev screen size
+        // Update input handler screen size
         if (self.input) |inp| {
             inp.setScreenSize(config.width, config.height);
         }
