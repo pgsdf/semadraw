@@ -195,3 +195,71 @@ while (try conn.poll()) |event| {
 Selection types:
 - `.clipboard` - System clipboard (Ctrl+C/V)
 - `.primary` - Primary selection (X11 mouse selection)
+
+## Terminal Emulator (semadraw-term)
+
+The terminal emulator demonstrates a complete SDCS client application with text rendering, input handling, and Plan 9-style mouse chording.
+
+### Mouse State Tracking
+
+The terminal tracks mouse button state for chord detection:
+
+```zig
+const MouseState = struct {
+    left_down: bool = false,
+    middle_down: bool = false,
+    right_down: bool = false,
+    chord_handled: bool = false,  // Prevents repeat actions while held
+};
+```
+
+### Chord Menu System
+
+Plan 9-style chording displays context menus based on button combinations:
+
+```zig
+pub const ChordMenu = struct {
+    visible: bool = false,
+    menu_type: MenuType = .edit,
+    x: i32 = 0,
+    y: i32 = 0,
+    selected: ?usize = null,
+
+    pub const MenuType = enum {
+        edit,   // Left+Middle: Copy, Clear
+        paste,  // Left+Right: Paste, Paste Primary
+    };
+
+    pub fn show(self: *ChordMenu, px: i32, py: i32, mtype: MenuType) void;
+    pub fn hide(self: *ChordMenu) void;
+    pub fn getLabels(self: *const ChordMenu) []const []const u8;
+    pub fn updateSelection(self: *ChordMenu, px: i32, py: i32) void;
+};
+```
+
+Chord detection:
+- **Left + Middle**: Shows Edit menu (Copy, Clear)
+- **Left + Right**: Shows Paste menu (Paste, Paste Primary)
+- Menu stays visible while left button is held
+- Selection executes on left button release
+
+### Renderer Overlay
+
+The renderer supports menu overlays for chord menus:
+
+```zig
+pub const MenuOverlay = struct {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    item_height: u32,
+    labels: []const []const u8,
+    selected_idx: ?usize,
+};
+
+// Render with optional menu overlay
+pub fn renderWithOverlay(self: *Self, menu: ?MenuOverlay) ![]u8;
+```
+
+The overlay is composited on top of the terminal content during rendering, allowing transient UI elements without modifying the screen buffer.
