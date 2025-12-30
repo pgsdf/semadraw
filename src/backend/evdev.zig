@@ -148,6 +148,11 @@ pub const EvdevInput = struct {
 
     /// Scan and open available input devices
     fn scanInputDevices(self: *Self) void {
+        log.debug("scanning for input devices in /dev/input/event*", .{});
+        var devices_found: usize = 0;
+        var keyboards_found: usize = 0;
+        var mice_found: usize = 0;
+
         // Scan /dev/input/event* for keyboards and mice
         var i: usize = 0;
         while (i < 32 and self.input_count < MAX_INPUT_DEVICES) : (i += 1) {
@@ -158,8 +163,15 @@ pub const EvdevInput = struct {
                 path,
                 .{ .ACCMODE = .RDONLY, .NONBLOCK = true },
                 0,
-            ) catch continue;
+            ) catch |err| {
+                // Only log permission errors as these are actionable
+                if (err == error.AccessDenied) {
+                    log.debug("cannot open /dev/input/event{}: permission denied", .{i});
+                }
+                continue;
+            };
 
+            devices_found += 1;
             const dev_type = detectDeviceType(fd);
             if (dev_type == .unknown) {
                 posix.close(fd);
@@ -170,15 +182,30 @@ pub const EvdevInput = struct {
             self.input_types[self.input_count] = dev_type;
             self.input_count += 1;
 
+            switch (dev_type) {
+                .keyboard => keyboards_found += 1,
+                .mouse => mice_found += 1,
+                .unknown => {},
+            }
+
             log.info("opened input device /dev/input/event{} as {s}", .{
                 i,
                 @tagName(dev_type),
             });
         }
 
+        log.info("input scan complete: {} devices checked, {} keyboards, {} mice", .{
+            devices_found,
+            keyboards_found,
+            mice_found,
+        });
+
         if (self.input_count == 0) {
             log.warn("no input devices found - keyboard and mouse input disabled", .{});
             log.warn("ensure /dev/input/event* is readable (root or input group)", .{});
+        } else if (keyboards_found == 0) {
+            log.warn("no keyboards detected - text input will not work", .{});
+            log.warn("check that your keyboard is connected and /dev/input/event* is accessible", .{});
         }
     }
 
@@ -298,6 +325,13 @@ pub const EvdevInput = struct {
                 .pressed = pressed,
             };
             self.key_event_count += 1;
+            log.debug("keyboard event: code={} pressed={} modifiers=0x{x:0>2}", .{
+                ev.code,
+                pressed,
+                self.modifiers,
+            });
+        } else {
+            log.warn("keyboard event queue full, dropping event code={}", .{ev.code});
         }
     }
 
@@ -400,17 +434,9 @@ pub fn detectDeviceType(fd: posix.fd_t) InputDeviceType {
     const has_key = testBit(EV_KEY, &ev_bits);
     const has_rel = testBit(EV_REL, &ev_bits);
 
-    if (has_rel) {
-        // Check for mouse buttons
-        var key_bits: [64]u8 = undefined;
-        const key_result = linux.ioctl(@intCast(fd), EVIOCGBIT(EV_KEY, key_bits.len), @intFromPtr(&key_bits));
-        if (@as(isize, @bitCast(key_result)) >= 0) {
-            if (testBit(BTN_LEFT, &key_bits)) {
-                return .mouse;
-            }
-        }
-    }
-
+    // Check for keyboard FIRST - prioritize keyboards over mice for combo devices
+    // Many keyboards have scroll wheels, media keys, or touchpads that would
+    // otherwise cause them to be incorrectly classified as mice
     if (has_key) {
         // Check for keyboard-like keys (letters, etc.)
         var key_bits: [64]u8 = undefined;
@@ -419,6 +445,18 @@ pub fn detectDeviceType(fd: posix.fd_t) InputDeviceType {
             // Check for letter keys (KEY_Q = 16 through KEY_P = 25)
             if (testBit(16, &key_bits) and testBit(17, &key_bits)) {
                 return .keyboard;
+            }
+        }
+    }
+
+    // Then check for mouse - only if it's NOT a keyboard
+    if (has_rel) {
+        // Check for mouse buttons
+        var key_bits: [64]u8 = undefined;
+        const key_result = linux.ioctl(@intCast(fd), EVIOCGBIT(EV_KEY, key_bits.len), @intFromPtr(&key_bits));
+        if (@as(isize, @bitCast(key_result)) >= 0) {
+            if (testBit(BTN_LEFT, &key_bits)) {
+                return .mouse;
             }
         }
     }
