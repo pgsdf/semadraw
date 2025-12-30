@@ -21,13 +21,6 @@ const Config = struct {
     socket_path: ?[]const u8 = null,
 };
 
-/// Poll file descriptor struct
-const PollFd = extern struct {
-    fd: posix.fd_t,
-    events: i16,
-    revents: i16,
-};
-
 /// Keyboard modifier masks
 const Modifiers = struct {
     const SHIFT: u8 = 0x01;
@@ -220,13 +213,12 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
     var running = true;
     while (running) {
         // Poll for events
-        var poll_fds = [_]PollFd{
-            .{ .fd = shell.getFd(), .events = std.posix.POLL.IN, .revents = 0 },
-            .{ .fd = conn.getFd(), .events = std.posix.POLL.IN, .revents = 0 },
+        var poll_fds = [_]posix.pollfd{
+            .{ .fd = shell.getFd(), .events = posix.POLL.IN, .revents = 0 },
+            .{ .fd = conn.getFd(), .events = posix.POLL.IN, .revents = 0 },
         };
 
-        const poll_slice: []posix.pollfd = @ptrCast(&poll_fds);
-        const n = posix.poll(poll_slice, 16) catch continue; // 16ms timeout for ~60fps
+        const n = posix.poll(&poll_fds, 16) catch continue; // 16ms timeout for ~60fps
 
         // Check cursor blink timing
         const current_time = std.time.milliTimestamp();
@@ -251,12 +243,12 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
         }
 
         // Check PTY output
-        if (poll_fds[0].revents & std.posix.POLL.IN != 0) {
+        if (poll_fds[0].revents & posix.POLL.IN != 0) {
             if (shell.read() catch null) |data| {
                 parser.feedSlice(data);
             }
         }
-        if (poll_fds[0].revents & (std.posix.POLL.HUP | std.posix.POLL.ERR) != 0) {
+        if (poll_fds[0].revents & (posix.POLL.HUP | posix.POLL.ERR) != 0) {
             // Get child exit status for diagnostics
             // Use WNOHANG and store result so close() doesn't try to wait again
             const wait_result = posix.waitpid(shell.child_pid, posix.W.NOHANG);
@@ -285,7 +277,7 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
         }
 
         // Check daemon events
-        if (poll_fds[1].revents & std.posix.POLL.IN != 0) {
+        if (poll_fds[1].revents & posix.POLL.IN != 0) {
             while (true) {
                 const event = conn.poll() catch break;
                 if (event == null) break;
