@@ -4,6 +4,74 @@ const backend = @import("backend");
 
 const log = std.log.scoped(.drm_backend);
 
+// ============================================================================
+// Evdev input support
+// ============================================================================
+
+/// Linux input event structure (from linux/input.h)
+const input_event = extern struct {
+    time: extern struct {
+        tv_sec: isize,
+        tv_usec: isize,
+    },
+    type: u16,
+    code: u16,
+    value: i32,
+};
+
+/// Event types
+const EV_SYN: u16 = 0x00;
+const EV_KEY: u16 = 0x01;
+const EV_REL: u16 = 0x02;
+const EV_ABS: u16 = 0x03;
+
+/// Relative axis codes
+const REL_X: u16 = 0x00;
+const REL_Y: u16 = 0x01;
+const REL_WHEEL: u16 = 0x08;
+const REL_HWHEEL: u16 = 0x06;
+
+/// Key codes for mouse buttons
+const BTN_LEFT: u16 = 0x110;
+const BTN_RIGHT: u16 = 0x111;
+const BTN_MIDDLE: u16 = 0x112;
+const BTN_SIDE: u16 = 0x113;
+const BTN_EXTRA: u16 = 0x114;
+
+/// Modifier key codes
+const KEY_LEFTSHIFT: u16 = 42;
+const KEY_RIGHTSHIFT: u16 = 54;
+const KEY_LEFTCTRL: u16 = 29;
+const KEY_RIGHTCTRL: u16 = 97;
+const KEY_LEFTALT: u16 = 56;
+const KEY_RIGHTALT: u16 = 100;
+const KEY_LEFTMETA: u16 = 125;
+const KEY_RIGHTMETA: u16 = 126;
+
+/// EVIOCGBIT ioctl for checking device capabilities
+fn EVIOCGBIT(ev: u8, len: u13) u32 {
+    // _IOC(_IOC_READ, 'E', 0x20 + ev, len)
+    return 0x80000000 | (@as(u32, len) << 16) | (@as(u32, 'E') << 8) | (0x20 + @as(u32, ev));
+}
+
+/// Check if a bit is set in a byte array
+fn testBit(bit: usize, array: []const u8) bool {
+    const byte_idx = bit / 8;
+    if (byte_idx >= array.len) return false;
+    const bit_idx: u3 = @intCast(bit % 8);
+    return (array[byte_idx] & (@as(u8, 1) << bit_idx)) != 0;
+}
+
+/// Input device types we care about
+const InputDeviceType = enum {
+    keyboard,
+    mouse,
+    unknown,
+};
+
+/// Maximum number of input devices to track
+const MAX_INPUT_DEVICES = 8;
+
 /// DRM ioctl commands
 const DRM_IOCTL_BASE: u32 = 'd';
 
@@ -273,6 +341,25 @@ pub const DrmBackend = struct {
     frame_count: u64,
     saved_crtc: ?drm_mode_crtc,
 
+    // Input device handling
+    input_fds: [MAX_INPUT_DEVICES]posix.fd_t,
+    input_types: [MAX_INPUT_DEVICES]InputDeviceType,
+    input_count: usize,
+
+    // Mouse state
+    mouse_x: i32,
+    mouse_y: i32,
+    mouse_buttons: u8, // Bit flags: 0=left, 1=middle, 2=right
+
+    // Modifier key state
+    modifiers: u8, // Bit flags: 0=shift, 1=alt, 2=ctrl, 3=meta
+
+    // Event queues
+    key_events: [backend.MAX_KEY_EVENTS]backend.KeyEvent,
+    key_event_count: usize,
+    mouse_events: [backend.MAX_MOUSE_EVENTS]backend.MouseEvent,
+    mouse_event_count: usize,
+
     const Self = @This();
 
     /// Open DRM device and set up display
@@ -292,6 +379,18 @@ pub const DrmBackend = struct {
             .front_buffer = 0,
             .frame_count = 0,
             .saved_crtc = null,
+            // Input initialization
+            .input_fds = [_]posix.fd_t{-1} ** MAX_INPUT_DEVICES,
+            .input_types = [_]InputDeviceType{.unknown} ** MAX_INPUT_DEVICES,
+            .input_count = 0,
+            .mouse_x = 0,
+            .mouse_y = 0,
+            .mouse_buttons = 0,
+            .modifiers = 0,
+            .key_events = undefined,
+            .key_event_count = 0,
+            .mouse_events = undefined,
+            .mouse_event_count = 0,
         };
 
         // Open device
@@ -306,7 +405,90 @@ pub const DrmBackend = struct {
         // Get resources and find connector
         try self.findConnector();
 
+        // Initialize input devices
+        self.initInputDevices();
+
         return self;
+    }
+
+    /// Scan and open available input devices
+    fn initInputDevices(self: *Self) void {
+        // Scan /dev/input/event* for keyboards and mice
+        var i: usize = 0;
+        while (i < 32 and self.input_count < MAX_INPUT_DEVICES) : (i += 1) {
+            var path_buf: [32]u8 = undefined;
+            const path = std.fmt.bufPrint(&path_buf, "/dev/input/event{}", .{i}) catch continue;
+            // Null-terminate for open
+            const path_z = path_buf[0..path.len];
+            path_buf[path.len] = 0;
+
+            const fd = posix.open(
+                @ptrCast(path_z.ptr),
+                .{ .ACCMODE = .RDONLY, .NONBLOCK = true },
+                0,
+            ) catch continue;
+
+            const dev_type = self.detectInputDeviceType(fd);
+            if (dev_type == .unknown) {
+                posix.close(fd);
+                continue;
+            }
+
+            self.input_fds[self.input_count] = fd;
+            self.input_types[self.input_count] = dev_type;
+            self.input_count += 1;
+
+            log.info("opened input device /dev/input/event{} as {s}", .{
+                i,
+                @tagName(dev_type),
+            });
+        }
+
+        if (self.input_count == 0) {
+            log.warn("no input devices found - keyboard and mouse input disabled", .{});
+            log.warn("ensure /dev/input/event* is readable (root or input group)", .{});
+        }
+    }
+
+    /// Detect what type of input device this is
+    fn detectInputDeviceType(self: *Self, fd: posix.fd_t) InputDeviceType {
+        _ = self;
+        const linux = std.os.linux;
+
+        // Check for supported event types
+        var ev_bits: [4]u8 = undefined;
+        const ev_result = linux.ioctl(@intCast(fd), EVIOCGBIT(0, ev_bits.len), @intFromPtr(&ev_bits));
+        if (@as(isize, @bitCast(ev_result)) < 0) {
+            return .unknown;
+        }
+
+        const has_key = testBit(EV_KEY, &ev_bits);
+        const has_rel = testBit(EV_REL, &ev_bits);
+
+        if (has_rel) {
+            // Check for mouse buttons
+            var key_bits: [64]u8 = undefined;
+            const key_result = linux.ioctl(@intCast(fd), EVIOCGBIT(EV_KEY, key_bits.len), @intFromPtr(&key_bits));
+            if (@as(isize, @bitCast(key_result)) >= 0) {
+                if (testBit(BTN_LEFT, &key_bits)) {
+                    return .mouse;
+                }
+            }
+        }
+
+        if (has_key) {
+            // Check for keyboard-like keys (letters, etc.)
+            var key_bits: [64]u8 = undefined;
+            const key_result = linux.ioctl(@intCast(fd), EVIOCGBIT(EV_KEY, key_bits.len), @intFromPtr(&key_bits));
+            if (@as(isize, @bitCast(key_result)) >= 0) {
+                // Check for letter keys (KEY_Q = 16 through KEY_P = 25)
+                if (testBit(16, &key_bits) and testBit(17, &key_bits)) {
+                    return .keyboard;
+                }
+            }
+        }
+
+        return .unknown;
     }
 
     /// Open default DRM device
@@ -429,6 +611,13 @@ pub const DrmBackend = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        // Close input devices
+        for (self.input_fds[0..self.input_count]) |fd| {
+            if (fd >= 0) {
+                posix.close(fd);
+            }
+        }
+
         // Restore saved CRTC
         if (self.saved_crtc) |*saved| {
             _ = drm_ioctl(self.fd, DRM_IOCTL_MODE_SETCRTC, @intFromPtr(saved));
@@ -620,9 +809,179 @@ pub const DrmBackend = struct {
         _ = self;
     }
 
-    fn pollEventsImpl(_: *anyopaque) bool {
-        // DRM backend has no user events to process
+    fn pollEventsImpl(ctx: *anyopaque) bool {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+
+        // Clear event queues for this poll cycle
+        self.key_event_count = 0;
+        self.mouse_event_count = 0;
+
+        // Track mouse motion for batching
+        var mouse_dx: i32 = 0;
+        var mouse_dy: i32 = 0;
+        var had_motion = false;
+
+        // Read events from all input devices
+        for (self.input_fds[0..self.input_count], self.input_types[0..self.input_count]) |fd, dev_type| {
+            if (fd < 0) continue;
+
+            // Read events in a loop until EAGAIN
+            while (true) {
+                var ev: input_event = undefined;
+                const bytes_read = posix.read(fd, std.mem.asBytes(&ev)) catch |err| {
+                    if (err == error.WouldBlock) break;
+                    break;
+                };
+                if (bytes_read != @sizeOf(input_event)) break;
+
+                // Process event based on device type
+                switch (dev_type) {
+                    .keyboard => self.processKeyboardEvent(&ev),
+                    .mouse => {
+                        const motion = self.processMouseEvent(&ev);
+                        if (motion) |delta| {
+                            mouse_dx += delta[0];
+                            mouse_dy += delta[1];
+                            had_motion = true;
+                        }
+                    },
+                    .unknown => {},
+                }
+            }
+        }
+
+        // Emit batched mouse motion event
+        if (had_motion) {
+            self.mouse_x = @max(0, @min(self.mouse_x + mouse_dx, @as(i32, @intCast(self.width)) - 1));
+            self.mouse_y = @max(0, @min(self.mouse_y + mouse_dy, @as(i32, @intCast(self.height)) - 1));
+
+            if (self.mouse_event_count < backend.MAX_MOUSE_EVENTS) {
+                self.mouse_events[self.mouse_event_count] = .{
+                    .x = self.mouse_x,
+                    .y = self.mouse_y,
+                    .button = .left, // Doesn't matter for motion
+                    .event_type = .motion,
+                    .modifiers = self.modifiers,
+                };
+                self.mouse_event_count += 1;
+            }
+        }
+
         return true;
+    }
+
+    /// Process a keyboard event
+    fn processKeyboardEvent(self: *Self, ev: *const input_event) void {
+        if (ev.type != EV_KEY) return;
+
+        const pressed = ev.value != 0; // 1 = press, 0 = release, 2 = repeat
+
+        // Update modifier state
+        switch (ev.code) {
+            KEY_LEFTSHIFT, KEY_RIGHTSHIFT => {
+                if (pressed) self.modifiers |= 0x01 else self.modifiers &= ~@as(u8, 0x01);
+            },
+            KEY_LEFTALT, KEY_RIGHTALT => {
+                if (pressed) self.modifiers |= 0x02 else self.modifiers &= ~@as(u8, 0x02);
+            },
+            KEY_LEFTCTRL, KEY_RIGHTCTRL => {
+                if (pressed) self.modifiers |= 0x04 else self.modifiers &= ~@as(u8, 0x04);
+            },
+            KEY_LEFTMETA, KEY_RIGHTMETA => {
+                if (pressed) self.modifiers |= 0x08 else self.modifiers &= ~@as(u8, 0x08);
+            },
+            else => {},
+        }
+
+        // Queue key event
+        if (self.key_event_count < backend.MAX_KEY_EVENTS) {
+            self.key_events[self.key_event_count] = .{
+                .key_code = ev.code,
+                .modifiers = self.modifiers,
+                .pressed = pressed,
+            };
+            self.key_event_count += 1;
+        }
+    }
+
+    /// Process a mouse event, returns motion delta if any
+    fn processMouseEvent(self: *Self, ev: *const input_event) ?[2]i32 {
+        switch (ev.type) {
+            EV_REL => {
+                // Relative motion
+                switch (ev.code) {
+                    REL_X => return .{ ev.value, 0 },
+                    REL_Y => return .{ 0, ev.value },
+                    REL_WHEEL => {
+                        // Scroll wheel - emit as button press/release
+                        const button: backend.MouseButton = if (ev.value > 0) .scroll_up else .scroll_down;
+                        if (self.mouse_event_count < backend.MAX_MOUSE_EVENTS) {
+                            self.mouse_events[self.mouse_event_count] = .{
+                                .x = self.mouse_x,
+                                .y = self.mouse_y,
+                                .button = button,
+                                .event_type = .press,
+                                .modifiers = self.modifiers,
+                            };
+                            self.mouse_event_count += 1;
+                        }
+                    },
+                    else => {},
+                }
+            },
+            EV_KEY => {
+                // Mouse button
+                const button: ?backend.MouseButton = switch (ev.code) {
+                    BTN_LEFT => .left,
+                    BTN_RIGHT => .right,
+                    BTN_MIDDLE => .middle,
+                    BTN_SIDE => .button4,
+                    BTN_EXTRA => .button5,
+                    else => null,
+                };
+
+                if (button) |btn| {
+                    const pressed = ev.value != 0;
+                    const event_type: backend.MouseEventType = if (pressed) .press else .release;
+
+                    // Update button state
+                    const bit: u8 = switch (btn) {
+                        .left => 0x01,
+                        .middle => 0x02,
+                        .right => 0x04,
+                        else => 0,
+                    };
+                    if (pressed) {
+                        self.mouse_buttons |= bit;
+                    } else {
+                        self.mouse_buttons &= ~bit;
+                    }
+
+                    if (self.mouse_event_count < backend.MAX_MOUSE_EVENTS) {
+                        self.mouse_events[self.mouse_event_count] = .{
+                            .x = self.mouse_x,
+                            .y = self.mouse_y,
+                            .button = btn,
+                            .event_type = event_type,
+                            .modifiers = self.modifiers,
+                        };
+                        self.mouse_event_count += 1;
+                    }
+                }
+            },
+            else => {},
+        }
+        return null;
+    }
+
+    fn getKeyEventsImpl(ctx: *anyopaque) []const backend.KeyEvent {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        return self.key_events[0..self.key_event_count];
+    }
+
+    fn getMouseEventsImpl(ctx: *anyopaque) []const backend.MouseEvent {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        return self.mouse_events[0..self.mouse_event_count];
     }
 
     fn deinitImpl(ctx: *anyopaque) void {
@@ -637,6 +996,8 @@ pub const DrmBackend = struct {
         .getPixels = getPixelsImpl,
         .resize = resizeImpl,
         .pollEvents = pollEventsImpl,
+        .getKeyEvents = getKeyEventsImpl,
+        .getMouseEvents = getMouseEventsImpl,
         .deinit = deinitImpl,
     };
 
