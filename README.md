@@ -161,9 +161,9 @@ The semadrawd compositor daemon is functional with:
 
 ## Usage Guide
 
-### Console Use (DRM/KMS)
+### Console Use (DRM/KMS) - Linux
 
-For running SemaDraw directly on the console without X11 or Wayland (framebuffer output):
+For running SemaDraw directly on the Linux console without X11 or Wayland (CPU rendering):
 
 ```sh
 # Switch to a virtual console (Ctrl+Alt+F2) or boot without display manager
@@ -191,6 +191,52 @@ semadraw-term
 - Use Ctrl+Alt+F1 to return to your previous console
 - For multi-monitor setups, the first available display is used
 - If input doesn't work, ensure user is in the `input` group: `sudo usermod -aG input $USER`
+
+### Console Use (Vulkan Console) - Linux & FreeBSD
+
+For GPU-accelerated console rendering without X11 or Wayland:
+
+```sh
+# Switch to a virtual console (Ctrl+Alt+F2) or boot without display manager
+
+# Start semadrawd with Vulkan console backend
+sudo semadrawd --backend vulkan_console
+
+# In another terminal/session, run the terminal emulator
+semadraw-term
+```
+
+**Requirements:**
+- Vulkan-capable GPU with VK_KHR_display extension support
+- Vulkan SDK and drivers installed
+- No active X11/Wayland session on the target display
+- Root privileges or appropriate device permissions
+
+**Linux Input:**
+- Keyboard and mouse via evdev (`/dev/input/event*`)
+- Requires root or `input` group membership
+
+**FreeBSD Input:**
+- Mouse via sysmouse (`/dev/sysmouse`) - requires `moused` daemon
+- Keyboard via `/dev/kbdmux0`, `/dev/ukbd0`, or `/dev/atkbd0`
+
+**FreeBSD Setup:**
+```sh
+# Ensure moused is running for mouse input
+sudo service moused start
+
+# Add to /etc/rc.conf to start on boot:
+# moused_enable="YES"
+
+# Start semadrawd
+sudo semadrawd --backend vulkan_console
+```
+
+**Notes:**
+- Uses VK_KHR_display for direct display output (no windowing system)
+- GPU-accelerated rendering with CPU-based SDCS execution
+- Input is optional - backend works without input devices for testing
+- If input fails to initialize, rendering still works
 
 ### X11 Use
 
@@ -265,7 +311,40 @@ semadrawd --backend x11
 semadraw-demo
 ```
 
-**Example 4: Headless testing**
+**Example 4: GPU-accelerated on X11 (Vulkan)**
+```sh
+# Terminal 1: Start daemon with Vulkan acceleration
+semadrawd --backend vulkan
+
+# Terminal 2: Run terminal
+semadraw-term
+```
+
+**Example 5: GPU-accelerated console (no X11/Wayland)**
+```sh
+# From a virtual console (Ctrl+Alt+F2)
+# Requires: no display server running, Vulkan drivers
+
+# Start daemon with Vulkan console backend
+sudo semadrawd --backend vulkan_console
+
+# In another session, run terminal
+semadraw-term
+```
+
+**Example 6: FreeBSD console**
+```sh
+# Ensure moused is running
+sudo service moused start
+
+# Start with Vulkan console
+sudo semadrawd --backend vulkan_console
+
+# Run terminal
+semadraw-term
+```
+
+**Example 7: Headless testing**
 ```sh
 # Start headless (no display output)
 semadrawd --backend headless
@@ -286,7 +365,7 @@ semadrawd [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `-b, --backend TYPE` | Backend: software, headless, kms, x11, vulkan, wayland |
+| `-b, --backend TYPE` | Backend: software, headless, kms, x11, vulkan, vulkan_console, wayland |
 | `-s, --socket PATH` | Unix socket path (default: /var/run/semadraw/semadraw.sock) |
 | `-t, --tcp PORT` | Enable TCP server on PORT for remote connections |
 | `--tcp-addr ADDR` | Bind TCP to specific address (default: 0.0.0.0) |
@@ -294,14 +373,15 @@ semadrawd [OPTIONS]
 
 **Backend Comparison:**
 
-| Backend | Acceleration | Display | Use Case |
-|---------|-------------|---------|----------|
-| software | CPU | Varies | Reference, debugging |
-| headless | CPU | None | Testing, CI/CD |
-| kms | CPU | Console | Framebuffer, embedded |
-| x11 | CPU | X11 Window | Desktop development |
-| vulkan | GPU | X11 Window | High performance |
-| wayland | CPU | Wayland Window | Wayland desktops |
+| Backend | Acceleration | Display | Platform | Use Case |
+|---------|-------------|---------|----------|----------|
+| software | CPU | Varies | Any | Reference, debugging |
+| headless | CPU | None | Any | Testing, CI/CD |
+| kms | CPU | Console | Linux | Framebuffer, embedded |
+| x11 | CPU | X11 Window | Linux, FreeBSD | Desktop development |
+| vulkan | GPU | X11 Window | Linux, FreeBSD | High performance (X11) |
+| vulkan_console | GPU | Console | Linux, FreeBSD | High performance (no X11) |
+| wayland | CPU | Wayland Window | Linux | Wayland desktops |
 
 ### Remote Connections
 
