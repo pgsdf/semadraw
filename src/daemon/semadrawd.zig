@@ -842,10 +842,18 @@ pub const Daemon = struct {
 
             // Try to send to local client first
             if (self.clients.findById(surface.owner)) |session| {
-                session.send(.key_press, &payload) catch {};
+                session.send(.key_press, &payload) catch |err| {
+                    log.warn("failed to send key event to client {}: {}", .{ surface.owner, err });
+                };
+                log.debug("sent key event to local client {}", .{surface.owner});
             } else if (self.remote_clients.get(surface.owner)) |remote_session| {
                 // Try remote client
-                remote_session.client.sendMessage(.key_press, &payload) catch {};
+                remote_session.client.sendMessage(.key_press, &payload) catch |err| {
+                    log.warn("failed to send key event to remote client {}: {}", .{ surface.owner, err });
+                };
+                log.debug("sent key event to remote client {}", .{surface.owner});
+            } else {
+                log.warn("no client found for surface owner {}", .{surface.owner});
             }
         }
     }
