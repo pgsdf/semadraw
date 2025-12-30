@@ -33,6 +33,10 @@ extern const wl_seat_interface: wl_interface;
 extern const wl_keyboard_interface: wl_interface;
 extern const wl_pointer_interface: wl_interface;
 extern const wl_callback_interface: wl_interface;
+extern const wl_data_device_manager_interface: wl_interface;
+extern const wl_data_device_interface: wl_interface;
+extern const wl_data_source_interface: wl_interface;
+extern const wl_data_offer_interface: wl_interface;
 
 // XDG shell interfaces - we'll define these ourselves since headers aren't available
 const xdg_wm_base_interface_def = wl_interface{
@@ -150,6 +154,18 @@ pub const WaylandBackend = struct {
     mouse_x: i32,
     mouse_y: i32,
 
+    // Clipboard support (wl_data_device)
+    data_device_manager: ?*anyopaque,
+    data_device: ?*anyopaque,
+    data_source: ?*anyopaque,
+    current_offer: ?*anyopaque,
+    clipboard_data: ?[]u8,
+    primary_data: ?[]u8,
+    clipboard_request_pending: bool,
+    clipboard_request_selection: u8,
+    pending_offer_mime: bool,
+    serial: u32,
+
     const Self = @This();
 
     pub fn init(allocator: std.mem.Allocator) !*Self {
@@ -190,6 +206,17 @@ pub const WaylandBackend = struct {
             .pointer = null,
             .mouse_x = 0,
             .mouse_y = 0,
+            // Clipboard
+            .data_device_manager = null,
+            .data_device = null,
+            .data_source = null,
+            .current_offer = null,
+            .clipboard_data = null,
+            .primary_data = null,
+            .clipboard_request_pending = false,
+            .clipboard_request_selection = 0,
+            .pending_offer_mime = false,
+            .serial = 0,
         };
 
         // Connect to Wayland display
@@ -337,6 +364,15 @@ pub const WaylandBackend = struct {
         if (self.pointer != null) {
             wl_proxy_destroy(self.pointer.?);
         }
+        if (self.data_source != null) {
+            wl_proxy_destroy(self.data_source.?);
+        }
+        if (self.data_device != null) {
+            wl_proxy_destroy(self.data_device.?);
+        }
+        if (self.data_device_manager != null) {
+            wl_proxy_destroy(self.data_device_manager.?);
+        }
         if (self.seat != null) {
             wl_proxy_destroy(self.seat.?);
         }
@@ -351,6 +387,14 @@ pub const WaylandBackend = struct {
         }
         if (self.registry != null) {
             wl_proxy_destroy(self.registry.?);
+        }
+
+        // Free clipboard data
+        if (self.clipboard_data) |data| {
+            self.allocator.free(data);
+        }
+        if (self.primary_data) |data| {
+            self.allocator.free(data);
         }
 
         self.disconnectDisplay();
@@ -547,6 +591,10 @@ pub const WaylandBackend = struct {
             if (self.seat != null) {
                 _ = wl_proxy_add_listener(self.seat.?, &seat_listener, self);
             }
+        } else if (std.mem.eql(u8, iface, "wl_data_device_manager")) {
+            // Bind to data device manager for clipboard support (version 3 for primary selection)
+            const bind_version: u32 = @min(version, 3);
+            self.data_device_manager = wl_proxy_marshal_flags(registry.?, 0, &wl_data_device_manager_interface, bind_version, 0, name, @as([*:0]const u8, "wl_data_device_manager"), bind_version);
         }
     }
 
@@ -675,6 +723,23 @@ pub const WaylandBackend = struct {
                 self.pointer = null;
             }
         }
+
+        // Create data device for clipboard once we have the seat
+        if (self.data_device == null and self.data_device_manager != null) {
+            // wl_data_device_manager.get_data_device (opcode 1)
+            self.data_device = wl_proxy_marshal_flags(
+                self.data_device_manager.?,
+                1, // get_data_device opcode
+                &wl_data_device_interface,
+                wl_proxy_get_version(self.data_device_manager.?),
+                0,
+                seat.?,
+            );
+            if (self.data_device != null) {
+                _ = wl_proxy_add_listener(self.data_device.?, &data_device_listener, self);
+                log.info("clipboard support enabled (wl_data_device)", .{});
+            }
+        }
     }
 
     const KeyboardListener = extern struct {
@@ -696,11 +761,17 @@ pub const WaylandBackend = struct {
     };
 
     fn keyboardKeymap(_: ?*anyopaque, _: ?*anyopaque, _: u32, _: i32, _: u32) callconv(.c) void {}
-    fn keyboardEnter(_: ?*anyopaque, _: ?*anyopaque, _: u32, _: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {}
+
+    fn keyboardEnter(data: ?*anyopaque, _: ?*anyopaque, serial: u32, _: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
+        const self: *Self = @ptrCast(@alignCast(data));
+        self.serial = serial; // Capture serial for clipboard operations
+    }
+
     fn keyboardLeave(_: ?*anyopaque, _: ?*anyopaque, _: u32, _: ?*anyopaque) callconv(.c) void {}
 
-    fn keyboardKey(data: ?*anyopaque, _: ?*anyopaque, _: u32, _: u32, key: u32, state: u32) callconv(.c) void {
+    fn keyboardKey(data: ?*anyopaque, _: ?*anyopaque, serial: u32, _: u32, key: u32, state: u32) callconv(.c) void {
         const self: *Self = @ptrCast(@alignCast(data));
+        self.serial = serial; // Capture serial for clipboard operations
         const pressed = state == WL_KEYBOARD_KEY_STATE_PRESSED;
 
         // Handle Ctrl+Q to close window
@@ -755,8 +826,9 @@ pub const WaylandBackend = struct {
         .axis = pointerAxis,
     };
 
-    fn pointerEnter(data: ?*anyopaque, _: ?*anyopaque, _: u32, _: ?*anyopaque, sx: i32, sy: i32) callconv(.c) void {
+    fn pointerEnter(data: ?*anyopaque, _: ?*anyopaque, serial: u32, _: ?*anyopaque, sx: i32, sy: i32) callconv(.c) void {
         const self: *Self = @ptrCast(@alignCast(data));
+        self.serial = serial; // Capture serial for clipboard operations
         // Wayland uses fixed-point 24.8 format for surface coordinates
         self.mouse_x = sx >> 8;
         self.mouse_y = sy >> 8;
@@ -785,8 +857,9 @@ pub const WaylandBackend = struct {
         }
     }
 
-    fn pointerButton(data: ?*anyopaque, _: ?*anyopaque, _: u32, _: u32, button_code: u32, state: u32) callconv(.c) void {
+    fn pointerButton(data: ?*anyopaque, _: ?*anyopaque, serial: u32, _: u32, button_code: u32, state: u32) callconv(.c) void {
         const self: *Self = @ptrCast(@alignCast(data));
+        self.serial = serial; // Capture serial for clipboard operations
 
         // Map Linux button codes to our MouseButton enum
         // BTN_LEFT = 0x110 (272), BTN_RIGHT = 0x111 (273), BTN_MIDDLE = 0x112 (274)
@@ -835,6 +908,266 @@ pub const WaylandBackend = struct {
         } else {
             log.warn("mouse scroll event dropped (queue full), axis={}", .{axis});
         }
+    }
+
+    // ========================================================================
+    // Clipboard support (wl_data_device)
+    // ========================================================================
+
+    const DataDeviceListener = extern struct {
+        data_offer: *const fn (?*anyopaque, ?*anyopaque, ?*anyopaque) callconv(.c) void,
+        enter: ?*const fn (?*anyopaque, ?*anyopaque, u32, ?*anyopaque, i32, i32, ?*anyopaque) callconv(.c) void,
+        leave: ?*const fn (?*anyopaque, ?*anyopaque) callconv(.c) void,
+        motion: ?*const fn (?*anyopaque, ?*anyopaque, u32, i32, i32) callconv(.c) void,
+        drop: ?*const fn (?*anyopaque, ?*anyopaque) callconv(.c) void,
+        selection: *const fn (?*anyopaque, ?*anyopaque, ?*anyopaque) callconv(.c) void,
+    };
+
+    const data_device_listener = DataDeviceListener{
+        .data_offer = dataDeviceDataOffer,
+        .enter = null,
+        .leave = null,
+        .motion = null,
+        .drop = null,
+        .selection = dataDeviceSelection,
+    };
+
+    fn dataDeviceDataOffer(data: ?*anyopaque, _: ?*anyopaque, offer: ?*anyopaque) callconv(.c) void {
+        const self: *Self = @ptrCast(@alignCast(data));
+
+        // New data offer - add listener to track mime types
+        if (offer != null) {
+            _ = wl_proxy_add_listener(offer.?, &data_offer_listener, self);
+        }
+    }
+
+    fn dataDeviceSelection(data: ?*anyopaque, _: ?*anyopaque, offer: ?*anyopaque) callconv(.c) void {
+        const self: *Self = @ptrCast(@alignCast(data));
+
+        // Selection changed - store the offer for later use
+        if (self.current_offer != null) {
+            // wl_data_offer.destroy (opcode 1)
+            _ = wl_proxy_marshal_flags(self.current_offer.?, 1, null, 1, 0);
+            wl_proxy_destroy(self.current_offer.?);
+        }
+        self.current_offer = offer;
+        self.pending_offer_mime = false;
+
+        if (offer != null) {
+            log.debug("clipboard selection changed", .{});
+        }
+    }
+
+    const DataOfferListener = extern struct {
+        offer: *const fn (?*anyopaque, ?*anyopaque, [*:0]const u8) callconv(.c) void,
+        source_actions: ?*const fn (?*anyopaque, ?*anyopaque, u32) callconv(.c) void,
+        action: ?*const fn (?*anyopaque, ?*anyopaque, u32) callconv(.c) void,
+    };
+
+    const data_offer_listener = DataOfferListener{
+        .offer = dataOfferOffer,
+        .source_actions = null,
+        .action = null,
+    };
+
+    fn dataOfferOffer(data: ?*anyopaque, _: ?*anyopaque, mime_type: [*:0]const u8) callconv(.c) void {
+        const self: *Self = @ptrCast(@alignCast(data));
+        const mime = std.mem.span(mime_type);
+
+        // Check for text mime types we can handle
+        if (std.mem.eql(u8, mime, "text/plain;charset=utf-8") or
+            std.mem.eql(u8, mime, "text/plain") or
+            std.mem.eql(u8, mime, "UTF8_STRING") or
+            std.mem.eql(u8, mime, "STRING"))
+        {
+            self.pending_offer_mime = true;
+        }
+    }
+
+    const DataSourceListener = extern struct {
+        target: ?*const fn (?*anyopaque, ?*anyopaque, [*:0]const u8) callconv(.c) void,
+        send: *const fn (?*anyopaque, ?*anyopaque, [*:0]const u8, i32) callconv(.c) void,
+        cancelled: *const fn (?*anyopaque, ?*anyopaque) callconv(.c) void,
+        dnd_drop_performed: ?*const fn (?*anyopaque, ?*anyopaque) callconv(.c) void,
+        dnd_finished: ?*const fn (?*anyopaque, ?*anyopaque) callconv(.c) void,
+        action: ?*const fn (?*anyopaque, ?*anyopaque, u32) callconv(.c) void,
+    };
+
+    const data_source_listener = DataSourceListener{
+        .target = null,
+        .send = dataSourceSend,
+        .cancelled = dataSourceCancelled,
+        .dnd_drop_performed = null,
+        .dnd_finished = null,
+        .action = null,
+    };
+
+    fn dataSourceSend(data: ?*anyopaque, _: ?*anyopaque, _: [*:0]const u8, fd: i32) callconv(.c) void {
+        const self: *Self = @ptrCast(@alignCast(data));
+
+        // Write clipboard data to the fd
+        if (self.clipboard_data) |clip_data| {
+            _ = c.write(fd, clip_data.ptr, clip_data.len);
+        }
+        _ = c.close(fd);
+    }
+
+    fn dataSourceCancelled(data: ?*anyopaque, source: ?*anyopaque) callconv(.c) void {
+        const self: *Self = @ptrCast(@alignCast(data));
+
+        // Our data source is no longer valid
+        if (source != null) {
+            wl_proxy_destroy(source.?);
+        }
+        if (self.data_source == source) {
+            self.data_source = null;
+        }
+    }
+
+    /// Set clipboard content
+    pub fn setClipboard(self: *Self, selection: u8, text: []const u8) !void {
+        if (self.data_device_manager == null or self.data_device == null) {
+            return error.ClipboardNotSupported;
+        }
+
+        // Only CLIPBOARD (selection=0) is supported via wl_data_device
+        // PRIMARY selection requires zwp_primary_selection_device_manager_v1
+        if (selection != 0) {
+            log.debug("PRIMARY selection not supported on Wayland (need zwp_primary_selection)", .{});
+            return error.ClipboardNotSupported;
+        }
+
+        // Store the data
+        if (self.clipboard_data) |old| {
+            self.allocator.free(old);
+        }
+        self.clipboard_data = try self.allocator.dupe(u8, text);
+
+        // Destroy old data source
+        if (self.data_source != null) {
+            wl_proxy_destroy(self.data_source.?);
+            self.data_source = null;
+        }
+
+        // Create new data source: wl_data_device_manager.create_data_source (opcode 0)
+        self.data_source = wl_proxy_marshal_flags(
+            self.data_device_manager.?,
+            0, // create_data_source opcode
+            &wl_data_source_interface,
+            wl_proxy_get_version(self.data_device_manager.?),
+            0,
+        );
+
+        if (self.data_source == null) {
+            return error.DataSourceCreationFailed;
+        }
+
+        _ = wl_proxy_add_listener(self.data_source.?, &data_source_listener, self);
+
+        // Offer mime types: wl_data_source.offer (opcode 0)
+        _ = wl_proxy_marshal_flags(self.data_source.?, 0, null, 1, 0, @as([*:0]const u8, "text/plain;charset=utf-8"));
+        _ = wl_proxy_marshal_flags(self.data_source.?, 0, null, 1, 0, @as([*:0]const u8, "text/plain"));
+        _ = wl_proxy_marshal_flags(self.data_source.?, 0, null, 1, 0, @as([*:0]const u8, "UTF8_STRING"));
+        _ = wl_proxy_marshal_flags(self.data_source.?, 0, null, 1, 0, @as([*:0]const u8, "STRING"));
+
+        // Set selection: wl_data_device.set_selection (opcode 1)
+        _ = wl_proxy_marshal_flags(
+            self.data_device.?,
+            1, // set_selection opcode
+            null,
+            wl_proxy_get_version(self.data_device.?),
+            0,
+            self.data_source.?,
+            self.serial,
+        );
+
+        _ = wl_display_flush(self.display.?);
+        log.debug("clipboard set: len={}", .{text.len});
+    }
+
+    /// Request clipboard content
+    pub fn requestClipboard(self: *Self, selection: u8) void {
+        if (self.current_offer == null or !self.pending_offer_mime) {
+            return;
+        }
+
+        // Only CLIPBOARD supported
+        if (selection != 0) {
+            return;
+        }
+
+        self.clipboard_request_pending = true;
+        self.clipboard_request_selection = selection;
+
+        // Create pipe
+        var pipe_fds: [2]c_int = undefined;
+        if (c.pipe(&pipe_fds) < 0) {
+            self.clipboard_request_pending = false;
+            return;
+        }
+
+        // Request data: wl_data_offer.receive (opcode 0)
+        _ = wl_proxy_marshal_flags(
+            self.current_offer.?,
+            0, // receive opcode
+            null,
+            1,
+            0,
+            @as([*:0]const u8, "text/plain;charset=utf-8"),
+            pipe_fds[1],
+        );
+        _ = c.close(pipe_fds[1]); // Close write end
+
+        _ = wl_display_flush(self.display.?);
+
+        // Read data from pipe (non-blocking)
+        var buffer: [65536]u8 = undefined;
+        var total_read: usize = 0;
+
+        // Set non-blocking
+        _ = c.fcntl(pipe_fds[0], c.F_SETFL, c.O_NONBLOCK);
+
+        // Poll for data with timeout
+        var pfd = posix.pollfd{
+            .fd = pipe_fds[0],
+            .events = posix.POLL.IN,
+            .revents = 0,
+        };
+
+        const ready = posix.poll(@as(*[1]posix.pollfd, &pfd), 100) catch 0; // 100ms timeout
+        if (ready > 0) {
+            while (total_read < buffer.len) {
+                const n = c.read(pipe_fds[0], buffer[total_read..].ptr, buffer.len - total_read);
+                if (n <= 0) break;
+                total_read += @intCast(n);
+            }
+        }
+
+        _ = c.close(pipe_fds[0]);
+
+        if (total_read > 0) {
+            if (self.clipboard_data) |old| {
+                self.allocator.free(old);
+            }
+            self.clipboard_data = self.allocator.dupe(u8, buffer[0..total_read]) catch null;
+            log.debug("clipboard received: {} bytes", .{total_read});
+        }
+
+        self.clipboard_request_pending = false;
+    }
+
+    /// Get clipboard data
+    pub fn getClipboardData(self: *Self, selection: u8) ?[]const u8 {
+        if (selection == 0) {
+            return self.clipboard_data;
+        } else {
+            return self.primary_data;
+        }
+    }
+
+    /// Check if clipboard request is pending
+    pub fn isClipboardRequestPending(self: *Self) bool {
+        return self.clipboard_request_pending;
     }
 
     // ========================================================================
@@ -1176,6 +1509,26 @@ pub const WaylandBackend = struct {
         return self.mouse_events[0..count];
     }
 
+    fn setClipboardImpl(ctx: *anyopaque, selection: u8, text: []const u8) anyerror!void {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        return self.setClipboard(selection, text);
+    }
+
+    fn requestClipboardImpl(ctx: *anyopaque, selection: u8) void {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        self.requestClipboard(selection);
+    }
+
+    fn getClipboardDataImpl(ctx: *anyopaque, selection: u8) ?[]const u8 {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        return self.getClipboardData(selection);
+    }
+
+    fn isClipboardPendingImpl(ctx: *anyopaque) bool {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        return self.isClipboardRequestPending();
+    }
+
     pub const vtable = backend.Backend.VTable{
         .getCapabilities = getCapabilitiesImpl,
         .initFramebuffer = initFramebufferImpl,
@@ -1185,6 +1538,10 @@ pub const WaylandBackend = struct {
         .pollEvents = pollEventsImpl,
         .getKeyEvents = getKeyEventsImpl,
         .getMouseEvents = getMouseEventsImpl,
+        .setClipboard = setClipboardImpl,
+        .requestClipboard = requestClipboardImpl,
+        .getClipboardData = getClipboardDataImpl,
+        .isClipboardPending = isClipboardPendingImpl,
         .deinit = deinitImpl,
     };
 
