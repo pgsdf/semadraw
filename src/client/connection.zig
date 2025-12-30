@@ -12,6 +12,12 @@ pub const ConnectionState = enum {
     error_state,
 };
 
+/// Clipboard data event
+pub const ClipboardData = struct {
+    selection: protocol.ClipboardSelection,
+    data: []const u8,
+};
+
 /// Event types received from the daemon
 pub const Event = union(enum) {
     surface_created: protocol.SurfaceCreatedMsg,
@@ -21,6 +27,7 @@ pub const Event = union(enum) {
     error_reply: protocol.ErrorReplyMsg,
     key_press: protocol.KeyPressMsg,
     mouse_event: protocol.MouseEventMsg,
+    clipboard_data: ClipboardData,
     disconnected: void,
 };
 
@@ -263,6 +270,36 @@ pub const Connection = struct {
         try self.sendMessage(.set_position, &payload);
     }
 
+    /// Set clipboard content
+    pub fn setClipboard(self: *Self, selection: protocol.ClipboardSelection, text: []const u8) !void {
+        if (self.state != .connected) return error.NotConnected;
+
+        const header_size = protocol.ClipboardSetMsg.HEADER_SIZE;
+        const msg_buf = try self.allocator.alloc(u8, header_size + text.len);
+        defer self.allocator.free(msg_buf);
+
+        const msg = protocol.ClipboardSetMsg{
+            .selection = selection,
+            .length = @intCast(text.len),
+        };
+        msg.serialize(msg_buf[0..header_size]);
+        @memcpy(msg_buf[header_size..], text);
+
+        try self.sendMessage(.clipboard_set, msg_buf);
+    }
+
+    /// Request clipboard content (response will come as clipboard_data event)
+    pub fn requestClipboard(self: *Self, selection: protocol.ClipboardSelection) !void {
+        if (self.state != .connected) return error.NotConnected;
+
+        const msg = protocol.ClipboardRequestMsg{
+            .selection = selection,
+        };
+        var payload: [protocol.ClipboardRequestMsg.SIZE]u8 = undefined;
+        msg.serialize(&payload);
+        try self.sendMessage(.clipboard_request, &payload);
+    }
+
     /// Synchronization barrier - wait for all pending operations
     pub fn sync(self: *Self) !void {
         if (self.state != .connected) return error.NotConnected;
@@ -379,6 +416,22 @@ pub const Connection = struct {
                     if (protocol.MouseEventMsg.deserialize(p)) |m| {
                         return .{ .mouse_event = m };
                     } else |_| {}
+                }
+            },
+            .clipboard_data => {
+                if (msg.payload) |p| {
+                    if (p.len >= protocol.ClipboardDataMsg.HEADER_SIZE) {
+                        if (protocol.ClipboardDataMsg.deserialize(p)) |m| {
+                            const data_start = protocol.ClipboardDataMsg.HEADER_SIZE;
+                            const data_end = data_start + m.length;
+                            if (p.len >= data_end) {
+                                return .{ .clipboard_data = .{
+                                    .selection = m.selection,
+                                    .data = p[data_start..data_end],
+                                } };
+                            }
+                        } else |_| {}
+                    }
                 }
             },
             else => {},

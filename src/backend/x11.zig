@@ -55,6 +55,17 @@ pub const X11Backend = struct {
     // Current render offset (for surface positioning)
     render_offset_x: i32,
     render_offset_y: i32,
+    // Clipboard support
+    atom_clipboard: Atom,
+    atom_primary: Atom,
+    atom_targets: Atom,
+    atom_utf8_string: Atom,
+    atom_string: Atom,
+    clipboard_data: ?[]u8,
+    primary_data: ?[]u8,
+    // Pending clipboard request
+    clipboard_request_pending: bool,
+    clipboard_request_selection: u8, // 0=clipboard, 1=primary
 
     const Self = @This();
 
@@ -87,6 +98,15 @@ pub const X11Backend = struct {
             .modifier_state = 0,
             .render_offset_x = 0,
             .render_offset_y = 0,
+            .atom_clipboard = 0,
+            .atom_primary = 0,
+            .atom_targets = 0,
+            .atom_utf8_string = 0,
+            .atom_string = 0,
+            .clipboard_data = null,
+            .primary_data = null,
+            .clipboard_request_pending = false,
+            .clipboard_request_selection = 0,
         };
 
         // Open display
@@ -131,6 +151,13 @@ pub const X11Backend = struct {
         // Set up window close handling
         self.wm_delete_window = c.XInternAtom(self.display.?, "WM_DELETE_WINDOW", c.False);
         _ = c.XSetWMProtocols(self.display.?, self.window, &self.wm_delete_window, 1);
+
+        // Initialize clipboard atoms
+        self.atom_clipboard = c.XInternAtom(self.display.?, "CLIPBOARD", c.False);
+        self.atom_primary = c.XA_PRIMARY;
+        self.atom_targets = c.XInternAtom(self.display.?, "TARGETS", c.False);
+        self.atom_utf8_string = c.XInternAtom(self.display.?, "UTF8_STRING", c.False);
+        self.atom_string = c.XA_STRING;
 
         // Select input events (keyboard, mouse, and window events)
         _ = c.XSelectInput(self.display.?, self.window, c.ExposureMask | c.KeyPressMask | c.KeyReleaseMask | c.StructureNotifyMask | c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask);
@@ -191,6 +218,14 @@ pub const X11Backend = struct {
 
         if (self.framebuffer) |fb| {
             self.allocator.free(fb);
+        }
+
+        // Free clipboard data
+        if (self.clipboard_data) |data| {
+            self.allocator.free(data);
+        }
+        if (self.primary_data) |data| {
+            self.allocator.free(data);
         }
 
         if (self.display) |disp| {
@@ -364,11 +399,189 @@ pub const X11Backend = struct {
                         log.debug("mouse motion event dropped (queue full)", .{});
                     }
                 },
+                c.SelectionRequest => {
+                    self.handleSelectionRequest(&event.xselectionrequest);
+                },
+                c.SelectionNotify => {
+                    self.handleSelectionNotify(&event.xselection);
+                },
                 else => {},
             }
         }
 
         return !self.closed;
+    }
+
+    fn handleSelectionRequest(self: *Self, req: *c.XSelectionRequestEvent) void {
+        var notify: c.XSelectionEvent = undefined;
+        notify.type = c.SelectionNotify;
+        notify.display = req.display;
+        notify.requestor = req.requestor;
+        notify.selection = req.selection;
+        notify.target = req.target;
+        notify.property = req.property;
+        notify.time = req.time;
+
+        // Get the data for the requested selection
+        const data = if (req.selection == self.atom_clipboard)
+            self.clipboard_data
+        else if (req.selection == self.atom_primary)
+            self.primary_data
+        else
+            null;
+
+        if (data) |content| {
+            if (req.target == self.atom_targets) {
+                // Return supported targets
+                var targets = [_]Atom{ self.atom_targets, self.atom_utf8_string, self.atom_string };
+                _ = c.XChangeProperty(
+                    self.display.?,
+                    req.requestor,
+                    req.property,
+                    c.XA_ATOM,
+                    32,
+                    c.PropModeReplace,
+                    @ptrCast(&targets),
+                    3,
+                );
+            } else if (req.target == self.atom_utf8_string or req.target == self.atom_string) {
+                // Return the text content
+                _ = c.XChangeProperty(
+                    self.display.?,
+                    req.requestor,
+                    req.property,
+                    req.target,
+                    8,
+                    c.PropModeReplace,
+                    content.ptr,
+                    @intCast(content.len),
+                );
+            } else {
+                // Unsupported target
+                notify.property = c.None;
+            }
+        } else {
+            // No data available
+            notify.property = c.None;
+        }
+
+        // Send the notification
+        _ = c.XSendEvent(self.display.?, req.requestor, c.False, 0, @ptrCast(&notify));
+        _ = c.XFlush(self.display.?);
+    }
+
+    fn handleSelectionNotify(self: *Self, notify: *c.XSelectionEvent) void {
+        if (notify.property == c.None) {
+            // Selection request failed
+            self.clipboard_request_pending = false;
+            return;
+        }
+
+        // Read the selection data
+        var actual_type: Atom = undefined;
+        var actual_format: c_int = undefined;
+        var nitems: c_ulong = undefined;
+        var bytes_after: c_ulong = undefined;
+        var prop_data: [*c]u8 = undefined;
+
+        const result = c.XGetWindowProperty(
+            self.display.?,
+            self.window,
+            notify.property,
+            0,
+            1024 * 1024, // Max 1MB
+            c.True, // Delete after reading
+            c.AnyPropertyType,
+            &actual_type,
+            &actual_format,
+            &nitems,
+            &bytes_after,
+            &prop_data,
+        );
+
+        if (result == c.Success and prop_data != null and nitems > 0) {
+            const len: usize = @intCast(nitems);
+            const text = prop_data[0..len];
+
+            // Store the clipboard data
+            if (notify.selection == self.atom_clipboard) {
+                if (self.clipboard_data) |old| {
+                    self.allocator.free(old);
+                }
+                self.clipboard_data = self.allocator.dupe(u8, text) catch null;
+            } else if (notify.selection == self.atom_primary) {
+                if (self.primary_data) |old| {
+                    self.allocator.free(old);
+                }
+                self.primary_data = self.allocator.dupe(u8, text) catch null;
+            }
+
+            _ = c.XFree(prop_data);
+        }
+
+        self.clipboard_request_pending = false;
+    }
+
+    /// Set clipboard content (selection: 0=CLIPBOARD, 1=PRIMARY)
+    pub fn setClipboard(self: *Self, selection: u8, text: []const u8) !void {
+        if (self.display == null) return error.NotInitialized;
+
+        const atom = if (selection == 0) self.atom_clipboard else self.atom_primary;
+
+        // Store the data
+        if (selection == 0) {
+            if (self.clipboard_data) |old| {
+                self.allocator.free(old);
+            }
+            self.clipboard_data = try self.allocator.dupe(u8, text);
+        } else {
+            if (self.primary_data) |old| {
+                self.allocator.free(old);
+            }
+            self.primary_data = try self.allocator.dupe(u8, text);
+        }
+
+        // Take ownership of the selection
+        _ = c.XSetSelectionOwner(self.display.?, atom, self.window, c.CurrentTime);
+        _ = c.XFlush(self.display.?);
+
+        log.debug("clipboard set: selection={} len={}", .{ selection, text.len });
+    }
+
+    /// Request clipboard content (selection: 0=CLIPBOARD, 1=PRIMARY)
+    /// The data will be available after the next pollEvents call
+    pub fn requestClipboard(self: *Self, selection: u8) void {
+        if (self.display == null) return;
+
+        const atom = if (selection == 0) self.atom_clipboard else self.atom_primary;
+        const property = c.XInternAtom(self.display.?, "SEMADRAW_CLIP", c.False);
+
+        self.clipboard_request_selection = selection;
+        self.clipboard_request_pending = true;
+
+        _ = c.XConvertSelection(
+            self.display.?,
+            atom,
+            self.atom_utf8_string,
+            property,
+            self.window,
+            c.CurrentTime,
+        );
+        _ = c.XFlush(self.display.?);
+    }
+
+    /// Get the most recently received clipboard data
+    pub fn getClipboardData(self: *Self, selection: u8) ?[]const u8 {
+        if (selection == 0) {
+            return self.clipboard_data;
+        } else {
+            return self.primary_data;
+        }
+    }
+
+    /// Check if a clipboard request is pending
+    pub fn isClipboardRequestPending(self: *Self) bool {
+        return self.clipboard_request_pending;
     }
 
     fn handleResize(self: *Self, new_width: u32, new_height: u32) !void {
@@ -836,6 +1049,26 @@ pub const X11Backend = struct {
         return self.mouse_events[0..count];
     }
 
+    fn setClipboardImpl(ctx: *anyopaque, selection: u8, text: []const u8) anyerror!void {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        return self.setClipboard(selection, text);
+    }
+
+    fn requestClipboardImpl(ctx: *anyopaque, selection: u8) void {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        self.requestClipboard(selection);
+    }
+
+    fn getClipboardDataImpl(ctx: *anyopaque, selection: u8) ?[]const u8 {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        return self.getClipboardData(selection);
+    }
+
+    fn isClipboardPendingImpl(ctx: *anyopaque) bool {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        return self.isClipboardRequestPending();
+    }
+
     pub const vtable = backend.Backend.VTable{
         .getCapabilities = getCapabilitiesImpl,
         .initFramebuffer = initFramebufferImpl,
@@ -845,6 +1078,10 @@ pub const X11Backend = struct {
         .pollEvents = pollEventsImpl,
         .getKeyEvents = getKeyEventsImpl,
         .getMouseEvents = getMouseEventsImpl,
+        .setClipboard = setClipboardImpl,
+        .requestClipboard = requestClipboardImpl,
+        .getClipboardData = getClipboardDataImpl,
+        .isClipboardPending = isClipboardPendingImpl,
         .deinit = deinitImpl,
     };
 

@@ -330,11 +330,18 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
                         log.debug("received key_press: code={} pressed={}", .{ key.key_code, key.pressed });
                         // Only process key presses (not releases)
                         if (key.pressed == 1) {
-                            handleKeyPress(&shell, &scr, key.key_code, key.modifiers);
+                            handleKeyPress(&shell, &scr, conn, key.key_code, key.modifiers);
                         }
                     },
                     .mouse_event => |mouse| {
                         handleMouseEvent(&shell, &scr, mouse);
+                    },
+                    .clipboard_data => |clip| {
+                        // Paste clipboard data to the shell
+                        log.debug("received clipboard data: {} bytes", .{clip.data.len});
+                        shell.write(clip.data) catch |err| {
+                            log.warn("clipboard paste failed: {}", .{err});
+                        };
                     },
                     else => |tag| {
                         log.debug("unhandled event type: {}", .{tag});
@@ -377,9 +384,23 @@ fn renderAndCommitWithBlink(allocator: std.mem.Allocator, rend: *renderer.Render
     log.debug("renderAndCommitWithBlink: attachAndCommit complete", .{});
 }
 
-fn handleKeyPress(shell: *pty.Pty, scr: *screen.Screen, key_code: u32, modifiers: u8) void {
+fn handleKeyPress(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connection, key_code: u32, modifiers: u8) void {
     const ctrl = (modifiers & Modifiers.CTRL) != 0;
     const shift = (modifiers & Modifiers.SHIFT) != 0;
+
+    // Handle clipboard shortcuts (Ctrl+Shift+V for paste)
+    if (ctrl and shift) {
+        switch (key_code) {
+            Key.V => {
+                // Request clipboard paste
+                conn.requestClipboard(.clipboard) catch |err| {
+                    log.warn("clipboard request failed: {}", .{err});
+                };
+                return;
+            },
+            else => {},
+        }
+    }
 
     // Handle scrollback navigation (Shift+PageUp/PageDown)
     if (shift) {

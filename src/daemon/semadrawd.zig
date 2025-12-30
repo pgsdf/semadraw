@@ -53,6 +53,9 @@ pub const Daemon = struct {
     surfaces: surface_registry.SurfaceRegistry,
     comp: compositor.Compositor,
     running: bool,
+    // Pending clipboard request tracking
+    pending_clipboard_client: ?protocol.ClientId,
+    pending_clipboard_selection: u8,
 
     pub fn init(allocator: std.mem.Allocator, config: Config) !Daemon {
         var server = try socket_server.SocketServer.bind(config.socket_path);
@@ -76,6 +79,8 @@ pub const Daemon = struct {
             .surfaces = surface_registry.SurfaceRegistry.init(allocator),
             .comp = undefined, // Initialized in initCompositor
             .running = false,
+            .pending_clipboard_client = null,
+            .pending_clipboard_selection = 0,
         };
     }
 
@@ -192,6 +197,9 @@ pub const Daemon = struct {
             if (mouse_events.len > 0) {
                 self.forwardMouseEvents(mouse_events);
             }
+
+            // Check for pending clipboard responses
+            self.checkPendingClipboard();
 
             if (n == 0) continue; // Timeout, no socket events
 
@@ -624,6 +632,8 @@ pub const Daemon = struct {
             .set_z_order => try self.handleSetZOrder(session, payload),
             .set_position => try self.handleSetPosition(session, payload),
             .sync => try self.handleSync(session, payload),
+            .clipboard_set => try self.handleClipboardSet(session, payload),
+            .clipboard_request => try self.handleClipboardRequest(session, payload),
             .disconnect => {
                 session.state = .disconnecting;
             },
@@ -847,6 +857,98 @@ pub const Daemon = struct {
         const reply = protocol.SyncDoneMsg{ .sync_id = msg.sync_id };
         reply.serialize(&reply_buf);
         try session.send(.sync_done, &reply_buf);
+    }
+
+    fn handleClipboardSet(self: *Daemon, session: *client_session.ClientSession, payload: ?[]u8) !void {
+        if (payload == null or payload.?.len < protocol.ClipboardSetMsg.HEADER_SIZE) {
+            try session.sendError(.protocol_error, 0);
+            return;
+        }
+
+        const msg = try protocol.ClipboardSetMsg.deserialize(payload.?);
+        const text_start = protocol.ClipboardSetMsg.HEADER_SIZE;
+        const text_end = text_start + msg.length;
+
+        if (payload.?.len < text_end) {
+            try session.sendError(.protocol_error, 0);
+            return;
+        }
+
+        const text = payload.?[text_start..text_end];
+        const selection: u8 = @intFromEnum(msg.selection);
+
+        self.comp.setClipboard(selection, text) catch |err| {
+            log.warn("clipboard set failed: {}", .{err});
+            return;
+        };
+
+        log.debug("client {} set clipboard selection={} len={}", .{ session.id, selection, text.len });
+    }
+
+    fn handleClipboardRequest(self: *Daemon, session: *client_session.ClientSession, payload: ?[]u8) !void {
+        if (payload == null or payload.?.len < protocol.ClipboardRequestMsg.SIZE) {
+            try session.sendError(.protocol_error, 0);
+            return;
+        }
+
+        const msg = try protocol.ClipboardRequestMsg.deserialize(payload.?);
+        const selection: u8 = @intFromEnum(msg.selection);
+
+        // Check if we already have clipboard data cached
+        if (self.comp.getClipboardData(selection)) |data| {
+            // Send clipboard data immediately
+            try self.sendClipboardData(session, msg.selection, data);
+        } else {
+            // Request clipboard from backend - it's async
+            // Store the pending request and client to respond to later
+            self.pending_clipboard_client = session.id;
+            self.pending_clipboard_selection = selection;
+            self.comp.requestClipboard(selection);
+        }
+    }
+
+    fn sendClipboardData(self: *Daemon, session: *client_session.ClientSession, selection: protocol.ClipboardSelection, data: []const u8) !void {
+        _ = self;
+        // Build response: header + text
+        const header_size = protocol.ClipboardDataMsg.HEADER_SIZE;
+        const total_size = header_size + data.len;
+
+        var buf = try session.allocator.alloc(u8, total_size);
+        defer session.allocator.free(buf);
+
+        const header = protocol.ClipboardDataMsg{
+            .selection = selection,
+            .length = @intCast(data.len),
+        };
+        header.serialize(buf[0..header_size]);
+        @memcpy(buf[header_size..], data);
+
+        try session.send(.clipboard_data, buf);
+        log.debug("sent clipboard data to client {}: selection={} len={}", .{ session.id, @intFromEnum(selection), data.len });
+    }
+
+    fn checkPendingClipboard(self: *Daemon) void {
+        // If we have a pending clipboard request, check if data is available
+        if (self.pending_clipboard_client) |client_id| {
+            // Check if request is still pending in backend
+            if (self.comp.isClipboardPending()) {
+                return; // Still waiting
+            }
+
+            // Data should now be available
+            if (self.comp.getClipboardData(self.pending_clipboard_selection)) |data| {
+                // Find the client and send the data
+                if (self.clients.getSession(client_id)) |session| {
+                    const selection: protocol.ClipboardSelection = @enumFromInt(self.pending_clipboard_selection);
+                    self.sendClipboardData(session, selection, data) catch |err| {
+                        log.warn("failed to send clipboard data to client {}: {}", .{ client_id, err });
+                    };
+                }
+            }
+
+            // Clear pending request
+            self.pending_clipboard_client = null;
+        }
     }
 
     fn disconnectClient(self: *Daemon, client_id: protocol.ClientId) void {
