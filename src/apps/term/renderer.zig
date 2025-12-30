@@ -362,7 +362,7 @@ pub const Renderer = struct {
             // Draw text - build glyph run for the label
             self.glyph_buffer.clearRetainingCapacity();
             for (label, 0..) |char, ci| {
-                const glyph_idx = font.Font.getGlyphIndex(char);
+                const glyph_idx = font.Font.charToIndexWithFallback(char);
                 try self.glyph_buffer.append(self.allocator, .{
                     .index = glyph_idx,
                     .x_offset = @floatFromInt(ci * font.Font.GLYPH_WIDTH),
