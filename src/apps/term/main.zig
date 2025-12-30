@@ -49,6 +49,8 @@ const Key = struct {
     const @"8": u32 = 9;
     const @"9": u32 = 10;
     const @"0": u32 = 11;
+    const MINUS: u32 = 12;
+    const EQUAL: u32 = 13;
     const BACKSPACE: u32 = 14;
     const TAB: u32 = 15;
     const Q: u32 = 16;
@@ -61,6 +63,8 @@ const Key = struct {
     const I: u32 = 23;
     const O: u32 = 24;
     const P: u32 = 25;
+    const LEFTBRACE: u32 = 26;
+    const RIGHTBRACE: u32 = 27;
     const ENTER: u32 = 28;
     const A: u32 = 30;
     const S: u32 = 31;
@@ -71,6 +75,10 @@ const Key = struct {
     const J: u32 = 36;
     const K: u32 = 37;
     const L: u32 = 38;
+    const SEMICOLON: u32 = 39;
+    const APOSTROPHE: u32 = 40;
+    const GRAVE: u32 = 41;
+    const BACKSLASH: u32 = 43;
     const Z: u32 = 44;
     const X: u32 = 45;
     const C: u32 = 46;
@@ -78,6 +86,9 @@ const Key = struct {
     const B: u32 = 48;
     const N: u32 = 49;
     const M: u32 = 50;
+    const COMMA: u32 = 51;
+    const DOT: u32 = 52;
+    const SLASH: u32 = 53;
     const SPACE: u32 = 57;
     const HOME: u32 = 102;
     const UP: u32 = 103;
@@ -516,9 +527,91 @@ fn handleKeyPress(shell: *pty.Pty, scr: *screen.Screen, key_code: u32, modifiers
             len = 1;
         },
 
-        // Numbers 0-9
-        Key.@"1"...Key.@"0" => |k| {
-            buf[0] = @intCast('0' + ((k + 8) % 10));
+        // Numbers 0-9 with shift for symbols
+        Key.@"1" => {
+            buf[0] = if (shift) '!' else '1';
+            len = 1;
+        },
+        Key.@"2" => {
+            buf[0] = if (shift) '@' else '2';
+            len = 1;
+        },
+        Key.@"3" => {
+            buf[0] = if (shift) '#' else '3';
+            len = 1;
+        },
+        Key.@"4" => {
+            buf[0] = if (shift) '$' else '4';
+            len = 1;
+        },
+        Key.@"5" => {
+            buf[0] = if (shift) '%' else '5';
+            len = 1;
+        },
+        Key.@"6" => {
+            buf[0] = if (shift) '^' else '6';
+            len = 1;
+        },
+        Key.@"7" => {
+            buf[0] = if (shift) '&' else '7';
+            len = 1;
+        },
+        Key.@"8" => {
+            buf[0] = if (shift) '*' else '8';
+            len = 1;
+        },
+        Key.@"9" => {
+            buf[0] = if (shift) '(' else '9';
+            len = 1;
+        },
+        Key.@"0" => {
+            buf[0] = if (shift) ')' else '0';
+            len = 1;
+        },
+
+        // Punctuation keys
+        Key.MINUS => {
+            buf[0] = if (shift) '_' else '-';
+            len = 1;
+        },
+        Key.EQUAL => {
+            buf[0] = if (shift) '+' else '=';
+            len = 1;
+        },
+        Key.LEFTBRACE => {
+            buf[0] = if (shift) '{' else '[';
+            len = 1;
+        },
+        Key.RIGHTBRACE => {
+            buf[0] = if (shift) '}' else ']';
+            len = 1;
+        },
+        Key.SEMICOLON => {
+            buf[0] = if (shift) ':' else ';';
+            len = 1;
+        },
+        Key.APOSTROPHE => {
+            buf[0] = if (shift) '"' else '\'';
+            len = 1;
+        },
+        Key.GRAVE => {
+            buf[0] = if (shift) '~' else '`';
+            len = 1;
+        },
+        Key.BACKSLASH => {
+            buf[0] = if (shift) '|' else '\\';
+            len = 1;
+        },
+        Key.COMMA => {
+            buf[0] = if (shift) '<' else ',';
+            len = 1;
+        },
+        Key.DOT => {
+            buf[0] = if (shift) '>' else '.';
+            len = 1;
+        },
+        Key.SLASH => {
+            buf[0] = if (shift) '?' else '/';
             len = 1;
         },
 
