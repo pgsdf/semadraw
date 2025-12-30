@@ -355,7 +355,7 @@ pub const VulkanConsoleBackend = struct {
             }
         }
 
-        self.display_mode = modes[best_mode_idx].displayModeKHR;
+        self.display_mode = modes[best_mode_idx].displayMode;
         self.width = modes[best_mode_idx].parameters.visibleRegion.width;
         self.height = modes[best_mode_idx].parameters.visibleRegion.height;
 
