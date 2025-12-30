@@ -258,12 +258,20 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
         }
         if (poll_fds[0].revents & (std.posix.POLL.HUP | std.posix.POLL.ERR) != 0) {
             // Get child exit status for diagnostics
+            // Use WNOHANG and store result so close() doesn't try to wait again
             const wait_result = posix.waitpid(shell.child_pid, posix.W.NOHANG);
             if (wait_result.pid != 0) {
+                // Mark as reaped so close() won't waitpid again
+                shell.child_pid = 0;
                 const status = wait_result.status;
                 if (posix.W.IFEXITED(status)) {
                     const exit_code = posix.W.EXITSTATUS(status);
-                    log.info("shell exited with code {}", .{exit_code});
+                    if (exit_code == 127) {
+                        log.err("shell exited with code 127 - execve failed (shell not found or not executable)", .{});
+                        log.err("on FreeBSD, bash is at /usr/local/bin/bash, not /bin/bash", .{});
+                    } else {
+                        log.info("shell exited with code {}", .{exit_code});
+                    }
                 } else if (posix.W.IFSIGNALED(status)) {
                     const signal = posix.W.TERMSIG(status);
                     log.info("shell killed by signal {}", .{signal});

@@ -130,7 +130,10 @@ pub const Pty = struct {
     /// Close the pty and wait for child
     pub fn close(self: *Self) void {
         posix.close(self.master_fd);
-        _ = posix.waitpid(self.child_pid, 0);
+        // Only wait if child hasn't been reaped already
+        if (self.child_pid != 0) {
+            _ = posix.waitpid(self.child_pid, 0);
+        }
     }
 
     /// Get the master file descriptor for polling
