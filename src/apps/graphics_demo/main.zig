@@ -9,8 +9,8 @@ pub const std_options = std.Options{
     .log_level = .info,
 };
 
-const WIDTH: f32 = 800;
-const HEIGHT: f32 = 600;
+const WIDTH: f32 = 400;
+const HEIGHT: f32 = 300;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -66,6 +66,8 @@ pub fn main() !void {
     var surface = try client.Surface.create(conn, WIDTH, HEIGHT);
     defer surface.destroy();
 
+    // Set higher z-order so demo appears on top of other windows (like terminal)
+    try surface.setZOrder(100);
     try surface.setVisible(true);
 
     log.info("surface created, starting animation...", .{});
@@ -115,13 +117,12 @@ fn renderFrame(enc: *semadraw.Encoder, frame: u32) !void {
 
     const t: f32 = @as(f32, @floatFromInt(frame)) * 0.02;
 
-    // Dark background with subtle animation
+    // Semi-transparent dark background so terminal shows through
     const bg_r = 0.05 + 0.02 * @sin(t * 0.5);
     const bg_g = 0.05 + 0.02 * @sin(t * 0.7);
     const bg_b = 0.1 + 0.03 * @sin(t * 0.3);
-    try enc.setBlend(semadraw.Encoder.BlendMode.Src);
-    try enc.fillRect(0, 0, WIDTH, HEIGHT, bg_r, bg_g, bg_b, 1.0);
     try enc.setBlend(semadraw.Encoder.BlendMode.SrcOver);
+    try enc.fillRect(0, 0, WIDTH, HEIGHT, bg_r, bg_g, bg_b, 0.85); // 85% opacity
     try enc.setAntialias(true);
 
     // Rotating bezier curves
