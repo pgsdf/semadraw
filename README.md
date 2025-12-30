@@ -218,7 +218,7 @@ semadraw-term
 
 **FreeBSD Input:**
 - Mouse via sysmouse (`/dev/sysmouse`) - requires `moused` daemon
-- Keyboard via `/dev/kbdmux0`, `/dev/ukbd0`, or `/dev/atkbd0`
+- Keyboard via `/dev/tty` in raw terminal mode
 
 **FreeBSD Setup:**
 ```sh
@@ -325,8 +325,8 @@ semadraw-term
 # From a virtual console (Ctrl+Alt+F2)
 # Requires: no display server running, Vulkan drivers
 
-# Start daemon with Vulkan console backend
-sudo semadrawd --backend vulkan_console
+# Start daemon with Vulkan console backend at 720p
+sudo semadrawd --backend vulkan_console -r 1280x720
 
 # In another session, run terminal
 semadraw-term
@@ -337,8 +337,8 @@ semadraw-term
 # Ensure moused is running
 sudo service moused start
 
-# Start with Vulkan console
-sudo semadrawd --backend vulkan_console
+# Start with Vulkan console at native resolution
+sudo semadrawd --backend vulkan_console -r 1920x1080
 
 # Run terminal
 semadraw-term
@@ -366,10 +366,26 @@ semadrawd [OPTIONS]
 | Option | Description |
 |--------|-------------|
 | `-b, --backend TYPE` | Backend: software, headless, kms, x11, vulkan, vulkan_console, wayland |
+| `-r, --resolution WxH` | Display resolution (default: 1920x1080) |
 | `-s, --socket PATH` | Unix socket path (default: /var/run/semadraw/semadraw.sock) |
 | `-t, --tcp PORT` | Enable TCP server on PORT for remote connections |
 | `--tcp-addr ADDR` | Bind TCP to specific address (default: 0.0.0.0) |
 | `-h, --help` | Show help |
+
+**Resolution Examples:**
+```sh
+# 1080p (default)
+semadrawd --backend vulkan -r 1920x1080
+
+# 720p for lower-end hardware
+semadrawd --backend vulkan_console -r 1280x720
+
+# 1440p
+semadrawd --backend x11 --resolution 2560x1440
+
+# 4K
+semadrawd --backend vulkan -r 3840x2160
+```
 
 **Backend Comparison:**
 
