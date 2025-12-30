@@ -479,6 +479,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "backend", .module = backend_mod },
         },
     });
+    bsdinput_mod.link_libc = true;
 
     // Vulkan console backend module (VK_KHR_display for direct display output)
     const vulkan_console_backend_mod = b.createModule(.{
