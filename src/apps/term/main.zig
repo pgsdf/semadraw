@@ -894,44 +894,49 @@ fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connecti
             return;
         }
 
-        // Execute action when chord button is released while menu is visible
+        // When chord button is released, keep menu open - user can still select
+        // Menu stays open as long as left button is held
         if (chord_menu.visible and event_type == .release) {
             if (mouse.button == .middle or mouse.button == .right) {
-                // Execute the selected action
-                if (chord_menu.selected) |action| {
-                    switch (action) {
-                        .copy => {
-                            log.debug("menu action: copy", .{});
-                            if (scr.selection.active) {
-                                if (scr.getSelectedText(scr.allocator) catch null) |text| {
-                                    conn.setClipboard(.clipboard, text) catch |err| {
-                                        log.warn("chord snarf failed: {}", .{err});
-                                    };
-                                    scr.allocator.free(text);
-                                }
-                            }
-                        },
-                        .paste => {
-                            log.debug("menu action: paste", .{});
-                            conn.requestClipboard(.clipboard) catch |err| {
-                                log.warn("chord paste request failed: {}", .{err});
-                            };
-                        },
-                    }
-                }
-                // Hide menu after action
-                chord_menu.hide();
-                scr.dirty = true;
+                // Just continue - menu stays open while left is held
+                log.debug("chord button released, menu stays open", .{});
                 return;
             }
         }
 
-        // Hide menu and reset chord state when left button is released
-        if (event_type == .release and mouse.button == .left) {
-            if (chord_menu.visible) {
-                chord_menu.hide();
-                scr.dirty = true;
+        // Execute action when LEFT button is released while menu is visible
+        if (chord_menu.visible and event_type == .release and mouse.button == .left) {
+            // Execute the selected action if any
+            if (chord_menu.selected) |action| {
+                switch (action) {
+                    .copy => {
+                        log.debug("menu action: copy", .{});
+                        if (scr.selection.active) {
+                            if (scr.getSelectedText(scr.allocator) catch null) |text| {
+                                conn.setClipboard(.clipboard, text) catch |err| {
+                                    log.warn("chord snarf failed: {}", .{err});
+                                };
+                                scr.allocator.free(text);
+                            }
+                        }
+                    },
+                    .paste => {
+                        log.debug("menu action: paste", .{});
+                        conn.requestClipboard(.clipboard) catch |err| {
+                            log.warn("chord paste request failed: {}", .{err});
+                        };
+                    },
+                }
             }
+            // Hide menu
+            chord_menu.hide();
+            mouse_state.chord_handled = false;
+            scr.dirty = true;
+            return;
+        }
+
+        // Hide menu and reset chord state when left button is released (no menu case)
+        if (event_type == .release and mouse.button == .left) {
             mouse_state.chord_handled = false;
         }
 
