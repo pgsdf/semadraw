@@ -325,9 +325,9 @@ pub const DrmBackend = struct {
         try self.findConnector();
 
         // Initialize input devices via evdev module
-        self.input = evdev.EvdevInput.init(allocator, self.width, self.height) catch |err| {
+        self.input = evdev.EvdevInput.init(allocator, self.width, self.height) catch |err| blk: {
             log.warn("failed to initialize evdev input: {}", .{err});
-            null;
+            break :blk null;
         };
 
         return self;
