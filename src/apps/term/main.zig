@@ -471,7 +471,7 @@ fn renderAndCommitWithBlink(allocator: std.mem.Allocator, rend: *renderer.Render
 
     // Build menu overlay if chord menu is visible
     const menu_overlay: ?renderer.Renderer.MenuOverlay = if (chord_menu.visible) blk: {
-        log.info("rendering with {} menu at ({}, {})", .{ @tagName(chord_menu.menu_type), chord_menu.x, chord_menu.y });
+        log.info("rendering with {s} menu at ({}, {})", .{ @tagName(chord_menu.menu_type), chord_menu.x, chord_menu.y });
         break :blk .{
             .x = chord_menu.x,
             .y = chord_menu.y,
@@ -883,7 +883,7 @@ fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connecti
         if (chord_condition and is_chord_press) {
             // Determine menu type based on which button was pressed
             const menu_type: ChordMenu.MenuType = if (mouse.button == .middle) .edit else .paste;
-            log.info("CHORD DETECTED: showing {} menu at ({}, {})", .{ @tagName(menu_type), mouse.x, mouse.y });
+            log.info("CHORD DETECTED: showing {s} menu at ({}, {})", .{ @tagName(menu_type), mouse.x, mouse.y });
             chord_menu.show(mouse.x, mouse.y, menu_type);
             chord_menu.updateSelection(mouse.x, mouse.y);
             mouse_state.chord_handled = true;
