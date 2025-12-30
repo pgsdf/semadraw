@@ -325,7 +325,10 @@ semadraw-term
 # From a virtual console (Ctrl+Alt+F2)
 # Requires: no display server running, Vulkan drivers
 
-# Start daemon with Vulkan console backend at 720p
+# Start daemon (auto-selects best display mode)
+sudo semadrawd --backend vulkan_console
+
+# Or specify a display mode if needed
 sudo semadrawd --backend vulkan_console -r 1280x720
 
 # In another session, run terminal
@@ -337,11 +340,11 @@ semadraw-term
 # Ensure moused is running
 sudo service moused start
 
-# Start with Vulkan console at native resolution
-sudo semadrawd --backend vulkan_console -r 1920x1080
+# Start with Vulkan console (auto-selects display mode)
+sudo semadrawd --backend vulkan_console
 
-# Run terminal
-semadraw-term
+# Run terminal with larger text
+semadraw-term --scale 2
 ```
 
 **Example 7: Headless testing**
@@ -366,26 +369,23 @@ semadrawd [OPTIONS]
 | Option | Description |
 |--------|-------------|
 | `-b, --backend TYPE` | Backend: software, headless, kms, x11, vulkan, vulkan_console, wayland |
-| `-r, --resolution WxH` | Display resolution (default: 1920x1080) |
+| `-r, --resolution WxH` | Output display mode (default: 1920x1080) |
 | `-s, --socket PATH` | Unix socket path (default: /var/run/semadraw/semadraw.sock) |
 | `-t, --tcp PORT` | Enable TCP server on PORT for remote connections |
 | `--tcp-addr ADDR` | Bind TCP to specific address (default: 0.0.0.0) |
 | `-h, --help` | Show help |
 
-**Resolution Examples:**
-```sh
-# 1080p (default)
-semadrawd --backend vulkan -r 1920x1080
+**Display Mode (-r):**
 
-# 720p for lower-end hardware
-semadrawd --backend vulkan_console -r 1280x720
+The `-r` option sets the **output display mode**, not the content resolution. SemaDraw content is resolution-independent - the SDCS command stream uses semantic coordinates that render correctly at any output size.
 
-# 1440p
-semadrawd --backend x11 --resolution 2560x1440
+| Backend | What -r does |
+|---------|--------------|
+| vulkan_console, kms | Selects hardware display mode |
+| x11, vulkan, wayland | Sets initial window size |
+| headless | Sets framebuffer size for testing |
 
-# 4K
-semadrawd --backend vulkan -r 3840x2160
-```
+For console backends, `-r` tells the hardware what mode to use. For windowed backends, it's optional since windows can resize. Content automatically scales to fit the output.
 
 **Backend Comparison:**
 
