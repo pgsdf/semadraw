@@ -890,8 +890,8 @@ fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connecti
 
     // Convert pixel coordinates to cell coordinates (0-based for selection)
     // Use scaled cell dimensions from renderer
-    const cell_x = @divFloor(mouse.x, @as(i32, rend.getCellWidth()));
-    const cell_y = @divFloor(mouse.y, @as(i32, rend.getCellHeight()));
+    const cell_x = @divFloor(mouse.x, @as(i32, @intCast(rend.getCellWidth())));
+    const cell_y = @divFloor(mouse.y, @as(i32, @intCast(rend.getCellHeight())));
     const col: u32 = @intCast(@max(0, @min(cell_x, @as(i32, @intCast(scr.cols)) - 1)));
     const row: u32 = @intCast(@max(0, @min(cell_y, @as(i32, @intCast(scr.rows)) - 1)));
 
