@@ -573,8 +573,6 @@ pub const WaylandBackend = struct {
 
     fn registryGlobal(data: ?*anyopaque, registry: ?*anyopaque, name: u32, interface: [*:0]const u8, version: u32) callconv(.c) void {
         const self: *Self = @ptrCast(@alignCast(data));
-        _ = version;
-
         const iface = std.mem.span(interface);
 
         if (std.mem.eql(u8, iface, "wl_compositor")) {
