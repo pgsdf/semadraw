@@ -33,22 +33,28 @@ var mouse_state = MouseState{};
 /// Chord menu for Plan 9-style operations
 pub const ChordMenu = struct {
     visible: bool = false,
+    menu_type: MenuType = .edit,
     x: i32 = 0, // Pixel position
     y: i32 = 0,
-    selected: ?MenuItem = null,
+    selected: ?usize = null, // Index into current menu's items
 
-    pub const MenuItem = enum {
-        copy, // Snarf - copy selection to clipboard
-        paste, // Paste from clipboard
+    pub const MenuType = enum {
+        edit, // Left+Middle: Copy, Cut/Clear
+        paste, // Left+Right: Paste, Paste Primary
     };
 
     pub const ITEM_HEIGHT: u32 = font.Font.GLYPH_HEIGHT + 4;
-    pub const ITEM_WIDTH: u32 = font.Font.GLYPH_WIDTH * 8; // "  Paste  "
+    pub const ITEM_WIDTH: u32 = font.Font.GLYPH_WIDTH * 14; // Enough for "Paste Primary"
     pub const MENU_HEIGHT: u32 = ITEM_HEIGHT * 2 + 4; // 2 items + border
     pub const MENU_WIDTH: u32 = ITEM_WIDTH + 4; // + border
 
-    pub fn show(self: *ChordMenu, px: i32, py: i32) void {
+    // Menu labels for each type
+    pub const EDIT_LABELS: [2][]const u8 = .{ " Copy         ", " Clear        " };
+    pub const PASTE_LABELS: [2][]const u8 = .{ " Paste        ", " Paste Primary" };
+
+    pub fn show(self: *ChordMenu, px: i32, py: i32, mtype: MenuType) void {
         self.visible = true;
+        self.menu_type = mtype;
         self.x = px;
         self.y = py;
         self.selected = null;
@@ -57,6 +63,13 @@ pub const ChordMenu = struct {
     pub fn hide(self: *ChordMenu) void {
         self.visible = false;
         self.selected = null;
+    }
+
+    pub fn getLabels(self: *const ChordMenu) []const []const u8 {
+        return switch (self.menu_type) {
+            .edit => &EDIT_LABELS,
+            .paste => &PASTE_LABELS,
+        };
     }
 
     /// Update selection based on mouse position
@@ -80,18 +93,12 @@ pub const ChordMenu = struct {
         const rel_y = py - menu_y - 2; // Subtract border
         const item_h: i32 = @intCast(ITEM_HEIGHT);
         if (rel_y >= 0 and rel_y < item_h) {
-            self.selected = .copy;
+            self.selected = 0;
         } else if (rel_y >= item_h and rel_y < item_h * 2) {
-            self.selected = .paste;
+            self.selected = 1;
         } else {
             self.selected = null;
         }
-    }
-
-    pub const LABELS: [2][]const u8 = .{ " Copy  ", " Paste " };
-
-    pub fn getLabels() [2][]const u8 {
-        return LABELS;
     }
 };
 
@@ -464,18 +471,15 @@ fn renderAndCommitWithBlink(allocator: std.mem.Allocator, rend: *renderer.Render
 
     // Build menu overlay if chord menu is visible
     const menu_overlay: ?renderer.Renderer.MenuOverlay = if (chord_menu.visible) blk: {
-        log.info("rendering with chord menu at ({}, {})", .{ chord_menu.x, chord_menu.y });
+        log.info("rendering with {} menu at ({}, {})", .{ @tagName(chord_menu.menu_type), chord_menu.x, chord_menu.y });
         break :blk .{
             .x = chord_menu.x,
             .y = chord_menu.y,
             .width = ChordMenu.MENU_WIDTH,
             .height = ChordMenu.MENU_HEIGHT,
             .item_height = ChordMenu.ITEM_HEIGHT,
-            .labels = ChordMenu.LABELS[0..], // Explicit slice
-            .selected_idx = if (chord_menu.selected) |sel| switch (sel) {
-                .copy => 0,
-                .paste => 1,
-            } else null,
+            .labels = chord_menu.getLabels(),
+            .selected_idx = chord_menu.selected,
         };
     } else null;
 
@@ -877,13 +881,13 @@ fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connecti
         const chord_condition = mouse_state.left_down and (mouse_state.middle_down or mouse_state.right_down);
         const is_chord_press = event_type == .press and (mouse.button == .middle or mouse.button == .right);
         if (chord_condition and is_chord_press) {
-            // Show menu at mouse position
-            log.info("CHORD DETECTED: showing menu at ({}, {})", .{ mouse.x, mouse.y });
-            chord_menu.show(mouse.x, mouse.y);
+            // Determine menu type based on which button was pressed
+            const menu_type: ChordMenu.MenuType = if (mouse.button == .middle) .edit else .paste;
+            log.info("CHORD DETECTED: showing {} menu at ({}, {})", .{ @tagName(menu_type), mouse.x, mouse.y });
+            chord_menu.show(mouse.x, mouse.y, menu_type);
             chord_menu.updateSelection(mouse.x, mouse.y);
             mouse_state.chord_handled = true;
             scr.dirty = true;
-            log.info("menu visible={} dirty={}", .{ chord_menu.visible, scr.dirty });
             return;
         }
 
@@ -906,25 +910,39 @@ fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connecti
 
         // Execute action when LEFT button is released while menu is visible
         if (chord_menu.visible and event_type == .release and mouse.button == .left) {
-            // Execute the selected action if any
-            if (chord_menu.selected) |action| {
-                switch (action) {
-                    .copy => {
-                        log.debug("menu action: copy", .{});
-                        if (scr.selection.active) {
-                            if (scr.getSelectedText(scr.allocator) catch null) |text| {
-                                conn.setClipboard(.clipboard, text) catch |err| {
-                                    log.warn("chord snarf failed: {}", .{err});
-                                };
-                                scr.allocator.free(text);
+            // Execute the selected action based on menu type and selection index
+            if (chord_menu.selected) |idx| {
+                switch (chord_menu.menu_type) {
+                    .edit => {
+                        // Edit menu: 0=Copy, 1=Clear
+                        if (idx == 0) {
+                            log.debug("menu action: copy", .{});
+                            if (scr.selection.active) {
+                                if (scr.getSelectedText(scr.allocator) catch null) |text| {
+                                    conn.setClipboard(.clipboard, text) catch |err| {
+                                        log.warn("chord snarf failed: {}", .{err});
+                                    };
+                                    scr.allocator.free(text);
+                                }
                             }
+                        } else if (idx == 1) {
+                            log.debug("menu action: clear selection", .{});
+                            scr.clearSelection();
                         }
                     },
                     .paste => {
-                        log.debug("menu action: paste", .{});
-                        conn.requestClipboard(.clipboard) catch |err| {
-                            log.warn("chord paste request failed: {}", .{err});
-                        };
+                        // Paste menu: 0=Paste (clipboard), 1=Paste Primary
+                        if (idx == 0) {
+                            log.debug("menu action: paste from clipboard", .{});
+                            conn.requestClipboard(.clipboard) catch |err| {
+                                log.warn("chord paste request failed: {}", .{err});
+                            };
+                        } else if (idx == 1) {
+                            log.debug("menu action: paste from primary", .{});
+                            conn.requestClipboard(.primary) catch |err| {
+                                log.warn("chord paste primary failed: {}", .{err});
+                            };
+                        }
                     },
                 }
             }
