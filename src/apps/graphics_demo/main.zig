@@ -130,7 +130,7 @@ fn renderFrame(enc: *semadraw.Encoder, frame: u32) !void {
     // Rotating bezier curves
     const cx = WIDTH / 2;
     const cy = HEIGHT / 2;
-    const radius: f32 = 200;
+    const radius: f32 = 120; // Scaled to fit within 400x300 surface
 
     var i: u32 = 0;
     while (i < 6) : (i += 1) {
@@ -161,10 +161,10 @@ fn renderFrame(enc: *semadraw.Encoder, frame: u32) !void {
     var j: u32 = 0;
     while (j < 8) : (j += 1) {
         const orbit_angle = t * 1.5 + @as(f32, @floatFromInt(j)) * std.math.pi / 4.0;
-        const orbit_radius: f32 = 150 + 50 * @sin(t * 2 + @as(f32, @floatFromInt(j)));
+        const orbit_radius: f32 = 80 + 30 * @sin(t * 2 + @as(f32, @floatFromInt(j)));
         const orb_x = cx + orbit_radius * @cos(orbit_angle);
         const orb_y = cy + orbit_radius * @sin(orbit_angle);
-        const orb_size: f32 = 15 + 10 * @sin(t * 3 + @as(f32, @floatFromInt(j)));
+        const orb_size: f32 = 12 + 8 * @sin(t * 3 + @as(f32, @floatFromInt(j)));
 
         // Gradient-like effect with alpha
         const alpha = 0.6 + 0.3 * @sin(t * 2 + @as(f32, @floatFromInt(j)));
