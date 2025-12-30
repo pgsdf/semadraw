@@ -426,6 +426,13 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
                     },
                     .mouse_event => |mouse| {
                         handleMouseEvent(&shell, &scr, conn, mouse);
+                        // Force immediate render when chord menu becomes visible
+                        // This ensures the menu is displayed before more events can hide it
+                        if (chord_menu.visible and scr.dirty) {
+                            log.debug("chord menu visible, forcing immediate render", .{});
+                            try renderAndCommitWithBlink(allocator, &rend, surface, cursor_blink_visible);
+                            scr.dirty = false;
+                        }
                     },
                     .clipboard_data => |clip| {
                         // Paste clipboard data to the shell
