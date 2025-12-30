@@ -88,8 +88,10 @@ pub const ChordMenu = struct {
         }
     }
 
+    pub const LABELS: [2][]const u8 = .{ " Copy  ", " Paste " };
+
     pub fn getLabels() [2][]const u8 {
-        return .{ " Copy  ", " Paste " };
+        return LABELS;
     }
 };
 
@@ -461,21 +463,17 @@ fn renderAndCommitWithBlink(allocator: std.mem.Allocator, rend: *renderer.Render
     log.debug("renderAndCommitWithBlink: calling rend.render()", .{});
 
     // Build menu overlay if chord menu is visible
-    const menu_overlay: ?renderer.Renderer.MenuOverlay = if (chord_menu.visible) blk: {
-        const labels = ChordMenu.getLabels();
-        const selected_idx: ?usize = if (chord_menu.selected) |sel| switch (sel) {
+    const menu_overlay: ?renderer.Renderer.MenuOverlay = if (chord_menu.visible) .{
+        .x = chord_menu.x,
+        .y = chord_menu.y,
+        .width = ChordMenu.MENU_WIDTH,
+        .height = ChordMenu.MENU_HEIGHT,
+        .item_height = ChordMenu.ITEM_HEIGHT,
+        .labels = &ChordMenu.LABELS,
+        .selected_idx = if (chord_menu.selected) |sel| switch (sel) {
             .copy => 0,
             .paste => 1,
-        } else null;
-        break :blk .{
-            .x = chord_menu.x,
-            .y = chord_menu.y,
-            .width = ChordMenu.MENU_WIDTH,
-            .height = ChordMenu.MENU_HEIGHT,
-            .item_height = ChordMenu.ITEM_HEIGHT,
-            .labels = &labels,
-            .selected_idx = selected_idx,
-        };
+        } else null,
     } else null;
 
     const sdcs_data = try rend.renderWithOverlay(menu_overlay);
