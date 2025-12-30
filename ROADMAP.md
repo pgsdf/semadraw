@@ -101,7 +101,9 @@ Current implementation status for input and clipboard across backends:
 Notes:
 - Software backend is headless (no display) - input not applicable
 - Vulkan uses X11 window for presentation with full X11 input/clipboard support
-- Vulkan Console uses VK_KHR_display for direct display output with evdev for input
+- Vulkan Console uses VK_KHR_display for direct display output
+  - Linux: evdev for input (/dev/input/event*)
+  - FreeBSD: sysmouse + console keyboard (/dev/sysmouse, /dev/kbdmux0)
 - KMS/DRM and Vulkan Console use file-based clipboard (/tmp/.semadraw-clipboard, /tmp/.semadraw-primary)
   - *Works within semadraw sessions, not shared with other applications
 - **Wayland clipboard uses wl_data_device protocol (CLIPBOARD only, no PRIMARY selection)
@@ -112,11 +114,12 @@ Notes:
 * **Vulkan Console Backend** ✓
   - GPU-accelerated rendering directly to DRM/KMS (no X11/Wayland)
   - Uses VK_KHR_display extension for direct display output
-  - Reuses evdev input module for keyboard/mouse
+  - Cross-platform input: evdev on Linux, sysmouse/kbdmux on FreeBSD
   - Provides GPU acceleration for console/TTY environments
 
 * **Input Abstraction Layer** ✓
   - Factored evdev handling into reusable module (src/backend/evdev.zig)
-  - KMS backend updated to use the evdev module
-  - Vulkan console backend reuses the evdev module
+  - Added BSD input module (src/backend/bsdinput.zig) for FreeBSD support
+  - KMS backend uses evdev module
+  - Vulkan console backend auto-selects evdev (Linux) or bsdinput (FreeBSD)
 
