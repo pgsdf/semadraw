@@ -4,14 +4,38 @@ const backend = @import("backend");
 
 const log = std.log.scoped(.bsd_input);
 
-// Link libc for ioctl
+// Link libc for ioctl and console access
 const c = @cImport({
     @cInclude("sys/ioctl.h");
     @cInclude("termios.h");
+    @cInclude("sys/consio.h"); // For KDSKBMODE, KDGKBMODE
+    @cInclude("sys/kbio.h"); // For keyboard mode constants
+    @cInclude("fcntl.h");
+    @cInclude("dirent.h");
 });
 
+// Evdev constants (same as Linux evdev.zig)
+const EVIOCGBIT = 0x80004520; // EVIOCGBIT(0, 0) base
+const EV_KEY: u16 = 0x01;
+const EV_REL: u16 = 0x02;
+const EV_ABS: u16 = 0x03;
+
+// Keyboard mode constants (from sys/kbio.h)
+const K_RAW: c_int = 0; // Raw scancode mode
+const K_XLATE: c_int = 1; // Translated ASCII mode
+const K_CODE: c_int = 2; // Key code mode
+
+// Input event structure for evdev
+const InputEvent = extern struct {
+    tv_sec: isize,
+    tv_usec: isize,
+    type: u16,
+    code: u16,
+    value: i32,
+};
+
 // ============================================================================
-// FreeBSD input support (sysmouse + console keyboard via /dev/tty)
+// FreeBSD input support (evdev + sysmouse + VT console keyboard)
 // ============================================================================
 
 /// Maximum number of input devices to track
@@ -24,6 +48,14 @@ pub const InputDeviceType = enum {
     unknown,
 };
 
+/// Keyboard input mode
+pub const KeyboardMode = enum {
+    none, // No keyboard available
+    evdev, // Using evdev device (/dev/input/event*)
+    vt_raw, // Using VT console in raw scancode mode
+    tty_cooked, // Using /dev/tty in raw termios mode (fallback)
+};
+
 /// BSD input handler - manages keyboard and mouse input on FreeBSD
 pub const BsdInput = struct {
     allocator: std.mem.Allocator,
@@ -31,6 +63,16 @@ pub const BsdInput = struct {
     // Input device file descriptors
     mouse_fd: posix.fd_t,
     tty_fd: posix.fd_t,
+
+    // Evdev keyboard device (if available)
+    evdev_keyboard_fd: posix.fd_t,
+
+    // VT console device (for raw keyboard mode)
+    console_fd: posix.fd_t,
+    orig_kb_mode: c_int, // Original keyboard mode for restoration
+
+    // Keyboard input mode being used
+    keyboard_mode: KeyboardMode,
 
     // Original terminal settings (for restoration)
     orig_termios: ?c.struct_termios,
@@ -42,7 +84,10 @@ pub const BsdInput = struct {
     screen_width: u32,
     screen_height: u32,
 
-    // Modifier key state
+    // Modifier key state (for scancode tracking)
+    shift_pressed: bool,
+    ctrl_pressed: bool,
+    alt_pressed: bool,
     modifiers: u8, // Bit flags: 0=shift, 1=alt, 2=ctrl, 3=meta
 
     // Event queues
@@ -55,7 +100,7 @@ pub const BsdInput = struct {
     mouse_buf: [5]u8,
     mouse_buf_len: usize,
 
-    // Escape sequence buffer for keyboard
+    // Escape sequence buffer for keyboard (tty mode only)
     esc_buf: [16]u8,
     esc_buf_len: usize,
     esc_timeout: i64, // Timestamp when escape started
@@ -76,12 +121,19 @@ pub const BsdInput = struct {
             .allocator = allocator,
             .mouse_fd = -1,
             .tty_fd = -1,
+            .evdev_keyboard_fd = -1,
+            .console_fd = -1,
+            .orig_kb_mode = K_XLATE,
+            .keyboard_mode = .none,
             .orig_termios = null,
             .mouse_x = @intCast(screen_width / 2),
             .mouse_y = @intCast(screen_height / 2),
             .mouse_buttons = 0,
             .screen_width = screen_width,
             .screen_height = screen_height,
+            .shift_pressed = false,
+            .ctrl_pressed = false,
+            .alt_pressed = false,
             .modifiers = 0,
             .key_events = undefined,
             .key_event_count = 0,
@@ -104,36 +156,158 @@ pub const BsdInput = struct {
             log.info("opened /dev/sysmouse for mouse input", .{});
         }
 
-        // Open /dev/tty for keyboard input (the controlling terminal)
-        self.tty_fd = posix.open("/dev/tty", .{ .ACCMODE = .RDONLY, .NONBLOCK = true }, 0) catch |err| blk: {
-            log.warn("failed to open /dev/tty: {}", .{err});
-            break :blk -1;
-        };
+        // Try keyboard input methods in order of preference:
+        // 1. evdev (if available on FreeBSD with evdev support)
+        // 2. VT console raw mode (for direct console access)
+        // 3. /dev/tty cooked mode (fallback)
 
-        if (self.tty_fd >= 0) {
-            // Save original termios and set raw mode
-            if (self.setRawMode()) {
-                log.info("opened /dev/tty for keyboard input (raw mode)", .{});
-            } else {
-                log.warn("failed to set raw mode on /dev/tty", .{});
-            }
+        // Method 1: Try evdev keyboard
+        if (self.tryEvdevKeyboard()) {
+            log.info("keyboard: using evdev device", .{});
+        }
+        // Method 2: Try VT console raw keyboard mode
+        else if (self.tryVtConsoleKeyboard()) {
+            log.info("keyboard: using VT console raw mode", .{});
+        }
+        // Method 3: Fall back to /dev/tty cooked mode
+        else if (self.tryTtyKeyboard()) {
+            log.info("keyboard: using /dev/tty cooked mode (fallback)", .{});
+            log.warn("keyboard input may not work from another terminal", .{});
+        } else {
+            log.warn("no keyboard input method available", .{});
         }
 
         // Log input device status
-        if (self.mouse_fd >= 0 and self.tty_fd >= 0) {
-            log.info("BSD input initialized: mouse and keyboard available", .{});
-        } else if (self.tty_fd >= 0) {
-            log.info("BSD input initialized: keyboard only (no mouse)", .{});
+        const kb_available = self.keyboard_mode != .none;
+        const mouse_available = self.mouse_fd >= 0;
+
+        if (mouse_available and kb_available) {
+            log.info("BSD input initialized: mouse and keyboard ({s}) available", .{@tagName(self.keyboard_mode)});
+        } else if (kb_available) {
+            log.info("BSD input initialized: keyboard ({s}) only", .{@tagName(self.keyboard_mode)});
             log.warn("for mouse: ensure moused is running (service moused start)", .{});
-        } else if (self.mouse_fd >= 0) {
+        } else if (mouse_available) {
             log.warn("BSD input: mouse available but keyboard failed", .{});
         } else {
             log.warn("no input devices available on FreeBSD", .{});
-            log.warn("for keyboard: ensure /dev/tty is accessible", .{});
             log.warn("for mouse: ensure moused is running (service moused start)", .{});
         }
 
         return self;
+    }
+
+    /// Try to open an evdev keyboard device
+    fn tryEvdevKeyboard(self: *Self) bool {
+        // Scan /dev/input/ for event devices
+        var path_buf: [64]u8 = undefined;
+
+        var i: u32 = 0;
+        while (i < 32) : (i += 1) {
+            const path = std.fmt.bufPrint(&path_buf, "/dev/input/event{}", .{i}) catch continue;
+            const path_z = std.fmt.bufPrintZ(&path_buf, "/dev/input/event{}", .{i}) catch continue;
+            _ = path;
+
+            const fd = posix.open(path_z, .{ .ACCMODE = .RDONLY, .NONBLOCK = true }, 0) catch continue;
+
+            // Check if this is a keyboard device
+            if (self.isEvdevKeyboard(fd)) {
+                self.evdev_keyboard_fd = fd;
+                self.keyboard_mode = .evdev;
+                log.info("found evdev keyboard at /dev/input/event{}", .{i});
+                return true;
+            }
+
+            posix.close(fd);
+        }
+
+        return false;
+    }
+
+    /// Check if an evdev device is a keyboard
+    fn isEvdevKeyboard(self: *Self, fd: posix.fd_t) bool {
+        _ = self;
+
+        // Get event types supported by this device
+        var ev_bits: [4]u8 = undefined;
+        const ioctl_num = @as(usize, 0x80000000) | (@as(usize, ev_bits.len) << 16) | (@as(usize, 'E') << 8) | 0x20;
+
+        const result = std.posix.system.ioctl(fd, @intCast(ioctl_num), @intFromPtr(&ev_bits));
+        if (@as(isize, @bitCast(result)) < 0) return false;
+
+        // Check for EV_KEY support (bit 1)
+        const has_key = (ev_bits[0] & (1 << EV_KEY)) != 0;
+        if (!has_key) return false;
+
+        // Check for actual keyboard keys (Q, W, E keys)
+        var key_bits: [64]u8 = undefined;
+        const key_ioctl = @as(usize, 0x80000000) | (@as(usize, key_bits.len) << 16) | (@as(usize, 'E') << 8) | 0x21;
+        const key_result = std.posix.system.ioctl(fd, @intCast(key_ioctl), @intFromPtr(&key_bits));
+        if (@as(isize, @bitCast(key_result)) < 0) return false;
+
+        // Check for KEY_Q (16) and KEY_W (17) - most keyboards have these
+        const has_q = (key_bits[16 / 8] & (@as(u8, 1) << @intCast(16 % 8))) != 0;
+        const has_w = (key_bits[17 / 8] & (@as(u8, 1) << @intCast(17 % 8))) != 0;
+
+        return has_q and has_w;
+    }
+
+    /// Try to set up VT console raw keyboard mode
+    fn tryVtConsoleKeyboard(self: *Self) bool {
+        // Try to open the console device
+        const console_paths = [_][:0]const u8{
+            "/dev/ttyv0",
+            "/dev/console",
+        };
+
+        for (console_paths) |path| {
+            self.console_fd = posix.open(path, .{ .ACCMODE = .RDONLY, .NONBLOCK = true }, 0) catch continue;
+
+            // Try to get current keyboard mode
+            var current_mode: c_int = K_XLATE;
+            const kdgkbmode_result = c.ioctl(self.console_fd, c.KDGKBMODE, &current_mode);
+
+            if (kdgkbmode_result < 0) {
+                log.debug("KDGKBMODE failed on {s} (errno={})", .{ path, std.posix.errno(kdgkbmode_result) });
+                posix.close(self.console_fd);
+                self.console_fd = -1;
+                continue;
+            }
+
+            // Save original mode
+            self.orig_kb_mode = current_mode;
+
+            // Try to set raw scancode mode (K_CODE gives us keycodes, K_RAW gives scancodes)
+            const set_result = c.ioctl(self.console_fd, c.KDSKBMODE, K_CODE);
+            if (set_result < 0) {
+                log.debug("KDSKBMODE K_CODE failed on {s} (errno={})", .{ path, std.posix.errno(set_result) });
+                posix.close(self.console_fd);
+                self.console_fd = -1;
+                continue;
+            }
+
+            self.keyboard_mode = .vt_raw;
+            log.info("VT console keyboard: {s} (mode {} -> K_CODE)", .{ path, current_mode });
+            return true;
+        }
+
+        return false;
+    }
+
+    /// Try to open /dev/tty for keyboard input (fallback mode)
+    fn tryTtyKeyboard(self: *Self) bool {
+        self.tty_fd = posix.open("/dev/tty", .{ .ACCMODE = .RDONLY, .NONBLOCK = true }, 0) catch |err| {
+            log.debug("failed to open /dev/tty: {}", .{err});
+            return false;
+        };
+
+        if (self.setRawMode()) {
+            self.keyboard_mode = .tty_cooked;
+            return true;
+        }
+
+        posix.close(self.tty_fd);
+        self.tty_fd = -1;
+        return false;
     }
 
     /// Set terminal to raw mode for keyboard input
@@ -164,16 +338,35 @@ pub const BsdInput = struct {
         }
     }
 
+    /// Restore original VT console keyboard mode
+    fn restoreKbMode(self: *Self) void {
+        if (self.console_fd >= 0 and self.keyboard_mode == .vt_raw) {
+            const result = c.ioctl(self.console_fd, c.KDSKBMODE, self.orig_kb_mode);
+            if (result < 0) {
+                log.warn("failed to restore keyboard mode", .{});
+            } else {
+                log.debug("restored keyboard mode to {}", .{self.orig_kb_mode});
+            }
+        }
+    }
+
     /// Cleanup and close all input devices
     pub fn deinit(self: *Self) void {
-        // Restore terminal mode before closing
+        // Restore terminal/keyboard modes before closing
         self.restoreMode();
+        self.restoreKbMode();
 
         if (self.mouse_fd >= 0) {
             posix.close(self.mouse_fd);
         }
         if (self.tty_fd >= 0) {
             posix.close(self.tty_fd);
+        }
+        if (self.evdev_keyboard_fd >= 0) {
+            posix.close(self.evdev_keyboard_fd);
+        }
+        if (self.console_fd >= 0) {
+            posix.close(self.console_fd);
         }
         self.allocator.destroy(self);
     }
@@ -281,8 +474,202 @@ pub const BsdInput = struct {
         self.mouse_event_count += 1;
     }
 
-    /// Poll keyboard for key events (from /dev/tty in raw mode)
+    /// Poll keyboard for key events based on current keyboard mode
     fn pollKeyboard(self: *Self) void {
+        switch (self.keyboard_mode) {
+            .evdev => self.pollEvdevKeyboard(),
+            .vt_raw => self.pollVtKeyboard(),
+            .tty_cooked => self.pollTtyKeyboard(),
+            .none => {},
+        }
+    }
+
+    /// Poll evdev keyboard device
+    fn pollEvdevKeyboard(self: *Self) void {
+        if (self.evdev_keyboard_fd < 0) return;
+
+        var events: [16]InputEvent = undefined;
+        const event_size = @sizeOf(InputEvent);
+
+        while (true) {
+            const buf_ptr: [*]u8 = @ptrCast(&events);
+            const buf_slice = buf_ptr[0 .. events.len * event_size];
+            const n = posix.read(self.evdev_keyboard_fd, buf_slice) catch break;
+            if (n == 0) break;
+
+            const num_events = n / event_size;
+            for (events[0..num_events]) |ev| {
+                if (ev.type == EV_KEY) {
+                    // Update modifier state
+                    self.updateModifiers(ev.code, ev.value != 0);
+
+                    // Queue key event (value: 0=release, 1=press, 2=repeat)
+                    if (ev.value == 1) { // Press only
+                        self.queueKeyEvent(ev.code, true);
+                        log.debug("evdev key: code={} pressed modifiers=0x{x:0>2}", .{ ev.code, self.modifiers });
+                    } else if (ev.value == 0) { // Release
+                        self.queueKeyEvent(ev.code, false);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Poll VT console for raw keycodes
+    fn pollVtKeyboard(self: *Self) void {
+        if (self.console_fd < 0) return;
+
+        var buf: [64]u8 = undefined;
+        while (true) {
+            const n = posix.read(self.console_fd, &buf) catch break;
+            if (n == 0) break;
+
+            for (buf[0..n]) |scancode| {
+                self.processVtScancode(scancode);
+            }
+        }
+    }
+
+    /// Process a VT console scancode (K_CODE mode)
+    fn processVtScancode(self: *Self, scancode: u8) void {
+        // In K_CODE mode, the high bit indicates release (0x80)
+        const released = (scancode & 0x80) != 0;
+        const code = scancode & 0x7F;
+
+        // Convert AT/XT scancode to evdev keycode
+        const evdev_code = self.scancodeToEvdev(code);
+        if (evdev_code == 0) return;
+
+        // Update modifier state
+        self.updateModifiers(@intCast(evdev_code), !released);
+
+        // Queue key event
+        self.queueKeyEvent(evdev_code, !released);
+
+        log.debug("VT scancode: 0x{x:0>2} -> evdev {} {} modifiers=0x{x:0>2}", .{
+            scancode,
+            evdev_code,
+            if (released) "released" else "pressed",
+            self.modifiers,
+        });
+    }
+
+    /// Convert AT/XT scancode to evdev keycode
+    fn scancodeToEvdev(self: *Self, scancode: u8) u32 {
+        _ = self;
+        // Standard AT set 1 scancode to evdev keycode mapping
+        // These map the basic PC keyboard scancodes to Linux evdev codes
+        return switch (scancode) {
+            0x01 => 1, // ESC
+            0x02 => 2, // 1
+            0x03 => 3, // 2
+            0x04 => 4, // 3
+            0x05 => 5, // 4
+            0x06 => 6, // 5
+            0x07 => 7, // 6
+            0x08 => 8, // 7
+            0x09 => 9, // 8
+            0x0A => 10, // 9
+            0x0B => 11, // 0
+            0x0C => 12, // -
+            0x0D => 13, // =
+            0x0E => 14, // Backspace
+            0x0F => 15, // Tab
+            0x10 => 16, // Q
+            0x11 => 17, // W
+            0x12 => 18, // E
+            0x13 => 19, // R
+            0x14 => 20, // T
+            0x15 => 21, // Y
+            0x16 => 22, // U
+            0x17 => 23, // I
+            0x18 => 24, // O
+            0x19 => 25, // P
+            0x1A => 26, // [
+            0x1B => 27, // ]
+            0x1C => 28, // Enter
+            0x1D => 29, // Left Ctrl
+            0x1E => 30, // A
+            0x1F => 31, // S
+            0x20 => 32, // D
+            0x21 => 33, // F
+            0x22 => 34, // G
+            0x23 => 35, // H
+            0x24 => 36, // J
+            0x25 => 37, // K
+            0x26 => 38, // L
+            0x27 => 39, // ;
+            0x28 => 40, // '
+            0x29 => 41, // `
+            0x2A => 42, // Left Shift
+            0x2B => 43, // \
+            0x2C => 44, // Z
+            0x2D => 45, // X
+            0x2E => 46, // C
+            0x2F => 47, // V
+            0x30 => 48, // B
+            0x31 => 49, // N
+            0x32 => 50, // M
+            0x33 => 51, // ,
+            0x34 => 52, // .
+            0x35 => 53, // /
+            0x36 => 54, // Right Shift
+            0x37 => 55, // Keypad *
+            0x38 => 56, // Left Alt
+            0x39 => 57, // Space
+            0x3A => 58, // Caps Lock
+            0x3B => 59, // F1
+            0x3C => 60, // F2
+            0x3D => 61, // F3
+            0x3E => 62, // F4
+            0x3F => 63, // F5
+            0x40 => 64, // F6
+            0x41 => 65, // F7
+            0x42 => 66, // F8
+            0x43 => 67, // F9
+            0x44 => 68, // F10
+            0x45 => 69, // Num Lock
+            0x46 => 70, // Scroll Lock
+            0x47 => 71, // Keypad 7 / Home
+            0x48 => 72, // Keypad 8 / Up
+            0x49 => 73, // Keypad 9 / PgUp
+            0x4A => 74, // Keypad -
+            0x4B => 75, // Keypad 4 / Left
+            0x4C => 76, // Keypad 5
+            0x4D => 77, // Keypad 6 / Right
+            0x4E => 78, // Keypad +
+            0x4F => 79, // Keypad 1 / End
+            0x50 => 80, // Keypad 2 / Down
+            0x51 => 81, // Keypad 3 / PgDn
+            0x52 => 82, // Keypad 0 / Ins
+            0x53 => 83, // Keypad . / Del
+            0x57 => 87, // F11
+            0x58 => 88, // F12
+            else => 0, // Unknown
+        };
+    }
+
+    /// Update modifier key state
+    fn updateModifiers(self: *Self, code: u16, pressed: bool) void {
+        switch (code) {
+            42, 54 => { // Left/Right Shift
+                self.shift_pressed = pressed;
+                if (pressed) self.modifiers |= 0x01 else self.modifiers &= ~@as(u8, 0x01);
+            },
+            56 => { // Left Alt
+                self.alt_pressed = pressed;
+                if (pressed) self.modifiers |= 0x02 else self.modifiers &= ~@as(u8, 0x02);
+            },
+            29 => { // Left Ctrl
+                self.ctrl_pressed = pressed;
+                if (pressed) self.modifiers |= 0x04 else self.modifiers &= ~@as(u8, 0x04);
+            },
+            else => {},
+        }
+    }
+
+    /// Poll /dev/tty for keyboard input (fallback cooked mode)
+    fn pollTtyKeyboard(self: *Self) void {
         if (self.tty_fd < 0) return;
 
         var buf: [64]u8 = undefined;
