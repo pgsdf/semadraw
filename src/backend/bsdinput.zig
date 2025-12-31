@@ -234,7 +234,7 @@ pub const BsdInput = struct {
         .close_restricted = closeRestricted,
     };
 
-    fn openRestricted(path: [*c]const u8, flags: c_int, user_data: ?*anyopaque) callconv(.C) c_int {
+    fn openRestricted(path: [*c]const u8, flags: c_int, user_data: ?*anyopaque) callconv(.c) c_int {
         _ = user_data;
         const fd = c.open(path, flags);
         if (fd < 0) {
@@ -243,7 +243,7 @@ pub const BsdInput = struct {
         return fd;
     }
 
-    fn closeRestricted(fd: c_int, user_data: ?*anyopaque) callconv(.C) void {
+    fn closeRestricted(fd: c_int, user_data: ?*anyopaque) callconv(.c) void {
         _ = user_data;
         _ = c.close(fd);
     }
