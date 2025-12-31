@@ -70,7 +70,7 @@ pub const KeyboardMode = enum {
     none, // No keyboard available
     evdev, // Using evdev device (/dev/input/event*)
     vt_raw, // Using VT console in raw scancode mode
-    tty_cooked, // Using /dev/tty in raw termios mode (fallback)
+    tty_raw, // Using VT/tty device with raw termios mode
 };
 
 /// BSD input handler - manages keyboard and mouse input on FreeBSD
@@ -186,10 +186,9 @@ pub const BsdInput = struct {
         else if (self.tryVtConsoleKeyboard()) {
             log.info("keyboard: using VT console raw mode", .{});
         }
-        // Method 3: Fall back to /dev/tty cooked mode
+        // Method 3: Fall back to VT/tty raw mode
         else if (self.tryTtyKeyboard()) {
-            log.info("keyboard: using /dev/tty cooked mode (fallback)", .{});
-            log.warn("keyboard input may not work from another terminal", .{});
+            // Note: tryTtyKeyboard logs which device it opened
         } else {
             log.warn("no keyboard input method available", .{});
         }
@@ -251,10 +250,12 @@ pub const BsdInput = struct {
         // Try to get device name first (simple check that evdev ioctls work)
         var name: [256]u8 = undefined;
         const name_ioctl = EVIOCGNAME(256);
-        log.debug("trying EVIOCGNAME ioctl: 0x{x}", .{name_ioctl});
+        log.debug("trying EVIOCGNAME ioctl: 0x{x} on fd {}", .{ name_ioctl, fd });
         const name_result = c.ioctl(fd, name_ioctl, &name);
         if (name_result < 0) {
-            log.debug("EVIOCGNAME failed (result={}), not an evdev device", .{name_result});
+            // Get errno for more details - on FreeBSD, ENOTTY (25) means not a tty ioctl
+            const errno_val = std.c._errno().*;
+            log.debug("EVIOCGNAME failed (result={}, errno={}), not an evdev device", .{ name_result, errno_val });
             return false;
         }
 
@@ -347,8 +348,16 @@ pub const BsdInput = struct {
             self.tty_fd = posix.open(path, .{ .ACCMODE = .RDWR, .NONBLOCK = true }, 0) catch continue;
 
             if (self.setTrueRawMode()) {
-                self.keyboard_mode = .tty_cooked;
-                log.info("opened {s} for keyboard input (raw mode)", .{path});
+                self.keyboard_mode = .tty_raw;
+                log.info("keyboard: using {s} (raw termios mode)", .{path});
+
+                // Check if this is actually /dev/tty (controlling terminal)
+                // vs a specific VT device
+                if (std.mem.eql(u8, path, "/dev/tty")) {
+                    log.warn("keyboard input may not work from another terminal", .{});
+                    log.warn("for best results, enable evdev: kldload evdev && sysctl kern.evdev.rcpt_mask=12", .{});
+                }
+
                 return true;
             }
 
@@ -549,7 +558,7 @@ pub const BsdInput = struct {
         switch (self.keyboard_mode) {
             .evdev => self.pollEvdevKeyboard(),
             .vt_raw => self.pollVtKeyboard(),
-            .tty_cooked => self.pollTtyKeyboard(),
+            .tty_raw => self.pollTtyKeyboard(),
             .none => {},
         }
     }
