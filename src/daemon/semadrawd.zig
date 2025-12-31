@@ -1036,6 +1036,17 @@ pub const Daemon = struct {
 };
 
 pub fn main() !void {
+    // Ignore SIGPIPE to prevent daemon from dying when clients disconnect
+    // This is standard practice for server applications
+    const act = posix.Sigaction{
+        .handler = .{ .handler = posix.SIG.IGN },
+        .mask = posix.empty_sigset,
+        .flags = 0,
+    };
+    posix.sigaction(posix.SIG.PIPE, &act, null) catch |err| {
+        log.warn("failed to ignore SIGPIPE: {}", .{err});
+    };
+
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
