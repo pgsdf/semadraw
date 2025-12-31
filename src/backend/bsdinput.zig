@@ -13,6 +13,8 @@ const c = @cImport({
     @cInclude("sys/kbio.h"); // For keyboard mode constants
     @cInclude("fcntl.h");
     @cInclude("dirent.h");
+    @cInclude("libinput.h"); // For libinput support
+    @cInclude("libudev.h"); // For udev context
 });
 
 // Evdev event types
@@ -68,6 +70,7 @@ pub const InputDeviceType = enum {
 /// Keyboard input mode
 pub const KeyboardMode = enum {
     none, // No keyboard available
+    libinput, // Using libinput (preferred for graphics mode)
     evdev, // Using evdev device (/dev/input/event*)
     vt_raw, // Using VT console in raw scancode mode
     tty_raw, // Using VT/tty device with raw termios mode
@@ -87,6 +90,11 @@ pub const BsdInput = struct {
     // VT console device (for raw keyboard mode)
     console_fd: posix.fd_t,
     orig_kb_mode: c_int, // Original keyboard mode for restoration
+
+    // libinput context (for graphics mode input)
+    libinput_ctx: ?*c.struct_libinput,
+    udev_ctx: ?*c.struct_udev,
+    libinput_fd: posix.fd_t,
 
     // Keyboard input mode being used
     keyboard_mode: KeyboardMode,
@@ -141,6 +149,9 @@ pub const BsdInput = struct {
             .evdev_keyboard_fd = -1,
             .console_fd = -1,
             .orig_kb_mode = K_XLATE,
+            .libinput_ctx = null,
+            .udev_ctx = null,
+            .libinput_fd = -1,
             .keyboard_mode = .none,
             .orig_termios = null,
             .mouse_x = @intCast(screen_width / 2),
@@ -174,19 +185,24 @@ pub const BsdInput = struct {
         }
 
         // Try keyboard input methods in order of preference:
-        // 1. evdev (if available on FreeBSD with evdev support)
-        // 2. VT console raw mode (for direct console access)
-        // 3. /dev/tty cooked mode (fallback)
+        // 1. libinput (works properly in graphics mode on FreeBSD)
+        // 2. evdev (if available on FreeBSD with evdev support)
+        // 3. VT console raw mode (for direct console access)
+        // 4. /dev/tty raw mode (fallback)
 
-        // Method 1: Try evdev keyboard
-        if (self.tryEvdevKeyboard()) {
+        // Method 1: Try libinput (preferred for graphics mode)
+        if (self.tryLibinputKeyboard()) {
+            log.info("keyboard: using libinput", .{});
+        }
+        // Method 2: Try evdev keyboard
+        else if (self.tryEvdevKeyboard()) {
             log.info("keyboard: using evdev device", .{});
         }
-        // Method 2: Try VT console raw keyboard mode
+        // Method 3: Try VT console raw keyboard mode
         else if (self.tryVtConsoleKeyboard()) {
             log.info("keyboard: using VT console raw mode", .{});
         }
-        // Method 3: Fall back to VT/tty raw mode
+        // Method 4: Fall back to VT/tty raw mode
         else if (self.tryTtyKeyboard()) {
             // Note: tryTtyKeyboard logs which device it opened
         } else {
@@ -210,6 +226,95 @@ pub const BsdInput = struct {
         }
 
         return self;
+    }
+
+    /// libinput interface functions for udev integration
+    const libinput_interface = c.struct_libinput_interface{
+        .open_restricted = openRestricted,
+        .close_restricted = closeRestricted,
+    };
+
+    fn openRestricted(path: [*c]const u8, flags: c_int, user_data: ?*anyopaque) callconv(.C) c_int {
+        _ = user_data;
+        const fd = c.open(path, flags);
+        if (fd < 0) {
+            return -1;
+        }
+        return fd;
+    }
+
+    fn closeRestricted(fd: c_int, user_data: ?*anyopaque) callconv(.C) void {
+        _ = user_data;
+        _ = c.close(fd);
+    }
+
+    /// Try to initialize libinput for keyboard input
+    /// libinput is preferred for graphics mode as it works correctly when
+    /// the console is switched to KMS/DRM graphics mode
+    fn tryLibinputKeyboard(self: *Self) bool {
+        // Create udev context
+        self.udev_ctx = c.udev_new();
+        if (self.udev_ctx == null) {
+            log.debug("libinput: failed to create udev context", .{});
+            return false;
+        }
+
+        // Create libinput context using udev backend
+        self.libinput_ctx = c.libinput_udev_create_context(
+            &libinput_interface,
+            null, // user_data
+            self.udev_ctx,
+        );
+
+        if (self.libinput_ctx == null) {
+            log.debug("libinput: failed to create context", .{});
+            _ = c.udev_unref(self.udev_ctx);
+            self.udev_ctx = null;
+            return false;
+        }
+
+        // Assign seat (use default seat)
+        if (c.libinput_udev_assign_seat(self.libinput_ctx, "seat0") < 0) {
+            log.debug("libinput: failed to assign seat", .{});
+            _ = c.libinput_unref(self.libinput_ctx);
+            self.libinput_ctx = null;
+            _ = c.udev_unref(self.udev_ctx);
+            self.udev_ctx = null;
+            return false;
+        }
+
+        // Get the file descriptor for polling
+        self.libinput_fd = c.libinput_get_fd(self.libinput_ctx);
+        if (self.libinput_fd < 0) {
+            log.debug("libinput: failed to get fd", .{});
+            _ = c.libinput_unref(self.libinput_ctx);
+            self.libinput_ctx = null;
+            _ = c.udev_unref(self.udev_ctx);
+            self.udev_ctx = null;
+            return false;
+        }
+
+        // Dispatch once to process initial device discovery
+        _ = c.libinput_dispatch(self.libinput_ctx);
+
+        // Consume initial events (device added, etc.)
+        while (c.libinput_get_event(self.libinput_ctx)) |event| {
+            const event_type = c.libinput_event_get_type(event);
+            if (event_type == c.LIBINPUT_EVENT_DEVICE_ADDED) {
+                const device = c.libinput_event_get_device(event);
+                if (device != null) {
+                    const name = c.libinput_device_get_name(device);
+                    if (name != null) {
+                        log.debug("libinput: device added: {s}", .{name});
+                    }
+                }
+            }
+            c.libinput_event_destroy(event);
+        }
+
+        self.keyboard_mode = .libinput;
+        log.info("libinput initialized successfully", .{});
+        return true;
     }
 
     /// Try to open an evdev keyboard device
@@ -435,6 +540,16 @@ pub const BsdInput = struct {
         self.restoreMode();
         self.restoreKbMode();
 
+        // Clean up libinput context
+        if (self.libinput_ctx != null) {
+            _ = c.libinput_unref(self.libinput_ctx);
+            self.libinput_ctx = null;
+        }
+        if (self.udev_ctx != null) {
+            _ = c.udev_unref(self.udev_ctx);
+            self.udev_ctx = null;
+        }
+
         if (self.mouse_fd >= 0) {
             posix.close(self.mouse_fd);
         }
@@ -556,10 +671,80 @@ pub const BsdInput = struct {
     /// Poll keyboard for key events based on current keyboard mode
     fn pollKeyboard(self: *Self) void {
         switch (self.keyboard_mode) {
+            .libinput => self.pollLibinputKeyboard(),
             .evdev => self.pollEvdevKeyboard(),
             .vt_raw => self.pollVtKeyboard(),
             .tty_raw => self.pollTtyKeyboard(),
             .none => {},
+        }
+    }
+
+    /// Poll libinput for keyboard events
+    fn pollLibinputKeyboard(self: *Self) void {
+        if (self.libinput_ctx == null) return;
+
+        // Dispatch any pending events
+        _ = c.libinput_dispatch(self.libinput_ctx);
+
+        // Process all available events
+        while (c.libinput_get_event(self.libinput_ctx)) |event| {
+            const event_type = c.libinput_event_get_type(event);
+
+            switch (event_type) {
+                c.LIBINPUT_EVENT_KEYBOARD_KEY => {
+                    const kb_event = c.libinput_event_get_keyboard_event(event);
+                    if (kb_event != null) {
+                        const key_code = c.libinput_event_keyboard_get_key(kb_event);
+                        const key_state = c.libinput_event_keyboard_get_key_state(kb_event);
+                        const pressed = key_state == c.LIBINPUT_KEY_STATE_PRESSED;
+
+                        // Update modifier state
+                        self.updateModifiers(@intCast(key_code), pressed);
+
+                        // Queue key event
+                        self.queueKeyEvent(key_code, pressed);
+                        log.debug("libinput key: code={} {s} modifiers=0x{x:0>2}", .{
+                            key_code,
+                            if (pressed) "pressed" else "released",
+                            self.modifiers,
+                        });
+                    }
+                },
+                c.LIBINPUT_EVENT_POINTER_MOTION => {
+                    const ptr_event = c.libinput_event_get_pointer_event(event);
+                    if (ptr_event != null) {
+                        const dx: i32 = @intFromFloat(c.libinput_event_pointer_get_dx(ptr_event));
+                        const dy: i32 = @intFromFloat(c.libinput_event_pointer_get_dy(ptr_event));
+
+                        self.mouse_x = @max(0, @min(self.mouse_x + dx, @as(i32, @intCast(self.screen_width)) - 1));
+                        self.mouse_y = @max(0, @min(self.mouse_y + dy, @as(i32, @intCast(self.screen_height)) - 1));
+
+                        self.queueMouseEvent(.left, .motion);
+                    }
+                },
+                c.LIBINPUT_EVENT_POINTER_BUTTON => {
+                    const ptr_event = c.libinput_event_get_pointer_event(event);
+                    if (ptr_event != null) {
+                        const button_code = c.libinput_event_pointer_get_button(ptr_event);
+                        const button_state = c.libinput_event_pointer_get_button_state(ptr_event);
+                        const pressed = button_state == c.LIBINPUT_BUTTON_STATE_PRESSED;
+
+                        // Map libinput button codes to our button enum
+                        // BTN_LEFT = 0x110, BTN_RIGHT = 0x111, BTN_MIDDLE = 0x112
+                        const button: backend.MouseButton = switch (button_code) {
+                            0x110 => .left,
+                            0x111 => .right,
+                            0x112 => .middle,
+                            else => .left,
+                        };
+
+                        self.queueMouseEvent(button, if (pressed) .press else .release);
+                    }
+                },
+                else => {},
+            }
+
+            c.libinput_event_destroy(event);
         }
     }
 
