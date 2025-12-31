@@ -219,25 +219,37 @@ semadraw-term
 **FreeBSD Input:**
 - Mouse via sysmouse (`/dev/sysmouse`) - requires `moused` daemon
 - Keyboard input (tried in order of preference):
-  1. **evdev** (`/dev/input/event*`) - if evdev kernel support is enabled
-  2. **Direct keyboard** (`/dev/kbdmux0`, `/dev/ukbd0`) - raw keyboard access
-  3. **TTY fallback** (`/dev/tty`) - works only on daemon's terminal
+  1. **evdev** (`/dev/input/event*`) - best option, works from any VT
+  2. **Direct keyboard** (`/dev/kbdmux0`, `/dev/ukbd0`) - raw scancode access
+  3. **VT raw mode** (`/dev/ttyv0`) - raw termios on VT device
+  4. **TTY fallback** (`/dev/tty`) - controlling terminal only
 
-**FreeBSD Setup:**
+**FreeBSD Setup (Recommended - with evdev):**
 ```sh
+# Load evdev kernel modules
+sudo kldload evdev
+sudo kldload kbdmux
+
+# Enable evdev for keyboard
+sudo sysctl kern.evdev.rcpt_mask=12
+
 # Ensure moused is running for mouse input
 sudo service moused start
 
-# Add to /etc/rc.conf to start on boot:
-# moused_enable="YES"
-
-# For best keyboard support, enable evdev (optional but recommended):
-# This provides keyboard input that works from any terminal
-kldload evdev
-sysctl kern.evdev.rcpt_mask=12
-
 # Start semadrawd
 sudo semadrawd --backend vulkan_console
+```
+
+**Make evdev persistent** (add to `/boot/loader.conf`):
+```
+evdev_load="YES"
+kbdmux_load="YES"
+kern.evdev.rcpt_mask=12
+```
+
+**Make moused persistent** (add to `/etc/rc.conf`):
+```
+moused_enable="YES"
 ```
 
 **Verifying evdev on FreeBSD:**
@@ -247,13 +259,23 @@ ls -la /dev/input/event*
 
 # Test with evtest (install from ports: sysutils/evtest)
 sudo evtest
+
+# You should see devices like:
+# /dev/input/event0: System keyboard multiplexer
+# /dev/input/event1: System mouse
 ```
+
+**Troubleshooting Keyboard Input:**
+- If logs show "EVIOCGNAME failed", evdev is not enabled - load the modules above
+- If logs show "keyboard: using /dev/ttyv0", evdev isn't available but VT raw mode is active
+- If logs show "keyboard: using /dev/tty", only the daemon's terminal receives input
+- For best results, always enable evdev on FreeBSD
 
 **Notes:**
 - Uses VK_KHR_display for direct display output (no windowing system)
 - GPU-accelerated rendering with CPU-based SDCS execution
 - With evdev enabled, keyboard input works regardless of which VT you're on
-- Without evdev, keyboard only works when typing on the daemon's terminal
+- Without evdev, keyboard may not work when VT is in graphics mode
 - Input is optional - backend works without input devices for testing
 
 ### X11 Use
