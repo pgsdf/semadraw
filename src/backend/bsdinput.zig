@@ -13,6 +13,7 @@ const c = @cImport({
     @cInclude("sys/kbio.h"); // For keyboard mode constants
     @cInclude("fcntl.h");
     @cInclude("dirent.h");
+    @cInclude("unistd.h"); // For open/close
     @cInclude("libinput.h"); // For libinput support
     @cInclude("libudev.h"); // For udev context
 });
