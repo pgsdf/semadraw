@@ -203,11 +203,14 @@ pub const BsdInput = struct {
 
         var i: u32 = 0;
         while (i < 32) : (i += 1) {
-            const path = std.fmt.bufPrint(&path_buf, "/dev/input/event{}", .{i}) catch continue;
             const path_z = std.fmt.bufPrintZ(&path_buf, "/dev/input/event{}", .{i}) catch continue;
-            _ = path;
 
-            const fd = posix.open(path_z, .{ .ACCMODE = .RDONLY, .NONBLOCK = true }, 0) catch continue;
+            const fd = posix.open(path_z, .{ .ACCMODE = .RDONLY, .NONBLOCK = true }, 0) catch |err| {
+                if (i == 0) {
+                    log.debug("failed to open /dev/input/event0: {}", .{err});
+                }
+                continue;
+            };
 
             // Check if this is a keyboard device
             if (self.isEvdevKeyboard(fd)) {
@@ -220,6 +223,7 @@ pub const BsdInput = struct {
             posix.close(fd);
         }
 
+        log.debug("no evdev keyboard devices found in /dev/input/", .{});
         return false;
     }
 
@@ -227,28 +231,57 @@ pub const BsdInput = struct {
     fn isEvdevKeyboard(self: *Self, fd: posix.fd_t) bool {
         _ = self;
 
+        // Try to get device name first (simple check that evdev ioctls work)
+        var name: [256]u8 = undefined;
+        // EVIOCGNAME(len) = _IOC(_IOC_READ, 'E', 0x06, len)
+        // = (2 << 30) | (256 << 16) | ('E' << 8) | 0x06 = 0x81004506
+        const name_result = c.ioctl(fd, 0x81004506, &name);
+        if (name_result < 0) {
+            log.debug("EVIOCGNAME failed, not an evdev device", .{});
+            return false;
+        }
+
         // Get event types supported by this device
-        // On FreeBSD with evdev, use c.ioctl with the proper types
-        var ev_bits: [4]u8 = undefined;
-        // EVIOCGBIT(0, len) = _IOC(_IOC_READ, 'E', 0x20 + 0, len)
-        // We'll just try a simple ioctl and if it fails, the device isn't evdev
-        const ev_result = c.ioctl(fd, 0x80044520, &ev_bits); // EVIOCGBIT(0, 4)
-        if (ev_result < 0) return false;
+        // EVIOCGBIT(0, 4) = (2 << 30) | (4 << 16) | ('E' << 8) | 0x20 = 0x80044520
+        var ev_bits: [4]u8 = [_]u8{0} ** 4;
+        const ev_result = c.ioctl(fd, 0x80044520, &ev_bits);
+        if (ev_result < 0) {
+            log.debug("EVIOCGBIT(0) failed", .{});
+            return false;
+        }
 
         // Check for EV_KEY support (bit 1)
         const has_key = (ev_bits[0] & (1 << EV_KEY)) != 0;
-        if (!has_key) return false;
+        if (!has_key) {
+            log.debug("device does not support EV_KEY", .{});
+            return false;
+        }
 
-        // Check for actual keyboard keys (Q, W, E keys)
-        var key_bits: [64]u8 = undefined;
-        const key_result = c.ioctl(fd, 0x80404521, &key_bits); // EVIOCGBIT(EV_KEY, 64)
-        if (key_result < 0) return false;
+        // Get key bits to check for keyboard keys
+        // EVIOCGBIT(EV_KEY, 96) = (2 << 30) | (96 << 16) | ('E' << 8) | 0x21 = 0x80604521
+        var key_bits: [96]u8 = [_]u8{0} ** 96;
+        const key_result = c.ioctl(fd, 0x80604521, &key_bits);
+        if (key_result < 0) {
+            log.debug("EVIOCGBIT(EV_KEY) failed", .{});
+            return false;
+        }
 
         // Check for KEY_Q (16) and KEY_W (17) - most keyboards have these
         const has_q = (key_bits[16 / 8] & (@as(u8, 1) << @intCast(16 % 8))) != 0;
         const has_w = (key_bits[17 / 8] & (@as(u8, 1) << @intCast(17 % 8))) != 0;
+        // Also check KEY_A (30) and KEY_SPACE (57) for robustness
+        const has_a = (key_bits[30 / 8] & (@as(u8, 1) << @intCast(30 % 8))) != 0;
+        const has_space = (key_bits[57 / 8] & (@as(u8, 1) << @intCast(57 % 8))) != 0;
 
-        return has_q and has_w;
+        const is_keyboard = (has_q and has_w) or (has_a and has_space);
+
+        if (is_keyboard) {
+            // Log the device name
+            const name_len = std.mem.indexOfScalar(u8, &name, 0) orelse name.len;
+            log.info("evdev keyboard detected: {s}", .{name[0..name_len]});
+        }
+
+        return is_keyboard;
     }
 
     /// Try to set up VT console raw keyboard mode
