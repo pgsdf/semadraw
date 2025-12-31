@@ -1231,3 +1231,60 @@ pub const BsdInput = struct {
         return self.mouse_events[0..count];
     }
 };
+
+// ============================================================================
+// Unit Tests
+// ============================================================================
+
+test "BsdInput struct size" {
+    try std.testing.expect(@sizeOf(BsdInput) > 0);
+}
+
+test "KeyboardMode enum" {
+    try std.testing.expect(@intFromEnum(KeyboardMode.none) == 0);
+    try std.testing.expect(@intFromEnum(KeyboardMode.libinput) == 1);
+    try std.testing.expect(@intFromEnum(KeyboardMode.evdev) == 2);
+    try std.testing.expect(@intFromEnum(KeyboardMode.vt_raw) == 3);
+    try std.testing.expect(@intFromEnum(KeyboardMode.tty_raw) == 4);
+}
+
+test "EVIOCGNAME ioctl encoding" {
+    // EVIOCGNAME(256) should produce a specific value
+    const result = EVIOCGNAME(256);
+    // Check it has the read bit set (0x80000000) and 'E' magic
+    try std.testing.expect((result & 0x80000000) != 0);
+    try std.testing.expect(((result >> 8) & 0xFF) == 'E');
+    try std.testing.expect((result & 0xFF) == 0x06);
+}
+
+test "EVIOCGBIT ioctl encoding" {
+    // EVIOCGBIT(0, 4) for event types
+    const result = EVIOCGBIT(0, 4);
+    try std.testing.expect((result & 0x80000000) != 0);
+    try std.testing.expect(((result >> 8) & 0xFF) == 'E');
+    try std.testing.expect((result & 0xFF) == 0x20); // 0x20 + 0
+
+    // EVIOCGBIT(EV_KEY, 96) for key bits
+    const key_result = EVIOCGBIT(EV_KEY, 96);
+    try std.testing.expect((key_result & 0xFF) == 0x21); // 0x20 + 1
+}
+
+test "evdev event types" {
+    try std.testing.expect(EV_KEY == 0x01);
+    try std.testing.expect(EV_REL == 0x02);
+    try std.testing.expect(EV_ABS == 0x03);
+}
+
+test "InputEvent struct layout" {
+    // Verify InputEvent matches evdev input_event structure
+    try std.testing.expect(@sizeOf(InputEvent) == @sizeOf(isize) * 2 + 8);
+    try std.testing.expect(@offsetOf(InputEvent, "type") == @sizeOf(isize) * 2);
+    try std.testing.expect(@offsetOf(InputEvent, "code") == @sizeOf(isize) * 2 + 2);
+    try std.testing.expect(@offsetOf(InputEvent, "value") == @sizeOf(isize) * 2 + 4);
+}
+
+test "keyboard mode constants" {
+    try std.testing.expect(K_RAW == 0);
+    try std.testing.expect(K_XLATE == 1);
+    try std.testing.expect(K_CODE == 2);
+}
