@@ -77,6 +77,7 @@ Rendering options supported by the encoder and replay tool:
 - Vulkan: Vulkan SDK, libvulkan (for GPU-accelerated rendering)
 - Wayland: libwayland-client (for Wayland backend)
 - DRM/KMS: Linux kernel with DRM support (for console output)
+- FreeBSD Vulkan Console: libinput, libudev (for keyboard/mouse input in graphics mode)
 
 ### Build from Source
 
@@ -225,16 +226,22 @@ semadraw-term
   4. **VT raw mode** (`/dev/ttyv0`) - raw termios on VT device
   5. **TTY fallback** (`/dev/tty`) - controlling terminal only
 
-**FreeBSD Setup (Recommended - with libinput):**
+**FreeBSD Setup (Recommended):**
 ```sh
-# Install libinput (if not already installed)
-sudo pkg install libinput
+# Install required packages
+sudo pkg install libinput libudev-devd
 
 # Ensure moused is running for mouse input
 sudo service moused start
 
-# Start semadrawd (libinput is used automatically if available)
-sudo semadrawd --backend vulkan_console
+# Build semadraw
+zig build
+
+# Start semadrawd (libinput is used automatically)
+sudo ./zig-out/bin/semadrawd --backend vulkan_console
+
+# In another terminal (or switch VT with Alt+F2), run the terminal emulator
+./zig-out/bin/semadraw-term
 ```
 
 **Alternative: Using evdev (if libinput fails):**
