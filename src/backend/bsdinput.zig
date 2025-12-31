@@ -228,11 +228,12 @@ pub const BsdInput = struct {
         _ = self;
 
         // Get event types supported by this device
+        // On FreeBSD with evdev, use c.ioctl with the proper types
         var ev_bits: [4]u8 = undefined;
-        const ioctl_num = @as(usize, 0x80000000) | (@as(usize, ev_bits.len) << 16) | (@as(usize, 'E') << 8) | 0x20;
-
-        const result = std.posix.system.ioctl(fd, @intCast(ioctl_num), @intFromPtr(&ev_bits));
-        if (@as(isize, @bitCast(result)) < 0) return false;
+        // EVIOCGBIT(0, len) = _IOC(_IOC_READ, 'E', 0x20 + 0, len)
+        // We'll just try a simple ioctl and if it fails, the device isn't evdev
+        const ev_result = c.ioctl(fd, 0x80044520, &ev_bits); // EVIOCGBIT(0, 4)
+        if (ev_result < 0) return false;
 
         // Check for EV_KEY support (bit 1)
         const has_key = (ev_bits[0] & (1 << EV_KEY)) != 0;
@@ -240,9 +241,8 @@ pub const BsdInput = struct {
 
         // Check for actual keyboard keys (Q, W, E keys)
         var key_bits: [64]u8 = undefined;
-        const key_ioctl = @as(usize, 0x80000000) | (@as(usize, key_bits.len) << 16) | (@as(usize, 'E') << 8) | 0x21;
-        const key_result = std.posix.system.ioctl(fd, @intCast(key_ioctl), @intFromPtr(&key_bits));
-        if (@as(isize, @bitCast(key_result)) < 0) return false;
+        const key_result = c.ioctl(fd, 0x80404521, &key_bits); // EVIOCGBIT(EV_KEY, 64)
+        if (key_result < 0) return false;
 
         // Check for KEY_Q (16) and KEY_W (17) - most keyboards have these
         const has_q = (key_bits[16 / 8] & (@as(u8, 1) << @intCast(16 % 8))) != 0;
@@ -267,7 +267,7 @@ pub const BsdInput = struct {
             const kdgkbmode_result = c.ioctl(self.console_fd, c.KDGKBMODE, &current_mode);
 
             if (kdgkbmode_result < 0) {
-                log.debug("KDGKBMODE failed on {s} (errno={})", .{ path, std.posix.errno(kdgkbmode_result) });
+                log.debug("KDGKBMODE failed on {s} (result={})", .{ path, kdgkbmode_result });
                 posix.close(self.console_fd);
                 self.console_fd = -1;
                 continue;
@@ -279,7 +279,7 @@ pub const BsdInput = struct {
             // Try to set raw scancode mode (K_CODE gives us keycodes, K_RAW gives scancodes)
             const set_result = c.ioctl(self.console_fd, c.KDSKBMODE, K_CODE);
             if (set_result < 0) {
-                log.debug("KDSKBMODE K_CODE failed on {s} (errno={})", .{ path, std.posix.errno(set_result) });
+                log.debug("KDSKBMODE K_CODE failed on {s} (result={})", .{ path, set_result });
                 posix.close(self.console_fd);
                 self.console_fd = -1;
                 continue;
@@ -546,7 +546,7 @@ pub const BsdInput = struct {
         // Queue key event
         self.queueKeyEvent(evdev_code, !released);
 
-        log.debug("VT scancode: 0x{x:0>2} -> evdev {} {} modifiers=0x{x:0>2}", .{
+        log.debug("VT scancode: 0x{x:0>2} -> evdev {} {s} modifiers=0x{x:0>2}", .{
             scancode,
             evdev_code,
             if (released) "released" else "pressed",
