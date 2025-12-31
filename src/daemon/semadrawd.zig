@@ -1040,7 +1040,7 @@ pub fn main() !void {
     // This is standard practice for server applications
     const act = posix.Sigaction{
         .handler = .{ .handler = posix.SIG.IGN },
-        .mask = posix.empty_sigset,
+        .mask = posix.sigset_t.initEmpty(),
         .flags = 0,
     };
     posix.sigaction(posix.SIG.PIPE, &act, null) catch |err| {
