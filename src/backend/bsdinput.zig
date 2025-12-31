@@ -332,41 +332,78 @@ pub const BsdInput = struct {
     }
 
     /// Try to open /dev/tty for keyboard input (fallback mode)
+    /// Uses true raw mode on the VT device for console graphics compatibility
     fn tryTtyKeyboard(self: *Self) bool {
-        self.tty_fd = posix.open("/dev/tty", .{ .ACCMODE = .RDONLY, .NONBLOCK = true }, 0) catch |err| {
-            log.debug("failed to open /dev/tty: {}", .{err});
-            return false;
+        // Try to open the actual VT device first, then fall back to /dev/tty
+        // Using the VT device directly works better when in graphics mode
+        const tty_paths = [_][:0]const u8{
+            "/dev/ttyv0", // FreeBSD first virtual terminal
+            "/dev/ttyv1",
+            "/dev/ttyv2",
+            "/dev/tty", // Controlling terminal (last resort)
         };
 
-        if (self.setRawMode()) {
-            self.keyboard_mode = .tty_cooked;
-            return true;
+        for (tty_paths) |path| {
+            self.tty_fd = posix.open(path, .{ .ACCMODE = .RDWR, .NONBLOCK = true }, 0) catch continue;
+
+            if (self.setTrueRawMode()) {
+                self.keyboard_mode = .tty_cooked;
+                log.info("opened {s} for keyboard input (raw mode)", .{path});
+                return true;
+            }
+
+            posix.close(self.tty_fd);
+            self.tty_fd = -1;
         }
 
-        posix.close(self.tty_fd);
-        self.tty_fd = -1;
+        log.debug("failed to open any tty device for keyboard", .{});
         return false;
     }
 
-    /// Set terminal to raw mode for keyboard input
-    fn setRawMode(self: *Self) bool {
+    /// Set terminal to true raw mode for keyboard input
+    /// This disables ALL processing so we get raw bytes
+    fn setTrueRawMode(self: *Self) bool {
         if (self.tty_fd < 0) return false;
 
         var t: c.struct_termios = undefined;
 
-        // Get current settings using tcgetattr
+        // Get current settings
         if (c.tcgetattr(self.tty_fd, &t) < 0) return false;
 
         // Save original settings
         self.orig_termios = t;
 
-        // Modify for raw mode - disable canonical mode, echo, signals
-        t.c_lflag &= ~@as(c_uint, c.ICANON | c.ECHO | c.ISIG | c.IEXTEN);
-        t.c_cc[c.VMIN] = 0; // Non-blocking
+        // Set true raw mode - disable everything
+        // Input: no break processing, no CR-NL, no parity, no strip, no flow control
+        t.c_iflag &= ~@as(c_uint, c.IGNBRK | c.BRKINT | c.PARMRK | c.ISTRIP |
+            c.INLCR | c.IGNCR | c.ICRNL | c.IXON);
+
+        // Output: no post-processing
+        t.c_oflag &= ~@as(c_uint, c.OPOST);
+
+        // Local: no echo, no canonical, no signals, no extended
+        t.c_lflag &= ~@as(c_uint, c.ECHO | c.ECHONL | c.ICANON | c.ISIG | c.IEXTEN);
+
+        // Control: 8-bit characters
+        t.c_cflag &= ~@as(c_uint, c.CSIZE | c.PARENB);
+        t.c_cflag |= c.CS8;
+
+        // Non-blocking read
+        t.c_cc[c.VMIN] = 0;
         t.c_cc[c.VTIME] = 0;
 
-        // Apply new settings
-        return c.tcsetattr(self.tty_fd, c.TCSANOW, &t) >= 0;
+        // Apply immediately
+        if (c.tcsetattr(self.tty_fd, c.TCSANOW, &t) < 0) return false;
+
+        // Flush any pending input
+        _ = c.tcflush(self.tty_fd, c.TCIFLUSH);
+
+        return true;
+    }
+
+    /// Set terminal to raw mode for keyboard input (legacy, kept for compatibility)
+    fn setRawMode(self: *Self) bool {
+        return self.setTrueRawMode();
     }
 
     /// Restore original terminal mode
