@@ -1043,9 +1043,7 @@ pub fn main() !void {
         .mask = std.mem.zeroes(posix.sigset_t),
         .flags = 0,
     };
-    posix.sigaction(posix.SIG.PIPE, &act, null) catch |err| {
-        log.warn("failed to ignore SIGPIPE: {}", .{err});
-    };
+    posix.sigaction(posix.SIG.PIPE, &act, null);
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
