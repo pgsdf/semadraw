@@ -480,6 +480,9 @@ pub fn build(b: *std.Build) void {
         },
     });
     bsdinput_mod.link_libc = true;
+    // Link libinput and libudev for proper input handling in graphics mode
+    bsdinput_mod.linkSystemLibrary("input", .{});
+    bsdinput_mod.linkSystemLibrary("udev", .{});
 
     // Vulkan console backend module (VK_KHR_display for direct display output)
     const vulkan_console_backend_mod = b.createModule(.{
