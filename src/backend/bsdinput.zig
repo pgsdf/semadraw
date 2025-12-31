@@ -119,8 +119,17 @@ pub const BsdInput = struct {
             }
         }
 
-        if (self.mouse_fd < 0 and self.tty_fd < 0) {
+        // Log input device status
+        if (self.mouse_fd >= 0 and self.tty_fd >= 0) {
+            log.info("BSD input initialized: mouse and keyboard available", .{});
+        } else if (self.tty_fd >= 0) {
+            log.info("BSD input initialized: keyboard only (no mouse)", .{});
+            log.warn("for mouse: ensure moused is running (service moused start)", .{});
+        } else if (self.mouse_fd >= 0) {
+            log.warn("BSD input: mouse available but keyboard failed", .{});
+        } else {
             log.warn("no input devices available on FreeBSD", .{});
+            log.warn("for keyboard: ensure /dev/tty is accessible", .{});
             log.warn("for mouse: ensure moused is running (service moused start)", .{});
         }
 
@@ -299,7 +308,7 @@ pub const BsdInput = struct {
             // Check for timeout (50ms)
             if (now - self.esc_timeout > 50) {
                 // Timeout - emit escape and reset
-                self.queueKeyEvent(27, true); // ESC key
+                self.queueKeyEvent(1, true); // ESC key (evdev code 1)
                 self.esc_buf_len = 0;
             }
         }
@@ -327,8 +336,20 @@ pub const BsdInput = struct {
         }
 
         // Regular key - convert to key code and queue
+        // Save current modifiers - byteToKeyCode may modify them for shifted chars
+        const saved_modifiers = self.modifiers;
         const key_code = self.byteToKeyCode(byte);
-        self.queueKeyEvent(key_code, true);
+        if (key_code != 0) {
+            self.queueKeyEvent(key_code, true);
+            log.debug("keyboard input: byte=0x{x:0>2} -> key_code={} modifiers=0x{x:0>2}", .{
+                byte,
+                key_code,
+                self.modifiers,
+            });
+        }
+        // Restore modifiers - the modifier flags set by byteToKeyCode are
+        // only for that specific key event, not persistent state
+        self.modifiers = saved_modifiers;
     }
 
     /// Check for escape sequence timeout
@@ -415,12 +436,16 @@ pub const BsdInput = struct {
         return false;
     }
 
-    /// Convert ASCII byte to key code (simplified mapping)
+    /// Convert ASCII byte to evdev key code
+    /// This maps ASCII characters to Linux evdev key codes for compatibility
+    /// with the application layer which expects evdev codes
     fn byteToKeyCode(self: *Self, byte: u8) u32 {
-        _ = self;
-
         // Control characters
         if (byte < 32) {
+            // Set ctrl modifier for Ctrl+letter combinations
+            if (byte >= 1 and byte <= 26) {
+                self.modifiers |= 0x04; // CTRL modifier
+            }
             return switch (byte) {
                 0x01 => 30, // Ctrl+A -> A
                 0x02 => 48, // Ctrl+B -> B
@@ -448,13 +473,84 @@ pub const BsdInput = struct {
                 0x19 => 21, // Ctrl+Y -> Y
                 0x1A => 44, // Ctrl+Z -> Z
                 0x1B => 1,  // ESC
-                else => byte,
+                else => 0,  // Unknown control character
             };
         }
 
-        // Printable ASCII - use the byte value directly
-        // The application should handle character mapping
-        return byte;
+        // Space
+        if (byte == ' ') return 57;
+
+        // Numbers 0-9 (ASCII 48-57 -> evdev 11, 2-10)
+        if (byte >= '0' and byte <= '9') {
+            if (byte == '0') return 11;
+            return @as(u32, byte - '0') + 1; // '1'->2, '2'->3, ..., '9'->10
+        }
+
+        // Lowercase letters a-z (ASCII 97-122 -> evdev key codes)
+        if (byte >= 'a' and byte <= 'z') {
+            return switch (byte) {
+                'a' => 30, 'b' => 48, 'c' => 46, 'd' => 32, 'e' => 18,
+                'f' => 33, 'g' => 34, 'h' => 35, 'i' => 23, 'j' => 36,
+                'k' => 37, 'l' => 38, 'm' => 50, 'n' => 49, 'o' => 24,
+                'p' => 25, 'q' => 16, 'r' => 19, 's' => 31, 't' => 20,
+                'u' => 22, 'v' => 47, 'w' => 17, 'x' => 45, 'y' => 21,
+                'z' => 44,
+                else => 0,
+            };
+        }
+
+        // Uppercase letters A-Z (ASCII 65-90 -> evdev + shift modifier)
+        if (byte >= 'A' and byte <= 'Z') {
+            self.modifiers |= 0x01; // SHIFT modifier
+            return switch (byte) {
+                'A' => 30, 'B' => 48, 'C' => 46, 'D' => 32, 'E' => 18,
+                'F' => 33, 'G' => 34, 'H' => 35, 'I' => 23, 'J' => 36,
+                'K' => 37, 'L' => 38, 'M' => 50, 'N' => 49, 'O' => 24,
+                'P' => 25, 'Q' => 16, 'R' => 19, 'S' => 31, 'T' => 20,
+                'U' => 22, 'V' => 47, 'W' => 17, 'X' => 45, 'Y' => 21,
+                'Z' => 44,
+                else => 0,
+            };
+        }
+
+        // Punctuation and symbols (unshifted versions)
+        return switch (byte) {
+            '-' => 12,  // MINUS
+            '=' => 13,  // EQUAL
+            '[' => 26,  // LEFTBRACE
+            ']' => 27,  // RIGHTBRACE
+            ';' => 39,  // SEMICOLON
+            '\'' => 40, // APOSTROPHE
+            '`' => 41,  // GRAVE
+            '\\' => 43, // BACKSLASH
+            ',' => 51,  // COMMA
+            '.' => 52,  // DOT
+            '/' => 53,  // SLASH
+            // Shifted symbols - set shift modifier and return base key
+            '!' => blk: { self.modifiers |= 0x01; break :blk 2; },   // Shift+1
+            '@' => blk: { self.modifiers |= 0x01; break :blk 3; },   // Shift+2
+            '#' => blk: { self.modifiers |= 0x01; break :blk 4; },   // Shift+3
+            '$' => blk: { self.modifiers |= 0x01; break :blk 5; },   // Shift+4
+            '%' => blk: { self.modifiers |= 0x01; break :blk 6; },   // Shift+5
+            '^' => blk: { self.modifiers |= 0x01; break :blk 7; },   // Shift+6
+            '&' => blk: { self.modifiers |= 0x01; break :blk 8; },   // Shift+7
+            '*' => blk: { self.modifiers |= 0x01; break :blk 9; },   // Shift+8
+            '(' => blk: { self.modifiers |= 0x01; break :blk 10; },  // Shift+9
+            ')' => blk: { self.modifiers |= 0x01; break :blk 11; },  // Shift+0
+            '_' => blk: { self.modifiers |= 0x01; break :blk 12; },  // Shift+MINUS
+            '+' => blk: { self.modifiers |= 0x01; break :blk 13; },  // Shift+EQUAL
+            '{' => blk: { self.modifiers |= 0x01; break :blk 26; },  // Shift+LEFTBRACE
+            '}' => blk: { self.modifiers |= 0x01; break :blk 27; },  // Shift+RIGHTBRACE
+            ':' => blk: { self.modifiers |= 0x01; break :blk 39; },  // Shift+SEMICOLON
+            '"' => blk: { self.modifiers |= 0x01; break :blk 40; },  // Shift+APOSTROPHE
+            '~' => blk: { self.modifiers |= 0x01; break :blk 41; },  // Shift+GRAVE
+            '|' => blk: { self.modifiers |= 0x01; break :blk 43; },  // Shift+BACKSLASH
+            '<' => blk: { self.modifiers |= 0x01; break :blk 51; },  // Shift+COMMA
+            '>' => blk: { self.modifiers |= 0x01; break :blk 52; },  // Shift+DOT
+            '?' => blk: { self.modifiers |= 0x01; break :blk 53; },  // Shift+SLASH
+            0x7F => 14, // DEL -> Backspace
+            else => 0,  // Unknown character
+        };
     }
 
     /// Queue a key event
