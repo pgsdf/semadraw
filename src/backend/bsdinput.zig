@@ -1,6 +1,7 @@
 const std = @import("std");
 const posix = std.posix;
 const backend = @import("backend");
+const builtin = @import("builtin");
 
 const log = std.log.scoped(.bsd_input);
 
@@ -14,11 +15,27 @@ const c = @cImport({
     @cInclude("dirent.h");
 });
 
-// Evdev constants (same as Linux evdev.zig)
-const EVIOCGBIT = 0x80004520; // EVIOCGBIT(0, 0) base
+// Evdev event types
 const EV_KEY: u16 = 0x01;
 const EV_REL: u16 = 0x02;
 const EV_ABS: u16 = 0x03;
+
+// Evdev ioctl numbers - FreeBSD uses different encoding than Linux
+// FreeBSD: IOC_OUT (read) = 0x40000000, IOC_IN (write) = 0x80000000
+// Linux:   _IOC_READ = 0x80000000, _IOC_WRITE = 0x40000000
+// FreeBSD evdev uses Linux-compatible numbers for compatibility
+const is_freebsd = builtin.os.tag == .freebsd;
+
+// EVIOCGNAME(len) = _IOC(_IOC_READ, 'E', 0x06, len)
+// EVIOCGBIT(ev, len) = _IOC(_IOC_READ, 'E', 0x20 + ev, len)
+fn EVIOCGNAME(len: usize) c_ulong {
+    // FreeBSD evdev uses Linux ioctl encoding for compatibility
+    return @as(c_ulong, 0x80000000) | (@as(c_ulong, len) << 16) | (@as(c_ulong, 'E') << 8) | 0x06;
+}
+
+fn EVIOCGBIT(ev: u8, len: usize) c_ulong {
+    return @as(c_ulong, 0x80000000) | (@as(c_ulong, len) << 16) | (@as(c_ulong, 'E') << 8) | (@as(c_ulong, 0x20) + ev);
+}
 
 // Keyboard mode constants (from sys/kbio.h)
 const K_RAW: c_int = 0; // Raw scancode mode
@@ -233,18 +250,22 @@ pub const BsdInput = struct {
 
         // Try to get device name first (simple check that evdev ioctls work)
         var name: [256]u8 = undefined;
-        // EVIOCGNAME(len) = _IOC(_IOC_READ, 'E', 0x06, len)
-        // = (2 << 30) | (256 << 16) | ('E' << 8) | 0x06 = 0x81004506
-        const name_result = c.ioctl(fd, 0x81004506, &name);
+        const name_ioctl = EVIOCGNAME(256);
+        log.debug("trying EVIOCGNAME ioctl: 0x{x}", .{name_ioctl});
+        const name_result = c.ioctl(fd, name_ioctl, &name);
         if (name_result < 0) {
-            log.debug("EVIOCGNAME failed, not an evdev device", .{});
+            log.debug("EVIOCGNAME failed (result={}), not an evdev device", .{name_result});
             return false;
         }
 
+        // Log the device name
+        const name_len = std.mem.indexOfScalar(u8, &name, 0) orelse name.len;
+        log.debug("evdev device name: {s}", .{name[0..name_len]});
+
         // Get event types supported by this device
-        // EVIOCGBIT(0, 4) = (2 << 30) | (4 << 16) | ('E' << 8) | 0x20 = 0x80044520
         var ev_bits: [4]u8 = [_]u8{0} ** 4;
-        const ev_result = c.ioctl(fd, 0x80044520, &ev_bits);
+        const ev_ioctl = EVIOCGBIT(0, 4);
+        const ev_result = c.ioctl(fd, ev_ioctl, &ev_bits);
         if (ev_result < 0) {
             log.debug("EVIOCGBIT(0) failed", .{});
             return false;
@@ -258,9 +279,9 @@ pub const BsdInput = struct {
         }
 
         // Get key bits to check for keyboard keys
-        // EVIOCGBIT(EV_KEY, 96) = (2 << 30) | (96 << 16) | ('E' << 8) | 0x21 = 0x80604521
         var key_bits: [96]u8 = [_]u8{0} ** 96;
-        const key_result = c.ioctl(fd, 0x80604521, &key_bits);
+        const key_ioctl = EVIOCGBIT(EV_KEY, 96);
+        const key_result = c.ioctl(fd, key_ioctl, &key_bits);
         if (key_result < 0) {
             log.debug("EVIOCGBIT(EV_KEY) failed", .{});
             return false;
@@ -276,8 +297,6 @@ pub const BsdInput = struct {
         const is_keyboard = (has_q and has_w) or (has_a and has_space);
 
         if (is_keyboard) {
-            // Log the device name
-            const name_len = std.mem.indexOfScalar(u8, &name, 0) orelse name.len;
             log.info("evdev keyboard detected: {s}", .{name[0..name_len]});
         }
 
