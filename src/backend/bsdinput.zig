@@ -252,44 +252,30 @@ pub const BsdInput = struct {
     }
 
     /// Try to set up VT console raw keyboard mode
+    /// NOTE: KDSKBMODE is disabled because it affects keyboard input globally,
+    /// breaking other VTs. Instead, we try direct keyboard devices.
     fn tryVtConsoleKeyboard(self: *Self) bool {
-        // Try to open the console device
-        const console_paths = [_][:0]const u8{
-            "/dev/ttyv0",
-            "/dev/console",
+        // Try direct keyboard devices on FreeBSD
+        // These provide raw keyboard access without affecting VT keyboard mode
+        const kbd_paths = [_][:0]const u8{
+            "/dev/kbdmux0", // Keyboard multiplexer (preferred)
+            "/dev/ukbd0", // USB keyboard
+            "/dev/atkbd0", // AT keyboard
+            "/dev/kbd0", // Generic keyboard
         };
 
-        for (console_paths) |path| {
+        for (kbd_paths) |path| {
             self.console_fd = posix.open(path, .{ .ACCMODE = .RDONLY, .NONBLOCK = true }, 0) catch continue;
 
-            // Try to get current keyboard mode
-            var current_mode: c_int = K_XLATE;
-            const kdgkbmode_result = c.ioctl(self.console_fd, c.KDGKBMODE, &current_mode);
-
-            if (kdgkbmode_result < 0) {
-                log.debug("KDGKBMODE failed on {s} (result={})", .{ path, kdgkbmode_result });
-                posix.close(self.console_fd);
-                self.console_fd = -1;
-                continue;
-            }
-
-            // Save original mode
-            self.orig_kb_mode = current_mode;
-
-            // Try to set raw scancode mode (K_CODE gives us keycodes, K_RAW gives scancodes)
-            const set_result = c.ioctl(self.console_fd, c.KDSKBMODE, K_CODE);
-            if (set_result < 0) {
-                log.debug("KDSKBMODE K_CODE failed on {s} (result={})", .{ path, set_result });
-                posix.close(self.console_fd);
-                self.console_fd = -1;
-                continue;
-            }
-
+            // Successfully opened a keyboard device
             self.keyboard_mode = .vt_raw;
-            log.info("VT console keyboard: {s} (mode {} -> K_CODE)", .{ path, current_mode });
+            log.info("opened keyboard device: {s}", .{path});
             return true;
         }
 
+        // KDSKBMODE approach is disabled - it breaks other VTs
+        // The /dev/tty fallback will be used instead
+        log.debug("no direct keyboard devices found, will use tty fallback", .{});
         return false;
     }
 
@@ -340,14 +326,9 @@ pub const BsdInput = struct {
 
     /// Restore original VT console keyboard mode
     fn restoreKbMode(self: *Self) void {
-        if (self.console_fd >= 0 and self.keyboard_mode == .vt_raw) {
-            const result = c.ioctl(self.console_fd, c.KDSKBMODE, self.orig_kb_mode);
-            if (result < 0) {
-                log.warn("failed to restore keyboard mode", .{});
-            } else {
-                log.debug("restored keyboard mode to {}", .{self.orig_kb_mode});
-            }
-        }
+        // No longer using KDSKBMODE, so nothing to restore
+        // Direct keyboard devices don't require mode restoration
+        _ = self;
     }
 
     /// Cleanup and close all input devices
