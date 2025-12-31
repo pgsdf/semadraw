@@ -218,7 +218,10 @@ semadraw-term
 
 **FreeBSD Input:**
 - Mouse via sysmouse (`/dev/sysmouse`) - requires `moused` daemon
-- Keyboard via `/dev/tty` in raw terminal mode
+- Keyboard input (tried in order of preference):
+  1. **evdev** (`/dev/input/event*`) - if evdev kernel support is enabled
+  2. **Direct keyboard** (`/dev/kbdmux0`, `/dev/ukbd0`) - raw keyboard access
+  3. **TTY fallback** (`/dev/tty`) - works only on daemon's terminal
 
 **FreeBSD Setup:**
 ```sh
@@ -228,15 +231,30 @@ sudo service moused start
 # Add to /etc/rc.conf to start on boot:
 # moused_enable="YES"
 
+# For best keyboard support, enable evdev (optional but recommended):
+# This provides keyboard input that works from any terminal
+kldload evdev
+sysctl kern.evdev.rcpt_mask=12
+
 # Start semadrawd
 sudo semadrawd --backend vulkan_console
+```
+
+**Verifying evdev on FreeBSD:**
+```sh
+# Check if evdev devices are available
+ls -la /dev/input/event*
+
+# Test with evtest (install from ports: sysutils/evtest)
+sudo evtest
 ```
 
 **Notes:**
 - Uses VK_KHR_display for direct display output (no windowing system)
 - GPU-accelerated rendering with CPU-based SDCS execution
+- With evdev enabled, keyboard input works regardless of which VT you're on
+- Without evdev, keyboard only works when typing on the daemon's terminal
 - Input is optional - backend works without input devices for testing
-- If input fails to initialize, rendering still works
 
 ### X11 Use
 
@@ -340,10 +358,14 @@ semadraw-term
 # Ensure moused is running
 sudo service moused start
 
+# Enable evdev for keyboard input (recommended)
+sudo kldload evdev
+sudo sysctl kern.evdev.rcpt_mask=12
+
 # Start with Vulkan console (auto-selects display mode)
 sudo semadrawd --backend vulkan_console
 
-# Run terminal with larger text
+# Run terminal from any VT (keyboard works with evdev)
 semadraw-term --scale 2
 ```
 
