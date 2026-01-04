@@ -262,26 +262,40 @@ pub const DrawfsBackend = struct {
 
         const reply = try self.sendAndRecv(REQ_HELLO, &payload, RPL_HELLO);
 
-        const server_major = std.mem.readInt(u16, reply[0..2], .little);
-        const server_minor = std.mem.readInt(u16, reply[2..4], .little);
+        if (reply.len < 16) return error.InvalidReply;
+
+        const status = std.mem.readInt(i32, reply[0..4], .little);
+        if (status != 0) {
+            log.err("HELLO failed: status={}", .{status});
+            return error.HelloFailed;
+        }
+
+        const server_major = std.mem.readInt(u16, reply[4..6], .little);
+        const server_minor = std.mem.readInt(u16, reply[6..8], .little);
         log.info("drawfs protocol v{}.{}", .{ server_major, server_minor });
     }
 
     fn doDisplayList(self: *Self) !void {
         const reply = try self.sendAndRecv(REQ_DISPLAY_LIST, &[_]u8{}, RPL_DISPLAY_LIST);
 
-        if (reply.len < 4) return error.InvalidReply;
+        if (reply.len < 8) return error.InvalidReply;
 
-        const count = std.mem.readInt(u32, reply[0..4], .little);
+        const status = std.mem.readInt(i32, reply[0..4], .little);
+        if (status != 0) {
+            log.err("DISPLAY_LIST failed: status={}", .{status});
+            return error.DisplayListFailed;
+        }
+
+        const count = std.mem.readInt(u32, reply[4..8], .little);
         if (count == 0) return error.NoDisplays;
 
-        // Parse first display descriptor (20 bytes each)
-        if (reply.len < 4 + 20) return error.InvalidReply;
+        // Parse first display descriptor (20 bytes each: display_id, width, height, refresh_mhz, flags)
+        if (reply.len < 8 + 20) return error.InvalidReply;
 
-        self.display_id = std.mem.readInt(u32, reply[4..8], .little);
-        self.display_width = std.mem.readInt(u32, reply[8..12], .little);
-        self.display_height = std.mem.readInt(u32, reply[12..16], .little);
-        const refresh_mhz = std.mem.readInt(u32, reply[16..20], .little);
+        self.display_id = std.mem.readInt(u32, reply[8..12], .little);
+        self.display_width = std.mem.readInt(u32, reply[12..16], .little);
+        self.display_height = std.mem.readInt(u32, reply[16..20], .little);
+        const refresh_mhz = std.mem.readInt(u32, reply[20..24], .little);
 
         log.info("display {}: {}x{}@{}mHz", .{
             self.display_id,
