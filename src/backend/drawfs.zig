@@ -187,15 +187,20 @@ pub const DrawfsBackend = struct {
         };
 
         // Open device
+        log.info("opening {s}...", .{device_path});
         self.fd = posix.open(device_path, .{ .ACCMODE = .RDWR }, 0) catch {
             log.err("failed to open {s}", .{device_path});
             return error.OpenFailed;
         };
         errdefer posix.close(self.fd);
+        log.info("opened {s}, fd={}", .{ device_path, self.fd });
 
         // Protocol handshake
+        log.info("sending HELLO...", .{});
         try self.doHello();
+        log.info("HELLO complete, sending DISPLAY_LIST...", .{});
         try self.doDisplayList();
+        log.info("DISPLAY_LIST complete, sending DISPLAY_OPEN...", .{});
         try self.doDisplayOpen();
 
         log.info("connected to drawfs: display {}x{}", .{ self.display_width, self.display_height });
