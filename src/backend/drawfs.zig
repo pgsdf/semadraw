@@ -1,6 +1,7 @@
 const std = @import("std");
 const posix = std.posix;
 const backend = @import("backend");
+const evdev = @import("evdev");
 
 const log = std.log.scoped(.drawfs_backend);
 
@@ -161,6 +162,9 @@ pub const DrawfsBackend = struct {
     // Read buffer for protocol
     read_buf: [4096]u8,
 
+    // Input handling via evdev module
+    input: ?*evdev.EvdevInput,
+
     const Self = @This();
 
     pub fn init(allocator: std.mem.Allocator, device_path: []const u8) !*Self {
@@ -184,6 +188,7 @@ pub const DrawfsBackend = struct {
             .height = 0,
             .frame_count = 0,
             .read_buf = undefined,
+            .input = null,
         };
 
         // Open device
@@ -204,6 +209,12 @@ pub const DrawfsBackend = struct {
         try self.doDisplayOpen();
 
         log.info("connected to drawfs: display {}x{}", .{ self.display_width, self.display_height });
+
+        // Initialize input devices via evdev module
+        self.input = evdev.EvdevInput.init(allocator, self.display_width, self.display_height) catch |err| blk: {
+            log.warn("failed to initialize evdev input: {}", .{err});
+            break :blk null;
+        };
 
         return self;
     }
@@ -432,6 +443,11 @@ pub const DrawfsBackend = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        // Cleanup evdev input
+        if (self.input) |inp| {
+            inp.deinit();
+        }
+
         self.destroySurface();
 
         if (self.fd >= 0) {
@@ -641,9 +657,28 @@ pub const DrawfsBackend = struct {
         try self.createSurface(width, height);
     }
 
-    fn pollEventsImpl(_: *anyopaque) bool {
-        // drawfs doesn't have input events (yet)
+    fn pollEventsImpl(ctx: *anyopaque) bool {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        if (self.input) |inp| {
+            _ = inp.poll();
+        }
         return true;
+    }
+
+    fn getKeyEventsImpl(ctx: *anyopaque) []const backend.KeyEvent {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        if (self.input) |inp| {
+            return inp.getKeyEvents();
+        }
+        return &[_]backend.KeyEvent{};
+    }
+
+    fn getMouseEventsImpl(ctx: *anyopaque) []const backend.MouseEvent {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        if (self.input) |inp| {
+            return inp.getMouseEvents();
+        }
+        return &[_]backend.MouseEvent{};
     }
 
     fn deinitImpl(ctx: *anyopaque) void {
@@ -658,6 +693,8 @@ pub const DrawfsBackend = struct {
         .getPixels = getPixelsImpl,
         .resize = resizeImpl,
         .pollEvents = pollEventsImpl,
+        .getKeyEvents = getKeyEventsImpl,
+        .getMouseEvents = getMouseEventsImpl,
         .deinit = deinitImpl,
     };
 
