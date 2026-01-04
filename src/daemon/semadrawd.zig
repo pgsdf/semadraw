@@ -203,50 +203,50 @@ pub const Daemon = struct {
             // Check for pending clipboard responses
             self.checkPendingClipboard();
 
-            if (n == 0) continue; // Timeout, no socket events
+            // Process socket events if any
+            if (n > 0) {
+                for (poll_fds.items) |*pfd| {
+                    if (pfd.revents == 0) continue;
 
-            // Process events
-            for (poll_fds.items) |*pfd| {
-                if (pfd.revents == 0) continue;
-
-                if (pfd.fd == self.server.getFd()) {
-                    // New local client connection
-                    self.handleNewConnection() catch |err| {
-                        log.warn("failed to accept local connection: {}", .{err});
-                    };
-                } else if (tcp_fd != null and pfd.fd == tcp_fd.?) {
-                    // New remote client connection
-                    self.handleNewRemoteConnection() catch |err| {
-                        log.warn("failed to accept remote connection: {}", .{err});
-                    };
-                } else if (self.clients.findByFd(pfd.fd)) |session| {
-                    // Local client event
-                    if (pfd.revents & std.posix.POLL.IN != 0) {
-                        self.handleClientMessage(session) catch |err| {
-                            log.debug("client {} error: {}, disconnecting", .{ session.id, err });
+                    if (pfd.fd == self.server.getFd()) {
+                        // New local client connection
+                        self.handleNewConnection() catch |err| {
+                            log.warn("failed to accept local connection: {}", .{err});
+                        };
+                    } else if (tcp_fd != null and pfd.fd == tcp_fd.?) {
+                        // New remote client connection
+                        self.handleNewRemoteConnection() catch |err| {
+                            log.warn("failed to accept remote connection: {}", .{err});
+                        };
+                    } else if (self.clients.findByFd(pfd.fd)) |session| {
+                        // Local client event
+                        if (pfd.revents & std.posix.POLL.IN != 0) {
+                            self.handleClientMessage(session) catch |err| {
+                                log.debug("client {} error: {}, disconnecting", .{ session.id, err });
+                                self.disconnectClient(session.id);
+                            };
+                        }
+                        if (pfd.revents & (std.posix.POLL.HUP | std.posix.POLL.ERR) != 0) {
+                            log.debug("client {} disconnected", .{session.id});
                             self.disconnectClient(session.id);
-                        };
-                    }
-                    if (pfd.revents & (std.posix.POLL.HUP | std.posix.POLL.ERR) != 0) {
-                        log.debug("client {} disconnected", .{session.id});
-                        self.disconnectClient(session.id);
-                    }
-                } else if (self.findRemoteByFd(pfd.fd)) |session| {
-                    // Remote client event
-                    if (pfd.revents & std.posix.POLL.IN != 0) {
-                        self.handleRemoteClientMessage(session) catch |err| {
-                            log.debug("remote client {} error: {}, disconnecting", .{ session.id, err });
+                        }
+                    } else if (self.findRemoteByFd(pfd.fd)) |session| {
+                        // Remote client event
+                        if (pfd.revents & std.posix.POLL.IN != 0) {
+                            self.handleRemoteClientMessage(session) catch |err| {
+                                log.debug("remote client {} error: {}, disconnecting", .{ session.id, err });
+                                self.disconnectRemoteClient(session.id);
+                            };
+                        }
+                        if (pfd.revents & (std.posix.POLL.HUP | std.posix.POLL.ERR) != 0) {
+                            log.debug("remote client {} disconnected", .{session.id});
                             self.disconnectRemoteClient(session.id);
-                        };
-                    }
-                    if (pfd.revents & (std.posix.POLL.HUP | std.posix.POLL.ERR) != 0) {
-                        log.debug("remote client {} disconnected", .{session.id});
-                        self.disconnectRemoteClient(session.id);
+                        }
                     }
                 }
             }
 
-            // Perform composition if needed
+            // Perform composition if needed (always check, regardless of socket events)
             if (self.comp.needsComposite()) {
                 _ = self.comp.composite() catch |err| {
                     log.warn("composite failed: {}", .{err});
@@ -490,6 +490,11 @@ pub const Daemon = struct {
             try self.sendRemoteError(session, .invalid_surface, msg.surface_id);
             return;
         };
+
+        // When a surface becomes visible, trigger full repaint to ensure it gets rendered
+        if (msg.visible != 0) {
+            self.comp.damageAll();
+        }
     }
 
     fn handleRemoteSetZOrder(self: *Daemon, session: *RemoteSession, payload: ?[]u8) !void {
@@ -799,6 +804,12 @@ pub const Daemon = struct {
             try session.sendError(.invalid_surface, msg.surface_id);
             return;
         };
+
+        // When a surface becomes visible, trigger full repaint to ensure it gets rendered
+        if (msg.visible != 0) {
+            self.comp.damageAll();
+        }
+
         log.debug("client {} set surface {} visible={}", .{ session.id, msg.surface_id, msg.visible != 0 });
     }
 
