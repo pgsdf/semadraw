@@ -1058,20 +1058,29 @@ pub fn main() !void {
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (std.mem.eql(u8, arg, "-s") or std.mem.eql(u8, arg, "--socket")) {
-            i += 1;
-            if (i >= args.len) {
-                log.err("missing argument for {s}", .{arg});
-                return error.InvalidArgument;
-            }
-            config.socket_path = args[i];
-        } else if (std.mem.eql(u8, arg, "-b") or std.mem.eql(u8, arg, "--backend")) {
-            i += 1;
-            if (i >= args.len) {
-                log.err("missing argument for {s}", .{arg});
-                return error.InvalidArgument;
-            }
-            const backend_name = args[i];
+        if (std.mem.eql(u8, arg, "-s") or std.mem.eql(u8, arg, "--socket") or std.mem.startsWith(u8, arg, "--socket=")) {
+            const socket_path = if (std.mem.startsWith(u8, arg, "--socket="))
+                arg["--socket=".len..]
+            else blk: {
+                i += 1;
+                if (i >= args.len) {
+                    log.err("missing argument for {s}", .{arg});
+                    return error.InvalidArgument;
+                }
+                break :blk args[i];
+            };
+            config.socket_path = socket_path;
+        } else if (std.mem.eql(u8, arg, "-b") or std.mem.eql(u8, arg, "--backend") or std.mem.startsWith(u8, arg, "--backend=")) {
+            const backend_name = if (std.mem.startsWith(u8, arg, "--backend="))
+                arg["--backend=".len..]
+            else blk: {
+                i += 1;
+                if (i >= args.len) {
+                    log.err("missing argument for {s}", .{arg});
+                    return error.InvalidArgument;
+                }
+                break :blk args[i];
+            };
             if (std.mem.eql(u8, backend_name, "software")) {
                 config.backend_type = .software;
             } else if (std.mem.eql(u8, backend_name, "headless")) {
@@ -1092,64 +1101,79 @@ pub fn main() !void {
                 log.err("unknown backend: {s} (valid: software, headless, kms, x11, vulkan, vulkan_console, wayland, drawfs)", .{backend_name});
                 return error.InvalidArgument;
             }
-        } else if (std.mem.eql(u8, arg, "-t") or std.mem.eql(u8, arg, "--tcp")) {
-            i += 1;
-            if (i >= args.len) {
-                log.err("missing argument for {s}", .{arg});
-                return error.InvalidArgument;
-            }
-            config.tcp_port = std.fmt.parseInt(u16, args[i], 10) catch {
-                log.err("invalid TCP port: {s}", .{args[i]});
+        } else if (std.mem.eql(u8, arg, "-t") or std.mem.eql(u8, arg, "--tcp") or std.mem.startsWith(u8, arg, "--tcp=")) {
+            const tcp_str = if (std.mem.startsWith(u8, arg, "--tcp="))
+                arg["--tcp=".len..]
+            else blk: {
+                i += 1;
+                if (i >= args.len) {
+                    log.err("missing argument for {s}", .{arg});
+                    return error.InvalidArgument;
+                }
+                break :blk args[i];
+            };
+            config.tcp_port = std.fmt.parseInt(u16, tcp_str, 10) catch {
+                log.err("invalid TCP port: {s}", .{tcp_str});
                 return error.InvalidArgument;
             };
-        } else if (std.mem.eql(u8, arg, "--tcp-addr")) {
-            i += 1;
-            if (i >= args.len) {
-                log.err("missing argument for {s}", .{arg});
-                return error.InvalidArgument;
-            }
+        } else if (std.mem.eql(u8, arg, "--tcp-addr") or std.mem.startsWith(u8, arg, "--tcp-addr=")) {
+            const addr_str = if (std.mem.startsWith(u8, arg, "--tcp-addr="))
+                arg["--tcp-addr=".len..]
+            else blk: {
+                i += 1;
+                if (i >= args.len) {
+                    log.err("missing argument for {s}", .{arg});
+                    return error.InvalidArgument;
+                }
+                break :blk args[i];
+            };
             // Parse IP address (simple dotted quad parsing)
             var parts: [4]u8 = undefined;
             var part_idx: usize = 0;
-            var iter = std.mem.splitScalar(u8, args[i], '.');
+            var iter = std.mem.splitScalar(u8, addr_str, '.');
             while (iter.next()) |part| {
                 if (part_idx >= 4) {
-                    log.err("invalid IP address: {s}", .{args[i]});
+                    log.err("invalid IP address: {s}", .{addr_str});
                     return error.InvalidArgument;
                 }
                 parts[part_idx] = std.fmt.parseInt(u8, part, 10) catch {
-                    log.err("invalid IP address: {s}", .{args[i]});
+                    log.err("invalid IP address: {s}", .{addr_str});
                     return error.InvalidArgument;
                 };
                 part_idx += 1;
             }
             if (part_idx != 4) {
-                log.err("invalid IP address: {s}", .{args[i]});
+                log.err("invalid IP address: {s}", .{addr_str});
                 return error.InvalidArgument;
             }
             config.tcp_addr = parts;
-        } else if (std.mem.eql(u8, arg, "-r") or std.mem.eql(u8, arg, "--resolution")) {
-            i += 1;
-            if (i >= args.len) {
-                log.err("missing argument for {s}", .{arg});
-                return error.InvalidArgument;
-            }
+        } else if (std.mem.eql(u8, arg, "-r") or std.mem.eql(u8, arg, "--resolution") or std.mem.startsWith(u8, arg, "--resolution=")) {
+            const res_str = if (std.mem.startsWith(u8, arg, "--resolution="))
+                arg["--resolution=".len..]
+            else blk: {
+                i += 1;
+                if (i >= args.len) {
+                    log.err("missing argument for {s}", .{arg});
+                    return error.InvalidArgument;
+                }
+                break :blk args[i];
+            };
             // Parse resolution in WIDTHxHEIGHT format
-            var res_iter = std.mem.splitScalar(u8, args[i], 'x');
+            var res_iter = std.mem.splitScalar(u8, res_str, 'x');
             const width_str = res_iter.next() orelse {
-                log.err("invalid resolution format: {s} (expected WIDTHxHEIGHT)", .{args[i]});
+                log.err("invalid resolution format: {s} (expected WIDTHxHEIGHT)", .{res_str});
                 return error.InvalidArgument;
             };
             const height_str = res_iter.next() orelse {
-                log.err("invalid resolution format: {s} (expected WIDTHxHEIGHT)", .{args[i]});
+                log.err("invalid resolution format: {s} (expected WIDTHxHEIGHT)", .{res_str});
                 return error.InvalidArgument;
             };
             config.width = std.fmt.parseInt(u32, width_str, 10) catch {
-                log.err("invalid width in resolution: {s}", .{args[i]});
+                log.err("invalid width in resolution: {s}", .{res_str});
                 return error.InvalidArgument;
             };
             config.height = std.fmt.parseInt(u32, height_str, 10) catch {
-                log.err("invalid height in resolution: {s}", .{args[i]});
+                log.err("invalid height in resolution: {s}", .{res_str});
                 return error.InvalidArgument;
             };
             if (config.width < 320 or config.height < 200) {
