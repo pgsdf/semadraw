@@ -262,6 +262,8 @@ pub const BackendType = enum(u8) {
     wayland = 5,
     /// Vulkan console backend (VK_KHR_display, no X11/Wayland)
     vulkan_console = 6,
+    /// FreeBSD drawfs kernel module backend
+    drawfs = 7,
 };
 
 /// Create a backend of the specified type
@@ -295,6 +297,10 @@ pub fn createBackend(allocator: std.mem.Allocator, backend_type: BackendType) !B
         .vulkan_console => {
             const vulkan_console = @import("vulkan_console");
             return vulkan_console.create(allocator);
+        },
+        .drawfs => {
+            const drawfs = @import("drawfs");
+            return drawfs.create(allocator);
         },
     }
 }

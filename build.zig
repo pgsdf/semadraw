@@ -501,6 +501,20 @@ pub fn build(b: *std.Build) void {
     // Add vulkan_console import to backend module for createBackend
     backend_mod.addImport("vulkan_console", vulkan_console_backend_mod);
 
+    // drawfs backend module (FreeBSD drawfs kernel module)
+    const drawfs_backend_mod = b.createModule(.{
+        .root_source_file = b.path("src/backend/drawfs.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "backend", .module = backend_mod },
+        },
+    });
+    drawfs_backend_mod.link_libc = true;
+
+    // Add drawfs import to backend module for createBackend
+    backend_mod.addImport("drawfs", drawfs_backend_mod);
+
     const backend_process_mod = b.createModule(.{
         .root_source_file = b.path("src/backend/process.zig"),
         .target = target,
