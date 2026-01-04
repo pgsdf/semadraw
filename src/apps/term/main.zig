@@ -225,48 +225,73 @@ pub fn main() !void {
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (std.mem.eql(u8, arg, "-c") or std.mem.eql(u8, arg, "--cols")) {
-            i += 1;
-            if (i >= args.len) {
-                log.err("missing argument for {s}", .{arg});
-                return error.InvalidArgument;
-            }
-            config.cols = std.fmt.parseInt(u32, args[i], 10) catch {
-                log.err("invalid cols: {s}", .{args[i]});
+        if (std.mem.eql(u8, arg, "-c") or std.mem.eql(u8, arg, "--cols") or std.mem.startsWith(u8, arg, "--cols=")) {
+            const cols_str = if (std.mem.startsWith(u8, arg, "--cols="))
+                arg["--cols=".len..]
+            else blk: {
+                i += 1;
+                if (i >= args.len) {
+                    log.err("missing argument for {s}", .{arg});
+                    return error.InvalidArgument;
+                }
+                break :blk args[i];
+            };
+            config.cols = std.fmt.parseInt(u32, cols_str, 10) catch {
+                log.err("invalid cols: {s}", .{cols_str});
                 return error.InvalidArgument;
             };
-        } else if (std.mem.eql(u8, arg, "-r") or std.mem.eql(u8, arg, "--rows")) {
-            i += 1;
-            if (i >= args.len) {
-                log.err("missing argument for {s}", .{arg});
-                return error.InvalidArgument;
-            }
-            config.rows = std.fmt.parseInt(u32, args[i], 10) catch {
-                log.err("invalid rows: {s}", .{args[i]});
+        } else if (std.mem.eql(u8, arg, "-r") or std.mem.eql(u8, arg, "--rows") or std.mem.startsWith(u8, arg, "--rows=")) {
+            const rows_str = if (std.mem.startsWith(u8, arg, "--rows="))
+                arg["--rows=".len..]
+            else blk: {
+                i += 1;
+                if (i >= args.len) {
+                    log.err("missing argument for {s}", .{arg});
+                    return error.InvalidArgument;
+                }
+                break :blk args[i];
+            };
+            config.rows = std.fmt.parseInt(u32, rows_str, 10) catch {
+                log.err("invalid rows: {s}", .{rows_str});
                 return error.InvalidArgument;
             };
-        } else if (std.mem.eql(u8, arg, "-e") or std.mem.eql(u8, arg, "--shell")) {
-            i += 1;
-            if (i >= args.len) {
-                log.err("missing argument for {s}", .{arg});
-                return error.InvalidArgument;
-            }
-            config.shell = args[i];
-        } else if (std.mem.eql(u8, arg, "-s") or std.mem.eql(u8, arg, "--socket")) {
-            i += 1;
-            if (i >= args.len) {
-                log.err("missing argument for {s}", .{arg});
-                return error.InvalidArgument;
-            }
-            config.socket_path = args[i];
-        } else if (std.mem.eql(u8, arg, "-z") or std.mem.eql(u8, arg, "--scale")) {
-            i += 1;
-            if (i >= args.len) {
-                log.err("missing argument for {s}", .{arg});
-                return error.InvalidArgument;
-            }
-            config.scale = std.fmt.parseInt(u32, args[i], 10) catch {
-                log.err("invalid scale: {s}", .{args[i]});
+        } else if (std.mem.eql(u8, arg, "-e") or std.mem.eql(u8, arg, "--shell") or std.mem.startsWith(u8, arg, "--shell=")) {
+            const shell_path = if (std.mem.startsWith(u8, arg, "--shell="))
+                arg["--shell=".len..]
+            else blk: {
+                i += 1;
+                if (i >= args.len) {
+                    log.err("missing argument for {s}", .{arg});
+                    return error.InvalidArgument;
+                }
+                break :blk args[i];
+            };
+            config.shell = shell_path;
+        } else if (std.mem.eql(u8, arg, "-s") or std.mem.eql(u8, arg, "--socket") or std.mem.startsWith(u8, arg, "--socket=")) {
+            const socket_path = if (std.mem.startsWith(u8, arg, "--socket="))
+                arg["--socket=".len..]
+            else blk: {
+                i += 1;
+                if (i >= args.len) {
+                    log.err("missing argument for {s}", .{arg});
+                    return error.InvalidArgument;
+                }
+                break :blk args[i];
+            };
+            config.socket_path = socket_path;
+        } else if (std.mem.eql(u8, arg, "-z") or std.mem.eql(u8, arg, "--scale") or std.mem.startsWith(u8, arg, "--scale=")) {
+            const scale_str = if (std.mem.startsWith(u8, arg, "--scale="))
+                arg["--scale=".len..]
+            else blk: {
+                i += 1;
+                if (i >= args.len) {
+                    log.err("missing argument for {s}", .{arg});
+                    return error.InvalidArgument;
+                }
+                break :blk args[i];
+            };
+            config.scale = std.fmt.parseInt(u32, scale_str, 10) catch {
+                log.err("invalid scale: {s}", .{scale_str});
                 return error.InvalidArgument;
             };
             if (config.scale < 1 or config.scale > 4) {
