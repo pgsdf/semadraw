@@ -1086,8 +1086,10 @@ pub fn main() !void {
                 config.backend_type = .vulkan_console;
             } else if (std.mem.eql(u8, backend_name, "wayland")) {
                 config.backend_type = .wayland;
+            } else if (std.mem.eql(u8, backend_name, "drawfs")) {
+                config.backend_type = .drawfs;
             } else {
-                log.err("unknown backend: {s} (valid: software, headless, kms, x11, vulkan, vulkan_console, wayland)", .{backend_name});
+                log.err("unknown backend: {s} (valid: software, headless, kms, x11, vulkan, vulkan_console, wayland, drawfs)", .{backend_name});
                 return error.InvalidArgument;
             }
         } else if (std.mem.eql(u8, arg, "-t") or std.mem.eql(u8, arg, "--tcp")) {
@@ -1163,7 +1165,7 @@ pub fn main() !void {
             log.info("Usage: semadrawd [OPTIONS]", .{});
             log.info("Options:", .{});
             log.info("  -s, --socket PATH     Socket path (default: {s})", .{protocol.DEFAULT_SOCKET_PATH});
-            log.info("  -b, --backend TYPE    Backend type: software, headless, kms, x11, vulkan, vulkan_console, wayland (default: software)", .{});
+            log.info("  -b, --backend TYPE    Backend type: software, headless, kms, x11, vulkan, vulkan_console, wayland, drawfs (default: software)", .{});
             log.info("  -r, --resolution WxH  Display resolution (default: 1920x1080)", .{});
             log.info("  -t, --tcp PORT        Enable TCP remote connections on PORT (default: disabled)", .{});
             log.info("  --tcp-addr ADDR       TCP bind address (default: 0.0.0.0)", .{});
