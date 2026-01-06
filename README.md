@@ -1,6 +1,6 @@
 # SemaDraw
 
-SemaDraw is a semantic graphics foundation for FreeBSD.
+SemaDraw is a prototype semantic graphics foundation for FreeBSD.
 
 It defines graphics as a deterministic, resolution independent system based on meaning rather than pixels, GPU APIs, or display servers.
 
