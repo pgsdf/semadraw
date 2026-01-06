@@ -12,6 +12,10 @@ const backend = @import("backend");
 
 const log = std.log.scoped(.semadrawd);
 
+pub const std_options = std.Options{
+    .log_level = .info,
+};
+
 /// Poll file descriptor (Zig-native version of pollfd)
 const PollFd = extern struct {
     fd: posix.fd_t,

@@ -22,33 +22,57 @@ Clients communicate with semadrawd via Unix domain sockets.
 
 ### Message format
 
-All messages use a 16-byte header:
+All messages use an 8-byte header followed by a variable-length payload:
 
 | Offset | Size | Field |
 |--------|------|-------|
-| 0 | 4 | Magic (0x53454D41) |
-| 4 | 2 | Message type |
-| 6 | 2 | Flags |
-| 8 | 4 | Payload length |
-| 12 | 4 | Reserved |
+| 0 | 2 | Message type |
+| 2 | 2 | Flags |
+| 4 | 4 | Payload length |
+
+All multi-byte values are little-endian.
 
 ### Message types
+
+Reply messages use the high bit convention: replies have `0x8xxx` values, where the
+low bits typically match the corresponding request (e.g., `HELLO` 0x0001 → `HELLO_REPLY` 0x8001).
+
+#### Client → Daemon requests (0x0xxx)
 
 | Type | Value | Description |
 |------|-------|-------------|
 | HELLO | 0x0001 | Client handshake |
-| HELLO_REPLY | 0x0002 | Server handshake response |
 | CREATE_SURFACE | 0x0010 | Create a new surface |
 | DESTROY_SURFACE | 0x0011 | Destroy a surface |
-| COMMIT | 0x0020 | Commit surface contents |
-| FRAME_COMPLETE | 0x0021 | Frame rendered notification |
+| ATTACH_BUFFER | 0x0020 | Attach shared memory buffer |
+| COMMIT | 0x0021 | Commit surface contents |
 | SET_VISIBLE | 0x0030 | Set surface visibility |
 | SET_Z_ORDER | 0x0031 | Set surface stacking order |
 | SET_POSITION | 0x0032 | Set surface position |
+| SYNC | 0x0040 | Synchronization barrier |
 | CLIPBOARD_SET | 0x0050 | Set clipboard content |
 | CLIPBOARD_REQUEST | 0x0051 | Request clipboard content |
+| DISCONNECT | 0x00F0 | Client disconnect |
+
+#### Daemon → Client responses (0x8xxx)
+
+| Type | Value | Description |
+|------|-------|-------------|
+| HELLO_REPLY | 0x8001 | Server handshake response |
+| SURFACE_CREATED | 0x8010 | Surface creation confirmed |
+| SURFACE_DESTROYED | 0x8011 | Surface destruction confirmed |
+| BUFFER_RELEASED | 0x8020 | Buffer can be reused |
+| FRAME_COMPLETE | 0x8021 | Frame rendered notification |
+| SYNC_DONE | 0x8040 | Sync barrier reached |
+| ERROR_REPLY | 0x80F0 | Error response |
+
+#### Daemon → Client events (0x9xxx)
+
+| Type | Value | Description |
+|------|-------|-------------|
+| KEY_PRESS | 0x9001 | Keyboard input event |
+| MOUSE_EVENT | 0x9002 | Mouse input event |
 | CLIPBOARD_DATA | 0x9050 | Clipboard data response |
-| ERROR | 0x00FF | Error response |
 
 ### Shared memory
 

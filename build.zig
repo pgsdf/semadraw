@@ -508,7 +508,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "backend", .module = backend_mod },
-            .{ .name = "evdev", .module = evdev_mod },
+            .{ .name = "bsdinput", .module = bsdinput_mod },
         },
     });
     drawfs_backend_mod.link_libc = true;

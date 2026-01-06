@@ -1,7 +1,7 @@
 const std = @import("std");
 const posix = std.posix;
 const backend = @import("backend");
-const evdev = @import("evdev");
+const bsdinput = @import("bsdinput");
 
 const log = std.log.scoped(.drawfs_backend);
 
@@ -40,10 +40,34 @@ const EVT_SURFACE_PRESENTED: u16 = 0x9002;
 // Pixel formats
 const FMT_XRGB8888: u32 = 1;
 
-// ioctl for MAP_SURFACE
-// FreeBSD ioctl encoding: _IOWR('D', 0x02, struct) = 0xC0104402
-// Size = 16 bytes (4 fields * 4 bytes each)
-const DRAWFSGIOC_MAP_SURFACE: u32 = 0xC0104402;
+// ============================================================================
+// ioctl encoding helpers
+// ============================================================================
+//
+// BSD/Linux ioctl command encoding (from sys/ioccom.h):
+//   Bits 31-30: Direction (0=none, 1=write, 2=read, 3=read+write)
+//   Bits 29-16: Size of the data structure (14 bits, max 16383 bytes)
+//   Bits 15-8:  Type (magic character identifying the driver)
+//   Bits 7-0:   Command number
+//
+// _IOWR('D', 0x02, struct) means: read+write, type='D', cmd=0x02, size=sizeof(struct)
+
+const IOC_VOID: u32 = 0x20000000; // no parameters
+const IOC_OUT: u32 = 0x40000000; // copy out (read)
+const IOC_IN: u32 = 0x80000000; // copy in (write)
+const IOC_INOUT: u32 = IOC_IN | IOC_OUT; // read+write (0xC0000000)
+
+/// Computes ioctl command number at comptime, matching _IOC/_IOWR macros.
+/// This ensures the encoding stays correct if struct size changes.
+fn ioc(dir: u32, typ: u8, nr: u8, comptime T: type) u32 {
+    const size: u32 = @sizeOf(T);
+    return dir | (size << 16) | (@as(u32, typ) << 8) | nr;
+}
+
+/// _IOWR equivalent: read+write ioctl
+fn iowr(typ: u8, nr: u8, comptime T: type) u32 {
+    return ioc(IOC_INOUT, typ, nr, T);
+}
 
 const MapSurfaceReq = extern struct {
     status: i32,
@@ -51,6 +75,21 @@ const MapSurfaceReq = extern struct {
     stride_bytes: u32,
     bytes_total: u32,
 };
+
+// Computed at comptime: _IOWR('D', 0x02, struct drawfs_map_surface)
+// If MapSurfaceReq size changes, this will automatically update.
+const DRAWFSGIOC_MAP_SURFACE: u32 = iowr('D', 0x02, MapSurfaceReq);
+
+// Compile-time verification that our encoding matches the expected value
+comptime {
+    // Expected: 0xC0104402 = direction(0xC0) | size(0x10=16) | type('D'=0x44) | cmd(0x02)
+    if (DRAWFSGIOC_MAP_SURFACE != 0xC0104402) {
+        @compileError("DRAWFSGIOC_MAP_SURFACE encoding mismatch - struct size may have changed");
+    }
+    if (@sizeOf(MapSurfaceReq) != 16) {
+        @compileError("MapSurfaceReq size mismatch - expected 16 bytes");
+    }
+}
 
 // ============================================================================
 // Protocol helpers
@@ -90,37 +129,51 @@ fn makeFrame(allocator: std.mem.Allocator, frame_id: u32, msg_type: u16, msg_id:
 }
 
 fn readFrame(fd: posix.fd_t, buf: []u8) !usize {
-    // Read frame header first
-    var total: usize = 0;
-    while (total < DRAWFS_FRAME_HDR_SIZE) {
-        const n = posix.read(fd, buf[total..DRAWFS_FRAME_HDR_SIZE]) catch |err| {
-            return err;
-        };
-        if (n == 0) return error.EndOfFile;
-        total += n;
+    // Poll for data first (kernel requires poll before read)
+    var poll_fds = [_]posix.pollfd{
+        .{ .fd = fd, .events = posix.POLL.IN, .revents = 0 },
+    };
+    const poll_result = posix.poll(&poll_fds, 5000) catch |err| {
+        log.err("poll failed: {}", .{err});
+        return err;
+    };
+    if (poll_result == 0) {
+        log.err("poll timeout waiting for frame", .{});
+        return error.Timeout;
+    }
+    if ((poll_fds[0].revents & posix.POLL.IN) == 0) {
+        log.err("poll returned but no POLLIN: revents=0x{x}", .{poll_fds[0].revents});
+        return error.PollError;
     }
 
-    // Validate magic
+    // Read entire frame in one syscall (kernel expects atomic read)
+    const n = posix.read(fd, buf) catch |err| {
+        log.err("read failed: {}", .{err});
+        return err;
+    };
+    if (n == 0) {
+        return error.EndOfFile;
+    }
+
+    // Validate header
+    if (n < DRAWFS_FRAME_HDR_SIZE) {
+        log.err("short read: {} bytes", .{n});
+        return error.ShortRead;
+    }
+
     const magic = std.mem.readInt(u32, buf[0..4], .little);
     if (magic != DRAWFS_MAGIC) {
+        log.err("invalid magic: 0x{x:08}", .{magic});
         return error.InvalidMagic;
     }
 
-    // Get frame size and read rest
     const frame_bytes = std.mem.readInt(u32, buf[8..12], .little);
-    if (frame_bytes > buf.len) {
-        return error.BufferTooSmall;
+    if (n < frame_bytes) {
+        log.err("incomplete frame: got {}, expected {}", .{ n, frame_bytes });
+        return error.IncompleteFrame;
     }
 
-    while (total < frame_bytes) {
-        const n = posix.read(fd, buf[total..frame_bytes]) catch |err| {
-            return err;
-        };
-        if (n == 0) return error.EndOfFile;
-        total += n;
-    }
-
-    return total;
+    return n;
 }
 
 fn parseReply(buf: []const u8) struct { msg_type: u16, msg_id: u32, payload: []const u8 } {
@@ -162,8 +215,8 @@ pub const DrawfsBackend = struct {
     // Read buffer for protocol
     read_buf: [4096]u8,
 
-    // Input handling via evdev module
-    input: ?*evdev.EvdevInput,
+    // Input handling via bsdinput module (libinput preferred)
+    input: ?*bsdinput.BsdInput,
 
     const Self = @This();
 
@@ -210,9 +263,9 @@ pub const DrawfsBackend = struct {
 
         log.info("connected to drawfs: display {}x{}", .{ self.display_width, self.display_height });
 
-        // Initialize input devices via evdev module
-        self.input = evdev.EvdevInput.init(allocator, self.display_width, self.display_height) catch |err| blk: {
-            log.warn("failed to initialize evdev input: {}", .{err});
+        // Initialize input devices via bsdinput module (libinput preferred)
+        self.input = bsdinput.BsdInput.init(allocator, self.display_width, self.display_height) catch |err| blk: {
+            log.warn("failed to initialize bsdinput: {}", .{err});
             break :blk null;
         };
 
@@ -242,7 +295,7 @@ pub const DrawfsBackend = struct {
         const frame = try makeFrame(self.allocator, frame_id, msg_type, msg_id, payload);
         defer self.allocator.free(frame);
 
-        // Send
+        // Send frame
         var sent: usize = 0;
         while (sent < frame.len) {
             sent += posix.write(self.fd, frame[sent..]) catch |err| {
@@ -570,8 +623,10 @@ pub const DrawfsBackend = struct {
 
             // Execute command
             switch (opcode) {
-                0x0001 => {}, // RESET
-                0x0010 => { // FILL_RECT
+                0x0001 => {}, // RESET - no-op for stateless renderer
+                0x0004 => {}, // SET_BLEND - stored state, not yet used
+                0x0007 => {}, // SET_ANTIALIAS - stored state, not yet used
+                0x0010 => { // FILL_RECT (32 bytes: x, y, w, h, r, g, b, a)
                     if (payload.len >= 32) {
                         const x = readF32(payload[0..4]);
                         const y = readF32(payload[4..8]);
@@ -585,8 +640,38 @@ pub const DrawfsBackend = struct {
                         self.fillRect(fb, x, y, w, h, r, g, b_val, a);
                     }
                 },
+                0x0011 => { // STROKE_RECT (36 bytes: x, y, w, h, r, g, b, a, stroke_width)
+                    if (payload.len >= 36) {
+                        const x = readF32(payload[0..4]);
+                        const y = readF32(payload[4..8]);
+                        const w = readF32(payload[8..12]);
+                        const h = readF32(payload[12..16]);
+                        const r = readF32(payload[16..20]);
+                        const g = readF32(payload[20..24]);
+                        const b_val = readF32(payload[24..28]);
+                        const a = readF32(payload[28..32]);
+                        const stroke_width = readF32(payload[32..36]);
+
+                        self.strokeRect(fb, x, y, w, h, r, g, b_val, a, stroke_width);
+                    }
+                },
+                0x0012 => { // STROKE_LINE (36 bytes: x1, y1, x2, y2, r, g, b, a, stroke_width)
+                    if (payload.len >= 36) {
+                        const x1 = readF32(payload[0..4]);
+                        const y1 = readF32(payload[4..8]);
+                        const x2 = readF32(payload[8..12]);
+                        const y2 = readF32(payload[12..16]);
+                        const r = readF32(payload[16..20]);
+                        const g = readF32(payload[20..24]);
+                        const b_val = readF32(payload[24..28]);
+                        const a = readF32(payload[28..32]);
+                        const stroke_width = readF32(payload[32..36]);
+
+                        self.strokeLine(fb, x1, y1, x2, y2, r, g, b_val, a, stroke_width);
+                    }
+                },
                 0x00F0 => return, // END
-                else => {}, // Ignore unknown
+                else => {}, // Ignore unknown opcodes
             }
 
             // Align to 8 bytes
@@ -638,6 +723,104 @@ pub const DrawfsBackend = struct {
                         fb[idx + 3] = 0xFF;
                     }
                 }
+            }
+        }
+    }
+
+    fn strokeRect(self: *Self, fb: []u8, x: f32, y: f32, w: f32, h: f32, r: f32, g: f32, b_col: f32, a: f32, stroke_width: f32) void {
+        // Draw rectangle outline using four filled rectangles for the edges
+        const sw = @max(1.0, stroke_width);
+        const half_sw = sw / 2.0;
+
+        // Top edge
+        self.fillRect(fb, x - half_sw, y - half_sw, w + sw, sw, r, g, b_col, a);
+        // Bottom edge
+        self.fillRect(fb, x - half_sw, y + h - half_sw, w + sw, sw, r, g, b_col, a);
+        // Left edge (between top and bottom)
+        self.fillRect(fb, x - half_sw, y + half_sw, sw, h - sw, r, g, b_col, a);
+        // Right edge (between top and bottom)
+        self.fillRect(fb, x + w - half_sw, y + half_sw, sw, h - sw, r, g, b_col, a);
+    }
+
+    fn strokeLine(self: *Self, fb: []u8, x1: f32, y1: f32, x2: f32, y2: f32, r: f32, g: f32, b_col: f32, a: f32, stroke_width: f32) void {
+        // Bresenham-style line drawing with stroke width
+        const fb_w = self.width;
+        const fb_h = self.height;
+        const stride = self.surface_stride;
+
+        const cr = clampU8(r);
+        const cg = clampU8(g);
+        const cb = clampU8(b_col);
+        const ca = clampU8(a);
+
+        const sw = @max(1.0, stroke_width);
+        const half_sw = @as(i32, @intFromFloat(sw / 2.0));
+
+        // Calculate line parameters
+        const dx_f = x2 - x1;
+        const dy_f = y2 - y1;
+        const length = @sqrt(dx_f * dx_f + dy_f * dy_f);
+
+        if (length < 0.5) {
+            // Point - just draw a filled circle/square at the location
+            self.fillRect(fb, x1 - sw / 2.0, y1 - sw / 2.0, sw, sw, r, g, b_col, a);
+            return;
+        }
+
+        // Use integer Bresenham algorithm
+        var ix1: i32 = @intFromFloat(x1);
+        var iy1: i32 = @intFromFloat(y1);
+        const ix2: i32 = @intFromFloat(x2);
+        const iy2: i32 = @intFromFloat(y2);
+
+        const dx: i32 = @intCast(@abs(ix2 - ix1));
+        const dy: i32 = @intCast(@abs(iy2 - iy1));
+        const sx: i32 = if (ix1 < ix2) @as(i32, 1) else @as(i32, -1);
+        const sy: i32 = if (iy1 < iy2) @as(i32, 1) else @as(i32, -1);
+        var err: i32 = dx - dy;
+
+        while (true) {
+            // Draw a square at current position for stroke width
+            var py: i32 = -half_sw;
+            while (py <= half_sw) : (py += 1) {
+                var px: i32 = -half_sw;
+                while (px <= half_sw) : (px += 1) {
+                    const plot_x = ix1 + px;
+                    const plot_y = iy1 + py;
+
+                    if (plot_x >= 0 and plot_x < @as(i32, @intCast(fb_w)) and
+                        plot_y >= 0 and plot_y < @as(i32, @intCast(fb_h)))
+                    {
+                        const idx = @as(usize, @intCast(plot_y)) * stride + @as(usize, @intCast(plot_x)) * 4;
+                        if (idx + 3 < fb.len) {
+                            if (ca == 255) {
+                                fb[idx + 0] = cb;
+                                fb[idx + 1] = cg;
+                                fb[idx + 2] = cr;
+                                fb[idx + 3] = 0xFF;
+                            } else if (ca > 0) {
+                                const sa: f32 = @as(f32, @floatFromInt(ca)) / 255.0;
+                                const inv_sa = 1.0 - sa;
+                                fb[idx + 0] = @intFromFloat(@min(255.0, @as(f32, @floatFromInt(cb)) * sa + @as(f32, @floatFromInt(fb[idx + 0])) * inv_sa));
+                                fb[idx + 1] = @intFromFloat(@min(255.0, @as(f32, @floatFromInt(cg)) * sa + @as(f32, @floatFromInt(fb[idx + 1])) * inv_sa));
+                                fb[idx + 2] = @intFromFloat(@min(255.0, @as(f32, @floatFromInt(cr)) * sa + @as(f32, @floatFromInt(fb[idx + 2])) * inv_sa));
+                                fb[idx + 3] = 0xFF;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (ix1 == ix2 and iy1 == iy2) break;
+
+            const e2 = 2 * err;
+            if (e2 > -dy) {
+                err -= dy;
+                ix1 += sx;
+            }
+            if (e2 < dx) {
+                err += dx;
+                iy1 += sy;
             }
         }
     }

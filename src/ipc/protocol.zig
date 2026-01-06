@@ -708,3 +708,144 @@ test "HelloMsg version check" {
     try std.testing.expectEqual(PROTOCOL_VERSION_MAJOR, msg.version_major);
     try std.testing.expectEqual(PROTOCOL_VERSION_MINOR, msg.version_minor);
 }
+
+// ============================================================================
+// Extended Protocol Validation Tests (P3.3)
+// ============================================================================
+
+test "AttachBufferMsg serialize/deserialize roundtrip" {
+    const msg = AttachBufferMsg{
+        .surface_id = 42,
+        .shm_size = 1024 * 1024,
+        .sdcs_offset = 0,
+        .sdcs_length = 4096,
+    };
+    var buf: [AttachBufferMsg.SIZE]u8 = undefined;
+    msg.serialize(&buf);
+    const decoded = try AttachBufferMsg.deserialize(&buf);
+    try std.testing.expectEqual(msg.surface_id, decoded.surface_id);
+    try std.testing.expectEqual(msg.shm_size, decoded.shm_size);
+    try std.testing.expectEqual(msg.sdcs_offset, decoded.sdcs_offset);
+    try std.testing.expectEqual(msg.sdcs_length, decoded.sdcs_length);
+}
+
+test "HelloReplyMsg serialize/deserialize roundtrip" {
+    const msg = HelloReplyMsg{
+        .version_major = 0,
+        .version_minor = 1,
+        .client_id = 12345,
+        .server_flags = 0xFF,
+    };
+    var buf: [HelloReplyMsg.SIZE]u8 = undefined;
+    msg.serialize(&buf);
+    const decoded = try HelloReplyMsg.deserialize(&buf);
+    try std.testing.expectEqual(msg.version_major, decoded.version_major);
+    try std.testing.expectEqual(msg.version_minor, decoded.version_minor);
+    try std.testing.expectEqual(msg.client_id, decoded.client_id);
+    try std.testing.expectEqual(msg.server_flags, decoded.server_flags);
+}
+
+test "KeyPressMsg serialize/deserialize roundtrip" {
+    const msg = KeyPressMsg{
+        .surface_id = 1,
+        .key_code = 0x1E, // KEY_A
+        .modifiers = KeyPressMsg.MOD_SHIFT | KeyPressMsg.MOD_CTRL,
+        .pressed = 1,
+    };
+    var buf: [KeyPressMsg.SIZE]u8 = undefined;
+    msg.serialize(&buf);
+    const decoded = try KeyPressMsg.deserialize(&buf);
+    try std.testing.expectEqual(msg.surface_id, decoded.surface_id);
+    try std.testing.expectEqual(msg.key_code, decoded.key_code);
+    try std.testing.expectEqual(msg.modifiers, decoded.modifiers);
+    try std.testing.expectEqual(msg.pressed, decoded.pressed);
+}
+
+test "MouseEventMsg serialize/deserialize roundtrip" {
+    const msg = MouseEventMsg{
+        .surface_id = 2,
+        .x = -100,
+        .y = 200,
+        .button = .left,
+        .event_type = .press,
+        .modifiers = 0,
+    };
+    var buf: [MouseEventMsg.SIZE]u8 = undefined;
+    msg.serialize(&buf);
+    const decoded = try MouseEventMsg.deserialize(&buf);
+    try std.testing.expectEqual(msg.surface_id, decoded.surface_id);
+    try std.testing.expectEqual(msg.x, decoded.x);
+    try std.testing.expectEqual(msg.y, decoded.y);
+    try std.testing.expectEqual(msg.button, decoded.button);
+    try std.testing.expectEqual(msg.event_type, decoded.event_type);
+}
+
+test "ErrorReplyMsg serialize/deserialize roundtrip" {
+    const msg = ErrorReplyMsg{
+        .code = .invalid_surface,
+        .context = 999,
+    };
+    var buf: [ErrorReplyMsg.SIZE]u8 = undefined;
+    msg.serialize(&buf);
+    const decoded = try ErrorReplyMsg.deserialize(&buf);
+    try std.testing.expectEqual(msg.code, decoded.code);
+    try std.testing.expectEqual(msg.context, decoded.context);
+}
+
+test "ClipboardSetMsg serialize/deserialize roundtrip" {
+    const msg = ClipboardSetMsg{
+        .selection = .primary,
+        .length = 1024,
+    };
+    var buf: [ClipboardSetMsg.HEADER_SIZE]u8 = undefined;
+    msg.serialize(&buf);
+    const decoded = try ClipboardSetMsg.deserialize(&buf);
+    try std.testing.expectEqual(msg.selection, decoded.selection);
+    try std.testing.expectEqual(msg.length, decoded.length);
+}
+
+test "reply message type convention" {
+    // Replies use 0x8xxx (high bit set)
+    try std.testing.expect(@intFromEnum(MsgType.hello_reply) & 0x8000 != 0);
+    try std.testing.expect(@intFromEnum(MsgType.surface_created) & 0x8000 != 0);
+    try std.testing.expect(@intFromEnum(MsgType.error_reply) & 0x8000 != 0);
+    try std.testing.expect(@intFromEnum(MsgType.sync_done) & 0x8000 != 0);
+
+    // Requests use 0x0xxx (high bit clear)
+    try std.testing.expect(@intFromEnum(MsgType.hello) & 0x8000 == 0);
+    try std.testing.expect(@intFromEnum(MsgType.create_surface) & 0x8000 == 0);
+    try std.testing.expect(@intFromEnum(MsgType.disconnect) & 0x8000 == 0);
+
+    // Events use 0x9xxx
+    try std.testing.expect(@intFromEnum(MsgType.key_press) >= 0x9000);
+    try std.testing.expect(@intFromEnum(MsgType.mouse_event) >= 0x9000);
+}
+
+test "message type values match protocol spec" {
+    // Verify against shared/protocol_constants.json values
+    try std.testing.expectEqual(@as(u16, 0x0001), @intFromEnum(MsgType.hello));
+    try std.testing.expectEqual(@as(u16, 0x0010), @intFromEnum(MsgType.create_surface));
+    try std.testing.expectEqual(@as(u16, 0x0011), @intFromEnum(MsgType.destroy_surface));
+    try std.testing.expectEqual(@as(u16, 0x0020), @intFromEnum(MsgType.attach_buffer));
+    try std.testing.expectEqual(@as(u16, 0x0021), @intFromEnum(MsgType.commit));
+    try std.testing.expectEqual(@as(u16, 0x0040), @intFromEnum(MsgType.sync));
+    try std.testing.expectEqual(@as(u16, 0x00F0), @intFromEnum(MsgType.disconnect));
+
+    try std.testing.expectEqual(@as(u16, 0x8001), @intFromEnum(MsgType.hello_reply));
+    try std.testing.expectEqual(@as(u16, 0x8010), @intFromEnum(MsgType.surface_created));
+    try std.testing.expectEqual(@as(u16, 0x80F0), @intFromEnum(MsgType.error_reply));
+
+    try std.testing.expectEqual(@as(u16, 0x9001), @intFromEnum(MsgType.key_press));
+    try std.testing.expectEqual(@as(u16, 0x9002), @intFromEnum(MsgType.mouse_event));
+}
+
+test "MsgHeader size is 8 bytes" {
+    try std.testing.expectEqual(@as(usize, 8), MsgHeader.SIZE);
+    try std.testing.expectEqual(@as(usize, 8), @sizeOf(MsgHeader));
+}
+
+test "error code values" {
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(ErrorCode.none));
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(ErrorCode.invalid_message));
+    try std.testing.expectEqual(@as(u32, 8), @intFromEnum(ErrorCode.validation_failed));
+}

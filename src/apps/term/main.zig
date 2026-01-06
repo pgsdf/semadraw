@@ -10,7 +10,7 @@ const font = @import("font");
 const log = std.log.scoped(.semadraw_term);
 
 pub const std_options = std.Options{
-    .log_level = .debug,
+    .log_level = .info,
 };
 
 /// Mouse button state for Plan 9-style chording
@@ -418,14 +418,19 @@ fn run(allocator: std.mem.Allocator, config: Config) !void {
 
         // Check PTY output
         if (poll_fds[0].revents & posix.POLL.IN != 0) {
-            log.debug("PTY has data, reading...", .{});
             if (shell.read() catch |err| blk: {
-                log.debug("PTY read error: {}", .{err});
+                log.err("PTY read error: {}", .{err});
                 break :blk null;
             }) |data| {
-                log.debug("PTY read {} bytes: {s}", .{ data.len, data[0..@min(data.len, 64)] });
+                // Diagnostic: show first 40 chars as printable
+                var preview: [40]u8 = undefined;
+                const preview_len = @min(data.len, 40);
+                for (data[0..preview_len], 0..) |c, i| {
+                    preview[i] = if (c >= 32 and c < 127) c else '.';
+                }
+                log.info("PTY: {} bytes: {s}", .{ data.len, preview[0..preview_len] });
                 parser.feedSlice(data);
-                log.debug("VT100 parser fed, screen dirty={}", .{scr.dirty});
+                log.info("screen dirty={}", .{scr.dirty});
             }
         }
         if (poll_fds[0].revents & (posix.POLL.HUP | posix.POLL.ERR) != 0) {
@@ -538,7 +543,7 @@ fn renderAndCommitWithBlink(allocator: std.mem.Allocator, rend: *renderer.Render
 
     // Build menu overlay if chord menu is visible (with scaled dimensions)
     const menu_overlay: ?renderer.Renderer.MenuOverlay = if (chord_menu.visible) blk: {
-        log.info("rendering with {s} menu at ({}, {})", .{ @tagName(chord_menu.menu_type), chord_menu.x, chord_menu.y });
+        log.debug("rendering with {s} menu at ({}, {})", .{ @tagName(chord_menu.menu_type), chord_menu.x, chord_menu.y });
         // Scale menu dimensions based on font scale
         const item_h = rend.getCellHeight() + 4 * rend.scale;
         const item_w = rend.getCellWidth() * 14; // "Paste Primary" length
@@ -956,7 +961,7 @@ fn handleMouseEvent(shell: *pty.Pty, scr: *screen.Screen, conn: *client.Connecti
         if (chord_condition and is_chord_press) {
             // Determine menu type based on which button was pressed
             const menu_type: ChordMenu.MenuType = if (mouse.button == .middle) .edit else .paste;
-            log.info("CHORD DETECTED: showing {s} menu at ({}, {})", .{ @tagName(menu_type), mouse.x, mouse.y });
+            log.debug("CHORD DETECTED: showing {s} menu at ({}, {})", .{ @tagName(menu_type), mouse.x, mouse.y });
             chord_menu.show(mouse.x, mouse.y, menu_type);
             chord_menu.updateSelectionScaled(mouse.x, mouse.y, rend.getCellWidth(), rend.getCellHeight(), rend.scale);
             mouse_state.chord_handled = true;

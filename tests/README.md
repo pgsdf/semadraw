@@ -81,3 +81,16 @@ The fuzzer exits:
 1. **Unit tests**: Add `test` blocks to `src/sdcs.zig`
 2. **Golden tests**: Create `src/tools/sdcs_make_*.zig`, update `tests/run.sh`
 3. **Malformed tests**: Add cases to `src/tools/sdcs_test_malformed.zig`
+
+### 5. IPC Protocol Tests (`src/ipc/protocol.zig`)
+
+Tests for the semadraw IPC protocol:
+- Serialize/deserialize roundtrips for all message types
+- Message type value validation (matches `shared/protocol_constants.json`)
+- Reply convention verification (0x8xxx for replies, 0x9xxx for events)
+- Error code validation
+
+These tests ensure protocol compatibility across updates and catch
+accidental value changes that would break client-server communication.
+
+Run with: `zig build test`
